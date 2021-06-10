@@ -77,6 +77,8 @@ void copy(T* dst, T const* src, size_t count, cudaMemcpyKind kind) {
     bytes = 1;
   cudaError_t cuda_error = (cudaMemcpy(dst, src, bytes, kind));
   if (cuda_error != cudaSuccess) {
+    const char* errString = cudaGetErrorString(cuda_error);
+    printf("CUDA Error: %s\n", errString);
     throw cuda_exception("cudaMemcpy() failed", cuda_error);
   }
 }

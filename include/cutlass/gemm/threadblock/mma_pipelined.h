@@ -205,8 +205,11 @@ public:
     ++iterator_A;
     ++iterator_B;
 
-    this->smem_iterator_A_.store(transform_A(tb_frag_A));
-    this->smem_iterator_B_.store(transform_B(tb_frag_B));
+    if(true) {
+      this->smem_iterator_A_.store(transform_A(tb_frag_A));
+      this->smem_iterator_B_.store(transform_B(tb_frag_B));
+    }
+
 
     ++this->smem_iterator_A_;
     ++this->smem_iterator_B_;
@@ -235,7 +238,6 @@ public:
       iterator_A.clear_mask();
       iterator_B.clear_mask();
     }
-
     // Issue loads during the first warp-level matrix multiply-add *AFTER* issuing 
     // shared memory loads (which have the tighest latency requirement).
 
@@ -259,9 +261,11 @@ public:
         if (warp_mma_k == Base::kWarpGemmIterations - 1) {
 
           // Write fragments to shared memory
-          this->smem_iterator_A_.store(transform_A(tb_frag_A));
+          if(true) {
+            this->smem_iterator_A_.store(transform_A(tb_frag_A));
 
-          this->smem_iterator_B_.store(transform_B(tb_frag_B));
+            this->smem_iterator_B_.store(transform_B(tb_frag_B));
+          }
 
           __syncthreads();
           

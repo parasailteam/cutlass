@@ -180,6 +180,8 @@ struct Gemm {
     return Status::kSuccess;
   }
 
+  #define OVERLAP_TB_ASSIGNMENT
+
   /// Executes one GEMM
   CUTLASS_DEVICE
   void operator()(Params const &params, SharedStorage &shared_storage) {
@@ -187,8 +189,42 @@ struct Gemm {
     // Compute threadblock location
     ThreadblockSwizzle threadblock_swizzle;
 
-    cutlass::gemm::GemmCoord threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
+    int* extraGlobalStorage = (int*)(params.ref_C.data() + params.problem_size.m() * params.problem_size.n());
+
+    // if (threadIdx.x + blockDim.x * blockIdx.x == 0) {
+    //   printf("extraGlobalStorage %p params.ref_A.data() %p params.ref_B.data() %p params.ref_C.data() %p\n", extraGlobalStorage, params.ref_A.data(), params.ref_B.data(), params.ref_C.data());
+    // }
+    int* atomicTBIndex = extraGlobalStorage;
+    int* threadBlockTileIndex = extraGlobalStorage + 4;
+    int tbIndex = 0;
+
+    #ifndef OVERLAP_TB_ASSIGNMENT
+      cutlass::gemm::GemmCoord threadblock_tile_offset =
+          threadblock_swizzle.get_tile_offset(params.grid_tiled_shape); 
+    #else
+      int old;
+     
+      if (threadIdx.x == 0 && threadIdx.y == 0) {
+        int _tbIndex = atomicAdd(atomicTBIndex, 1); //blockIdx.y * gridDim.x + blockIdx.x; 
+        // old = *(int*)(shared_storage.epilogue.data());
+        *((int*)shared_storage.epilogue.data()) = _tbIndex;
+      }
+
+      __syncthreads();
+      tbIndex = *((int*)shared_storage.epilogue.data());
+      if (threadIdx.x == 0 && threadIdx.y == 0) {
+        // *(int*)(shared_storage.epilogue.data()) = old;
+      }
+      __syncthreads();
+
+      // cutlass::gemm::GemmCoord threadblock_tile_offset =
+      //     threadblock_swizzle.get_tile_offset(params.grid_tiled_shape); 
+      // tbIndex = blockIdx.y * gridDim.x + blockIdx.x;
+      // if (tbIndex >= 3072) {
+      //   printf("tbIndex %d\n", tbIndex);
+      // }
+      cutlass::gemm::GemmCoord threadblock_tile_offset = cutlass::gemm::GemmCoord(threadBlockTileIndex[2*tbIndex], threadBlockTileIndex[2*tbIndex + 1], 0);
+    #endif
 
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
@@ -196,6 +232,19 @@ struct Gemm {
 
       return;
     }
+
+    if (0 > threadblock_tile_offset.m() ||
+        0 > threadblock_tile_offset.n()) {
+          printf("235: m %d n %d\n", threadblock_tile_offset.m(), threadblock_tile_offset.n());
+      return;
+    }
+
+    // if (threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+    //   printf("tb-tile blockIdx.x %d blockIdx.y %d blockIdx.z %d m %d n %d k %d Mma::Shape::kM %d Mma::Shape::kN %d tbIndex %d\n", 
+    //          blockIdx.x, blockIdx.y, blockIdx.z, threadblock_tile_offset.m(), threadblock_tile_offset.n(), threadblock_tile_offset.k(), Mma::Shape::kM, Mma::Shape::kN, tbIndex);
+    // }
+
+    // return;
 
     // Compute initial location in logical coordinates
     cutlass::MatrixCoord tb_offset_A{
@@ -255,6 +304,7 @@ struct Gemm {
       mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
     }
 
+
     //
     // Epilogue
     //
@@ -264,9 +314,13 @@ struct Gemm {
     //
     // Masked tile iterators constructed from members
     //
-
-    threadblock_tile_offset =
+    #ifndef OVERLAP_TB_ASSIGNMENT
+      threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
+    #else
+      threadblock_tile_offset = cutlass::gemm::GemmCoord(threadBlockTileIndex[2*tbIndex], threadBlockTileIndex[2*tbIndex + 1], 0);
+    #endif
+
 
     //assume identity swizzle
     MatrixCoord threadblock_offset(

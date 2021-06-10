@@ -279,6 +279,8 @@ class Gemm {
     TensorRef<ElementB const, LayoutB> ref_B;
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
+    int chunkM;
+    int chunkN;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
 
@@ -288,7 +290,7 @@ class Gemm {
 
     /// Default ctor
     CUTLASS_HOST_DEVICE
-    Arguments(): problem_size(0, 0, 0), split_k_slices(1) {
+    Arguments(): problem_size(0, 0, 0), split_k_slices(1), chunkM(-1), chunkN(-1) {
 
     }
 
@@ -300,6 +302,7 @@ class Gemm {
       TensorRef<ElementB const, LayoutB> ref_B_,
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
+      int chunkM, int chunkN,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
       int split_k_slices = 1
@@ -310,7 +313,8 @@ class Gemm {
       ref_C(ref_C_),
       ref_D(ref_D_),
       epilogue(epilogue_),
-      split_k_slices(split_k_slices) {
+      split_k_slices(split_k_slices),
+      chunkM(chunkM), chunkN(chunkN) {
 
     }
   };
@@ -409,6 +413,7 @@ public:
       args.ref_B.non_const_ref(),
       args.ref_C.non_const_ref(),
       args.ref_D,
+      args.chunkM, args.chunkN,
       args.epilogue,
       static_cast<int *>(workspace)
     };
@@ -604,6 +609,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     TensorRef<ElementB const, LayoutB> ref_B;
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
+    int chunkM; int chunkN;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
 
@@ -623,6 +629,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       TensorRef<ElementB const, LayoutB> ref_B_,
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
+      int chunkM, int chunkN,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
       int split_k_slices = 1
@@ -632,6 +639,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       ref_B(ref_B_),
       ref_C(ref_C_),
       ref_D(ref_D_),
+      chunkM(chunkM), chunkN(chunkN),
       epilogue(epilogue_),
       split_k_slices(split_k_slices) { }
   };
@@ -653,6 +661,7 @@ public:
       {args.ref_A.data(), args.ref_A.stride(0)},
       {args.ref_C.data(), args.ref_C.stride(0)},
       {args.ref_D.data(), args.ref_D.stride(0)},
+      args.chunkM, args.chunkN,
       args.epilogue,
       args.split_k_slices
     );

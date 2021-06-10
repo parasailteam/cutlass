@@ -77,6 +77,8 @@ struct Gemm {
     int *semaphore;
     int gemm_k_iterations;
     int gemm_k_size;
+    int chunkM;
+    int chunkN;
 
     //
     // Methods
@@ -93,6 +95,7 @@ struct Gemm {
       typename Mma::IteratorB::TensorRef ref_B,
       typename Epilogue::OutputTileIterator::TensorRef ref_C,
       typename Epilogue::OutputTileIterator::TensorRef ref_D,
+      int chunkM, int chunkN,
       typename OutputOp::Params output_op = typename OutputOp::Params(),
       int *workspace = nullptr
     ):
@@ -106,6 +109,7 @@ struct Gemm {
       ref_C(ref_C),
       params_D(ref_D.layout()),
       ref_D(ref_D),
+      chunkM(chunkM), chunkN(chunkN),
       output_op(output_op) {
 
       int total_gemm_k_iterations = (problem_size.k() + Mma::Shape::kK - 1) / Mma::Shape::kK;
@@ -197,13 +201,13 @@ struct Gemm {
     int* atomicTBIndex = extraGlobalStorage;
     int* threadBlockTileIndex = extraGlobalStorage + 4;
     int tbIndex = 0;
-
+    // if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
+    //   printf("chunkM %d\n", params.chunkM);
+    // }
     #ifndef OVERLAP_TB_ASSIGNMENT
       cutlass::gemm::GemmCoord threadblock_tile_offset =
           threadblock_swizzle.get_tile_offset(params.grid_tiled_shape); 
-    #else
-      int old;
-      
+    #else    
       if (threadIdx.x == 0 && threadIdx.y == 0) {
         int tbIndex = atomicAdd(atomicTBIndex, 1); //blockIdx.y * gridDim.x + blockIdx.x; 
         //Can Improve this using warp shuffles between first two threads of a thread block.
@@ -214,7 +218,6 @@ struct Gemm {
       __syncthreads();
       int tbIndexM = *((int*)shared_storage.epilogue.data());
       int tbIndexN = *((int*)shared_storage.epilogue.data() + 1);
-      __syncthreads();
 
       cutlass::gemm::GemmCoord threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
     #endif
@@ -396,6 +399,14 @@ struct Gemm {
       __threadfence();
       semaphore.release(lock);
     }
+
+#ifdef OVERLAP_TB_ASSIGNMENT
+  //Write completed (1) to tile status
+  int* tileStatusMap = threadBlockTileIndex + gridDim.x * gridDim.y * sizeof(int);//TODO: Assumes that each tile is processed by one thread block.
+  if (threadIdx.x == 0 && threadIdx.y == 0) {
+    tileStatusMap[blockIdx.y * blockDim.x + blockIdx.x] = 1;
+  }
+#endif
   }
 };
 

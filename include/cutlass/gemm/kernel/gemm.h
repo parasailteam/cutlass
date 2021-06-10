@@ -203,27 +203,20 @@ struct Gemm {
           threadblock_swizzle.get_tile_offset(params.grid_tiled_shape); 
     #else
       int old;
-     
+      
       if (threadIdx.x == 0 && threadIdx.y == 0) {
-        int _tbIndex = atomicAdd(atomicTBIndex, 1); //blockIdx.y * gridDim.x + blockIdx.x; 
-        // old = *(int*)(shared_storage.epilogue.data());
-        *((int*)shared_storage.epilogue.data()) = _tbIndex;
+        int tbIndex = atomicAdd(atomicTBIndex, 1); //blockIdx.y * gridDim.x + blockIdx.x; 
+        //Can Improve this using warp shuffles between first two threads of a thread block.
+        *((int*)shared_storage.epilogue.data()) = threadBlockTileIndex[2*tbIndex];
+        *((int*)shared_storage.epilogue.data() + 1) = threadBlockTileIndex[2*tbIndex + 1];
       }
 
       __syncthreads();
-      tbIndex = *((int*)shared_storage.epilogue.data());
-      if (threadIdx.x == 0 && threadIdx.y == 0) {
-        // *(int*)(shared_storage.epilogue.data()) = old;
-      }
+      int tbIndexM = *((int*)shared_storage.epilogue.data());
+      int tbIndexN = *((int*)shared_storage.epilogue.data() + 1);
       __syncthreads();
 
-      // cutlass::gemm::GemmCoord threadblock_tile_offset =
-      //     threadblock_swizzle.get_tile_offset(params.grid_tiled_shape); 
-      // tbIndex = blockIdx.y * gridDim.x + blockIdx.x;
-      // if (tbIndex >= 3072) {
-      //   printf("tbIndex %d\n", tbIndex);
-      // }
-      cutlass::gemm::GemmCoord threadblock_tile_offset = cutlass::gemm::GemmCoord(threadBlockTileIndex[2*tbIndex], threadBlockTileIndex[2*tbIndex + 1], 0);
+      cutlass::gemm::GemmCoord threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
     #endif
 
     // Early exit if CTA is out of range
@@ -318,7 +311,7 @@ struct Gemm {
       threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
     #else
-      threadblock_tile_offset = cutlass::gemm::GemmCoord(threadBlockTileIndex[2*tbIndex], threadBlockTileIndex[2*tbIndex + 1], 0);
+      threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
     #endif
 
 

@@ -409,7 +409,7 @@ struct Gemm {
   //Write completed (1) to tile status
   int* tileStatusMap = params.tileStatusMap;//TODO: Assumes that each tile is processed by one thread block.
   if (threadIdx.x == 0 && threadIdx.y == 0) {
-    tileStatusMap[blockIdx.y * blockDim.x + blockIdx.x] = 1;
+      tileStatusMap[blockIdx.y * gridDim.x + blockIdx.x] = 1;
   }
 #endif
   }

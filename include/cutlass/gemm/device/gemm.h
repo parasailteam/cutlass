@@ -281,6 +281,9 @@ class Gemm {
     TensorRef<ElementC, LayoutC> ref_D;
     int chunkM;
     int chunkN;
+    int* tileIdx;
+    int* threadBlockToTileMap;
+    int* tileStatusMap;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
 
@@ -303,6 +306,9 @@ class Gemm {
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       int chunkM, int chunkN,
+      int* tileIdx,
+      int* threadBlockToTileMap,
+      int* tileStatusMap,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
       int split_k_slices = 1
@@ -314,7 +320,8 @@ class Gemm {
       ref_D(ref_D_),
       epilogue(epilogue_),
       split_k_slices(split_k_slices),
-      chunkM(chunkM), chunkN(chunkN) {
+      chunkM(chunkM), chunkN(chunkN),
+      tileIdx(tileIdx), threadBlockToTileMap(threadBlockToTileMap), tileStatusMap(tileStatusMap) {
 
     }
   };
@@ -383,6 +390,7 @@ public:
       {ThreadblockShape::kM, ThreadblockShape::kN, ThreadblockShape::kK},
       args.split_k_slices);
 
+    // printf("393: grid_shape.m() %d .n() %d\n", grid_shape.m(), grid_shape.n());
     if (kSplitKSerial) {
       if (args.split_k_slices > 1) {
         if (!workspace) {
@@ -414,6 +422,7 @@ public:
       args.ref_C.non_const_ref(),
       args.ref_D,
       args.chunkM, args.chunkN,
+      args.tileIdx, args.threadBlockToTileMap, args.tileStatusMap,
       args.epilogue,
       static_cast<int *>(workspace)
     };
@@ -448,6 +457,7 @@ public:
     dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
+    // printf("grid.x %d grid.y %d grid.z %d\n", grid.x, grid.y, grid.z);
     cudaError_t result;
 
     int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
@@ -473,6 +483,7 @@ public:
 
     result = cudaGetLastError();
 
+    // printf("cuda error: %s\n", cudaGetErrorString(result));
     return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
   }
 
@@ -610,6 +621,9 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
     int chunkM; int chunkN;
+    int* tileIdx;
+    int* threadBlockToTileMap;
+    int* tileStatusMap;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
 
@@ -630,6 +644,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       int chunkM, int chunkN,
+      int* tileIdx, int* threadBlockToTileMap, int* tileStatusMap,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
       int split_k_slices = 1
@@ -640,6 +655,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       ref_C(ref_C_),
       ref_D(ref_D_),
       chunkM(chunkM), chunkN(chunkN),
+      tileIdx(tileIdx), threadBlockToTileMap(threadBlockToTileMap), tileStatusMap(tileStatusMap),
       epilogue(epilogue_),
       split_k_slices(split_k_slices) { }
   };
@@ -662,6 +678,7 @@ public:
       {args.ref_C.data(), args.ref_C.stride(0)},
       {args.ref_D.data(), args.ref_D.stride(0)},
       args.chunkM, args.chunkN,
+      args.tileIdx, args.threadBlockToTileMap, args.tileStatusMap,
       args.epilogue,
       args.split_k_slices
     );

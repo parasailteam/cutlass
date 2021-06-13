@@ -240,7 +240,7 @@ struct Gemm {
       return;
     }
 
-    // if (threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+    // if (threadIdx.x == 0 && threadIdx.y == 0) {
     //   printf("tb-tile blockIdx.x %d blockIdx.y %d blockIdx.z %d m %d n %d k %d Mma::Shape::kM %d Mma::Shape::kN %d tbIndex %d\n", 
     //          blockIdx.x, blockIdx.y, blockIdx.z, threadblock_tile_offset.m(), threadblock_tile_offset.n(), threadblock_tile_offset.k(), Mma::Shape::kM, Mma::Shape::kN, tbIndex);
     // }
@@ -383,7 +383,7 @@ struct Gemm {
 
     // Execute the epilogue operator to update the destination tensor.
     epilogue(output_op, iterator_D, accumulators, iterator_C); 
-    
+
     //
     // Release the semaphore
     //
@@ -406,10 +406,17 @@ struct Gemm {
     }
 
 #ifdef OVERLAP_TB_ASSIGNMENT
+ 
   //Write completed (1) to tile status
   int* tileStatusMap = params.tileStatusMap;//TODO: Assumes that each tile is processed by one thread block.
   if (threadIdx.x == 0 && threadIdx.y == 0) {
-      tileStatusMap[blockIdx.y * gridDim.x + blockIdx.x] = 1;
+    int tile = threadblock_tile_offset.m() * gridDim.y + threadblock_tile_offset.n(); // x ("m") * (number of y-dim ("n") tiles) + y ("n")
+    // if (tile == 24) {
+    //   printf("tile %d tbIndex %d x %d params.ref_D.data() %f matrixcoord %d, %d\n", tile, tbIndexM, tbIndexN, __half2float(((__half*)params.ref_D.data())[1535]), 
+    //                                                                                 threadblock_offset.row(), threadblock_offset.column());
+    // }
+    
+    tileStatusMap[tile] = 1;
   }
 #endif
   }

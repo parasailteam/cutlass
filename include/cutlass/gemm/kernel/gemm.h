@@ -234,11 +234,11 @@ struct Gemm {
       return;
     }
 
-    if (0 > threadblock_tile_offset.m() ||
-        0 > threadblock_tile_offset.n()) {
-          printf("235: m %d n %d\n", threadblock_tile_offset.m(), threadblock_tile_offset.n());
-      return;
-    }
+    // if (0 > threadblock_tile_offset.m() ||
+    //     0 > threadblock_tile_offset.n()) {
+    //       printf("235: m %d n %d\n", threadblock_tile_offset.m(), threadblock_tile_offset.n());
+    //   return;
+    // }
 
     // if (threadIdx.x == 0 && threadIdx.y == 0) {
     //   printf("tb-tile blockIdx.x %d blockIdx.y %d blockIdx.z %d m %d n %d k %d Mma::Shape::kM %d Mma::Shape::kN %d tbIndex %d\n", 
@@ -319,7 +319,7 @@ struct Gemm {
       threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.grid_tiled_shape);
     #else
-      threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
+      // threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
     #endif
 
 
@@ -411,9 +411,9 @@ struct Gemm {
   int* tileStatusMap = params.tileStatusMap;//TODO: Assumes that each tile is processed by one thread block.
   if (threadIdx.x == 0 && threadIdx.y == 0) {
     int tile = threadblock_tile_offset.m() * gridDim.y + threadblock_tile_offset.n(); // x ("m") * (number of y-dim ("n") tiles) + y ("n")
-    // if (tile == 24) {
-    //   printf("tile %d tbIndex %d x %d params.ref_D.data() %f matrixcoord %d, %d\n", tile, tbIndexM, tbIndexN, __half2float(((__half*)params.ref_D.data())[1535]), 
-    //                                                                                 threadblock_offset.row(), threadblock_offset.column());
+    // if (threadblock_offset.row() < 172 && threadblock_offset.column() < 1536) {
+    //   printf("415: tile %d tbIndex %d x %d matrixcoord %d, %d gridDim.y %d\n", 
+    //          tile, tbIndexM, tbIndexN, threadblock_offset.row(), threadblock_offset.column(), gridDim.y);
     // }
     
     tileStatusMap[tile] = 1;

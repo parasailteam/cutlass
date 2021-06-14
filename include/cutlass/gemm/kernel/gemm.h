@@ -192,6 +192,8 @@ struct Gemm {
   }
 
   #define OVERLAP_TB_ASSIGNMENT
+  #define WRITE_TILE_STATUS 1
+  #define WRITE_CHUNK_STATUS 0
 
   /// Executes one GEMM
   CUTLASS_DEVICE
@@ -213,11 +215,15 @@ struct Gemm {
       cutlass::gemm::GemmCoord threadblock_tile_offset =
           threadblock_swizzle.get_tile_offset(params.grid_tiled_shape); 
     #else    
-      if (threadIdx.x == 0 && threadIdx.y == 0) {
-        int tbIndex = atomicAdd(atomicTBIndex, 1); //blockIdx.y * gridDim.x + blockIdx.x; 
+      if (threadIdx.x <= 1 && threadIdx.y == 0) {
+        int _tbIndex;
+        if (threadIdx.x == 0)
+          _tbIndex = atomicAdd(atomicTBIndex, 1); //blockIdx.y * gridDim.x + blockIdx.x; 
         //Can Improve this using warp shuffles between first two threads of a thread block.
-        *((int*)shared_storage.epilogue.data()) = threadBlockTileIndex[2*tbIndex];
-        *((int*)shared_storage.epilogue.data() + 1) = threadBlockTileIndex[2*tbIndex + 1];
+        int tbIndex = __shfl_sync(0b11, _tbIndex, 0, 2);
+
+        *((int*)shared_storage.epilogue.data() + threadIdx.x) = threadBlockTileIndex[2*tbIndex + threadIdx.x];
+        // *((int*)shared_storage.epilogue.data() + 1) = threadBlockTileIndex[2*tbIndex + 1];
       }
 
       __syncthreads();
@@ -407,16 +413,31 @@ struct Gemm {
 
 #ifdef OVERLAP_TB_ASSIGNMENT
  
-  //Write completed (1) to tile status
-  int* tileStatusMap = params.tileStatusMap;//TODO: Assumes that each tile is processed by one thread block.
-  if (threadIdx.x == 0 && threadIdx.y == 0) {
-    int tile = threadblock_tile_offset.m() * gridDim.y + threadblock_tile_offset.n(); // x ("m") * (number of y-dim ("n") tiles) + y ("n")
-    // if (threadblock_offset.row() < 172 && threadblock_offset.column() < 1536) {
-    //   printf("415: tile %d tbIndex %d x %d matrixcoord %d, %d gridDim.y %d\n", 
-    //          tile, tbIndexM, tbIndexN, threadblock_offset.row(), threadblock_offset.column(), gridDim.y);
-    // }
+  if (WRITE_TILE_STATUS) {
+    //Write  tile status as completed (1)
+    int* tileStatusMap = params.tileStatusMap;//TODO: Assumes that each tile is processed by one thread block.
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+      int tile = threadblock_tile_offset.m() * gridDim.y + threadblock_tile_offset.n(); // x ("m") * (number of y-dim ("n") tiles) + y ("n")
+      // if (threadblock_offset.row() < 172 && threadblock_offset.column() < 1536) {
+      //   printf("415: tile %d tbIndex %d x %d matrixcoord %d, %d gridDim.y %d\n", 
+      //          tile, tbIndexM, tbIndexN, threadblock_offset.row(), threadblock_offset.column(), gridDim.y);
+      // }
+      
+      tileStatusMap[tile] = 1;
+    }
+  } else if (WRITE_CHUNK_STATUS) {
+    //Increment the chunk status associated with this tile
+    int* chunkStatusMap = params.tileStatusMap;//TODO: Assumes that each tile is processed by one thread block.
     
-    tileStatusMap[tile] = 1;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+      int tile = threadblock_tile_offset.m() * gridDim.y + threadblock_tile_offset.n(); // x ("m") * (number of y-dim ("n") tiles) + y ("n")
+      // if (threadblock_offset.row() < 172 && threadblock_offset.column() < 1536) {
+      //   printf("415: tile %d tbIndex %d x %d matrixcoord %d, %d gridDim.y %d\n", 
+      //          tile, tbIndexM, tbIndexN, threadblock_offset.row(), threadblock_offset.column(), gridDim.y);
+      // }
+      
+      chunkStatusMap[tile] = 1;
+    }
   }
 #endif
   }

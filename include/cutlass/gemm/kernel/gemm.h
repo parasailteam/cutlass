@@ -77,8 +77,8 @@ struct Gemm {
     int *semaphore;
     int gemm_k_iterations;
     int gemm_k_size;
-    int chunkM;
-    int chunkN;
+    int maxChunksForTile;
+    int* chunksForTile;
     int* tileIdx;
     int* threadBlockToTileMap;
     int* tileStatusMap;
@@ -98,7 +98,7 @@ struct Gemm {
       typename Mma::IteratorB::TensorRef ref_B,
       typename Epilogue::OutputTileIterator::TensorRef ref_C,
       typename Epilogue::OutputTileIterator::TensorRef ref_D,
-      int chunkM, int chunkN,
+      int maxChunksForTile, int* chunksForTile,
       int* tileIdx,
       int* threadBlockToTileMap,
       int* tileStatusMap,
@@ -115,7 +115,7 @@ struct Gemm {
       ref_C(ref_C),
       params_D(ref_D.layout()),
       ref_D(ref_D),
-      chunkM(chunkM), chunkN(chunkN),
+      maxChunksForTile(maxChunksForTile), chunksForTile(chunksForTile),
       tileIdx(tileIdx), threadBlockToTileMap(threadBlockToTileMap), 
       tileStatusMap(tileStatusMap), output_op(output_op) {
 
@@ -192,8 +192,8 @@ struct Gemm {
   }
 
   #define OVERLAP_TB_ASSIGNMENT
-  #define WRITE_TILE_STATUS 1
-  #define WRITE_CHUNK_STATUS 0
+  #define WRITE_TILE_STATUS 0
+  #define WRITE_CHUNK_STATUS 1
 
   /// Executes one GEMM
   CUTLASS_DEVICE
@@ -429,14 +429,20 @@ struct Gemm {
     //Increment the chunk status associated with this tile
     int* chunkStatusMap = params.tileStatusMap;//TODO: Assumes that each tile is processed by one thread block.
     
-    if (threadIdx.x == 0 && threadIdx.y == 0) {
-      int tile = threadblock_tile_offset.m() * gridDim.y + threadblock_tile_offset.n(); // x ("m") * (number of y-dim ("n") tiles) + y ("n")
+    if (threadIdx.x < params.maxChunksForTile && threadIdx.y == 0) {
+      int tile = threadblock_tile_offset.m() * gridDim.y + threadblock_tile_offset.n();
+      int chunk = params.chunksForTile[tile * params.maxChunksForTile + threadIdx.x]; // x ("m") * (number of y-dim ("n") tiles) + y ("n")
       // if (threadblock_offset.row() < 172 && threadblock_offset.column() < 1536) {
       //   printf("415: tile %d tbIndex %d x %d matrixcoord %d, %d gridDim.y %d\n", 
       //          tile, tbIndexM, tbIndexN, threadblock_offset.row(), threadblock_offset.column(), gridDim.y);
       // }
       
-      chunkStatusMap[tile] = 1;
+      if (chunk != -1) {
+        atomicAdd(&chunkStatusMap[chunk], 1);
+      }
+      // if (chunk == 92) {
+      //   printf("443: tile %d, maxChunksForTile %d, chunk %d\n", tile, params.maxChunksForTile, chunkStatusMap[chunk]);
+      // }
     }
   }
 #endif

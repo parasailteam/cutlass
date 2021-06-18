@@ -82,6 +82,9 @@ struct Gemm {
     int* tileIdx;
     int* threadBlockToTileMap;
     int* tileStatusMap;
+    int outerIteration;
+    int totalParts;
+    int part;
 
     //
     // Methods
@@ -192,8 +195,8 @@ struct Gemm {
   }
 
   #define OVERLAP_TB_ASSIGNMENT
-  #define WRITE_TILE_STATUS 0
-  #define WRITE_CHUNK_STATUS 1
+  #define WRITE_TILE_STATUS 1
+  #define WRITE_CHUNK_STATUS 0
 
   /// Executes one GEMM
   CUTLASS_DEVICE
@@ -218,9 +221,9 @@ struct Gemm {
       if (threadIdx.x <= 1 && threadIdx.y == 0) {
         int _tbIndex;
         if (threadIdx.x == 0)
-          _tbIndex = atomicAdd(atomicTBIndex, 1); //blockIdx.y * gridDim.x + blockIdx.x; 
+          _tbIndex = atomicAdd(atomicTBIndex, 1) - params.outerIteration * gridDim.x * gridDim.y; //blockIdx.y * gridDim.x + blockIdx.x; 
         //Can Improve this using warp shuffles between first two threads of a thread block.
-        int tbIndex = __shfl_sync(0b11, _tbIndex, 0, 2);
+        tbIndex = __shfl_sync(0b11, _tbIndex, 0, 2);
 
         *((int*)shared_storage.epilogue.data() + threadIdx.x) = threadBlockTileIndex[2*tbIndex + threadIdx.x];
         // *((int*)shared_storage.epilogue.data() + 1) = threadBlockTileIndex[2*tbIndex + 1];
@@ -423,7 +426,11 @@ struct Gemm {
       //          tile, tbIndexM, tbIndexN, threadblock_offset.row(), threadblock_offset.column(), gridDim.y);
       // }
       
-      tileStatusMap[tile] = 1;
+      tileStatusMap[tile] = params.outerIteration + 1;
+      int* tileProcessedOrder = tileStatusMap + gridDim.y*gridDim.x;
+      tbIndex = __shfl_sync(0xFFFFFFFF, tbIndex, 0);
+      tileProcessedOrder[2*tbIndex] = threadblock_tile_offset.m();
+      tileProcessedOrder[2*tbIndex + 1] = threadblock_tile_offset.n();      
     }
   } else if (WRITE_CHUNK_STATUS) {
     //Increment the chunk status associated with this tile

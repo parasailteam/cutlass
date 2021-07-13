@@ -487,12 +487,16 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status runPart(int part, int totalParts, int iteration, cudaStream_t stream = nullptr) {
+  Status runPart(int numParts, int totalParts, int iteration, cudaStream_t stream = nullptr) {
+    
+    if (numParts <= 0) {
+      return Status::kSuccess;
+    }
 
     ThreadblockSwizzle threadblock_swizzle;
 
     dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-    grid.x = params_.grid_tiled_shape.m() / totalParts;
+    grid.x = (int)(params_.grid_tiled_shape.m() * ((float)numParts/totalParts));
 
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
@@ -521,7 +525,7 @@ public:
     // params_.endRow = endRow;
 
     params_.outerIteration = iteration;
-    params_.part = part;
+    params_.part = numParts;
     params_.totalParts = totalParts;
     
     cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
@@ -756,11 +760,16 @@ public:
   /// Runs the kernel using initialized state.
   Status run(cudaStream_t stream = nullptr) {
 
-    return underlying_operator_.run(stream);
+    return underlying_operator_.run(0, stream);
   }
 
   /// Runs the kernel using initialized state.
   Status operator()(cudaStream_t stream = nullptr) {
+    return run(stream);
+  }
+
+    /// Runs the kernel using initialized state.
+  Status operator()(int iteration, cudaStream_t stream = nullptr) {
     return run(stream);
   }
 

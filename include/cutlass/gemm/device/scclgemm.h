@@ -35,10 +35,15 @@
 #include "cutlass/scclAlgorithm.h"
 
 #include "cutlass/gemm/threadblock/threadblock_swizzle.h"
-#include "cutlass/gemm/kernel/gemm.h"
+#include "cutlass/gemm/kernel/scclgemm.h"
 
-#include "cutlass/gemm/kernel/default_gemm.h"
+#include "cutlass/gemm/kernel/default_scclgemm.h"
 #include "cutlass/gemm/device/default_gemm_configuration.h"
+
+#include <vector>
+#include <tuple>
+#include <set>
+#include <map>
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -47,6 +52,31 @@ namespace gemm {
 namespace device {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
+//TODO: Use MatrixCoord or Tensor4d ?
+struct Block2D {
+  int chunkStartRow;
+  int chunkStartCol;
+  int chunkRows;
+  int chunkCols;
+
+   Block2D(const ssize_t size, const int chunkIdx, const int chunkSize, const int numChunks, 
+                                     const int chunkRows, const int chunkCols, const int rows, const int ld) {
+    chunkStartRow = chunkIdx / numChunks * chunkRows;
+    chunkStartCol = chunkIdx % numChunks * chunkCols;
+    int nelem = min(chunkSize, (int)(size - (chunkStartRow * ld + (rows - chunkStartRow) * (ld - (ld - chunkStartCol)))));
+    this->chunkRows = min(min(nelem/chunkCols, chunkRows), rows - chunkStartRow);
+    this->chunkCols = chunkCols;
+  }
+
+   Block2D() :
+    chunkStartRow(-1), chunkStartCol(-1), chunkRows(-1), chunkCols(-1)
+  {}
+  
+  bool isValid() const {return chunkStartCol >= 0 && chunkStartRow >= 0 && chunkRows > 0 && chunkCols > 0;}
+   
+  int nelem() const {return chunkRows * chunkCols;}
+};
 
 /*! Gemm device-level operator. This is an interface to efficient CUTLASS GEMM kernels that may
   be invoked from host code.
@@ -246,7 +276,7 @@ class SCCLGemm {
   static ComplexTransform const kTransformB = ComplexTransform::kNone;
 
   /// Define the kernel
-  using GemmKernel = typename kernel::DefaultGemm<
+  using GemmKernel = typename kernel::DefaultSCCLGemm<
     ElementA,
     LayoutA,
     kAlignmentA,
@@ -324,6 +354,8 @@ private:
   /// Kernel parameters object
   typename GemmKernel::Params params_;
 
+  int *tileOrder;
+
 public:
 
   /// Constructs the GEMM.
@@ -382,9 +414,104 @@ public:
       args.problem_size, 
       {ThreadblockShape::kM, ThreadblockShape::kN, ThreadblockShape::kK},
       args.split_k_slices);
-
-    //TODO: Do the chunk -> tile mapping here
     
+    //Do Chunk to Tile mapping
+    const size_t chunkSize = 393216;
+    const int rows = 8192;
+    const int cols = 3072;
+    const size_t size = rows*cols;
+    std::vector<std::vector<Block2D>> chunkBlocks;
+    int combinedRanks = 1;
+    int chunkRows = chunkSize/args.scclAlgo->chunkld;
+    
+    for (int bid = 0; bid < args.scclAlgo->nChannels; bid++) {
+      const int chunkld = args.scclAlgo->chunkld;
+      const int numChunks = cols/chunkld;
+      struct scclThreadBlock* scclTB = &args.scclAlgo->scclTB[bid];
+      const int channelId = scclTB->channelId;
+      uint32_t scclMaxAllowedCount = 1;// TODO: fix this args->scclMaxAllowedCount;
+      const int numTotalChunks = (rows/chunkRows * cols/chunkld);
+      const int numScclChunks2D = numTotalChunks/args.scclAlgo->nchunksPerLoop;
+      
+      chunkBlocks.push_back(std::vector<Block2D>());
+
+      for (int iter = 0, gridChunkIdx = 0; gridChunkIdx < numScclChunks2D; gridChunkIdx += 1, iter++) {
+        for (int step = 0; step < scclTB->nsteps; step++) {
+          struct scclTransfer* sccltran = &scclTB->transfers[step];
+          int count = sccltran->count;
+
+          for (int c = 0; c < count; c += scclMaxAllowedCount) {     
+            int dstChunkIdx = gridChunkIdx + (sccltran->dstoffset + c)*numScclChunks2D;
+            int srcChunkIdx = gridChunkIdx + (sccltran->srcoffset + c)*numScclChunks2D;
+            
+            int thisCount = min(scclMaxAllowedCount, count-c);
+            
+            const Block2D srcBlock = Block2D(size, srcChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
+            const Block2D dstBlock = Block2D(size, dstChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
+
+            chunkBlocks[chunkBlocks.size() - 1].push_back(srcBlock);
+            // printf("%d [%d, %d] step %d nelem %d, src: [%d, %d]; [%d, %d] nelem %d, dst: [%d, %d]; [%d, %d] \n", __LINE__, 0, bid, step, srcBlock.nelem(), srcBlock.chunkStartRow, srcBlock.chunkStartCol, srcBlock.chunkRows, srcBlock.chunkCols,
+            // dstBlock.nelem(), dstBlock.chunkStartRow, dstBlock.chunkStartCol, dstBlock.chunkRows, dstBlock.chunkCols);
+          }
+        }
+      }
+    }
+
+    std::set<std::pair<int, int>> chunkTBs;
+    std::vector<std::pair<int, int>> tileOrderAsPair;
+    std::map<int, std::set<int>> tileToChunks;
+    int tilesForChunk = 0;
+
+    for (auto channelChunks: chunkBlocks) {
+      for (int channel = 0; channel < channelChunks.size(); channel++) {
+        auto block = channelChunks[channel];
+        int cy = block.chunkStartRow;
+        int cx = block.chunkStartCol;
+        int m = block.chunkRows;
+        int n = block.chunkCols;
+
+        int chunkIndex = cy/chunkRows * args.problem_size.n()/args.scclAlgo->chunkld + cx/args.scclAlgo->chunkld;
+
+        //For a chunk get all tiles required to obtain this chunk
+        int startTy = (cy/ ThreadblockShape::kM) * ThreadblockShape::kM;
+
+        for (int ty = startTy; ty < min(cy + m, args.problem_size.m()); ty += ThreadblockShape::kM) {
+          for (int tx = cx; tx < min(cx + n, args.problem_size.n()); tx += ThreadblockShape::kN) {
+            // int tileIndex = ty/ShapeMMAThreadBlock::kM * (N/ShapeMMAThreadBlock::kN) + tx/ShapeMMAThreadBlock::kN;
+            // if (tileToChunks[tileIndex].count(chunkIndex/combinedChunks) == 0) {
+            //   tileToChunks[tileIndex].insert(chunkIndex/combinedChunks);
+            // }
+
+            if (chunkTBs.count(std::make_pair(ty,tx)) == 0) {
+              //Each tile should be processed only once
+              chunkTBs.insert(std::make_pair(ty,tx));
+              tileOrderAsPair.push_back(std::make_pair(tx/ThreadblockShape::kN, ty/ThreadblockShape::kM));
+            }
+          }
+        }
+      }
+    }
+
+    int numTiles = (args.problem_size.m()*args.problem_size.n())/(ThreadblockShape::kMN);
+    tileOrder = new int[numTiles * 2];
+    int idx = 0;
+    for (int i = 0; i < tileOrderAsPair.size(); i++) {
+      tileOrder[idx] = tileOrderAsPair[i].second; //Swap because x ("m") is row and y ("n") is column.
+      tileOrder[idx+1] = tileOrderAsPair[i].first;
+
+      idx += 2;
+    }
+
+    //TODO: Create these as part of the workspace
+    int* dThreadBlockToTileMap;
+    int* dTileIdx;
+    
+    CUDACHECK(cudaMalloc(&dTileIdx, sizeof(int)));
+    CUDACHECK(cudaMemset(dTileIdx, 0, sizeof(int)));
+    CUDACHECK(cudaMalloc(&dThreadBlockToTileMap, numTiles * 2 * sizeof(int)));
+    CUDACHECK(cudaMemcpy(dThreadBlockToTileMap, tileOrder, 
+                         numTiles * 2 * sizeof(int), cudaMemcpyHostToDevice));
+
     if (kSplitKSerial) {
       if (args.split_k_slices > 1) {
         if (!workspace) {
@@ -415,6 +542,9 @@ public:
       args.ref_B.non_const_ref(),
       args.ref_C.non_const_ref(),
       args.ref_D,
+      dTileIdx,
+      dThreadBlockToTileMap,
+      0,
       args.epilogue,
       static_cast<int *>(workspace)
     };

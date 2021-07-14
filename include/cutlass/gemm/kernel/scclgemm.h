@@ -198,25 +198,26 @@ struct SCCLGemm {
 
     int* atomicTBIndex = params.tileIdx;
     int* threadBlockTileIndex = params.threadBlockToTileMap;
-    
-     if (threadIdx.x <= 1 && threadIdx.y == 0) {
-        int _tbIndex;
-        int tbIndex;
-        
-        if (threadIdx.x == 0)
-          _tbIndex = atomicAdd(atomicTBIndex, 1) - params.outerIteration * params.grid_tiled_shape.m()*params.grid_tiled_shape.n(); //blockIdx.y * gridDim.x + blockIdx.x; 
-        
-        __syncwarp();
-        tbIndex = __shfl_sync(0b11, _tbIndex, 0, 2);
+    if (threadIdx.x == 0) {
+      printf("202: blockIdx.x %d\n", blockIdx.x);
+    }
+    if (threadIdx.x <= 1 && threadIdx.y == 0) {
+      int _tbIndex;
+      int tbIndex;
+      
+      if (threadIdx.x == 0)
+        _tbIndex = atomicAdd(atomicTBIndex, 1) - params.outerIteration * params.grid_tiled_shape.m()*params.grid_tiled_shape.n(); //blockIdx.y * gridDim.x + blockIdx.x; 
+      
+      tbIndex = __shfl_sync(0b11, _tbIndex, 0, 2);
 
-        *((int*)shared_storage.epilogue.data() + threadIdx.x) = threadBlockTileIndex[2*tbIndex + threadIdx.x];
-      }
+      *((int*)shared_storage.epilogue.data() + threadIdx.x) = threadBlockTileIndex[2*tbIndex + threadIdx.x];
+    }
 
-      __syncthreads();
-      int tbIndexM = *((int*)shared_storage.epilogue.data());
-      int tbIndexN = *((int*)shared_storage.epilogue.data() + 1);
+    __syncthreads();
+    int tbIndexM = *((int*)shared_storage.epilogue.data());
+    int tbIndexN = *((int*)shared_storage.epilogue.data() + 1);
 
-      cutlass::gemm::GemmCoord threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
+    cutlass::gemm::GemmCoord threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
 
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||

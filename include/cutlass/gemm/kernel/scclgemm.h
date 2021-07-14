@@ -198,13 +198,11 @@ struct SCCLGemm {
 
     int* atomicTBIndex = params.tileIdx;
     int* threadBlockTileIndex = params.threadBlockToTileMap;
-    if (threadIdx.x == 0) {
-      printf("202: blockIdx.x %d\n", blockIdx.x);
-    }
+
     if (threadIdx.x <= 1 && threadIdx.y == 0) {
       int _tbIndex;
       int tbIndex;
-      
+
       if (threadIdx.x == 0)
         _tbIndex = atomicAdd(atomicTBIndex, 1) - params.outerIteration * params.grid_tiled_shape.m()*params.grid_tiled_shape.n(); //blockIdx.y * gridDim.x + blockIdx.x; 
       

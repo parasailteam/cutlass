@@ -448,8 +448,10 @@ public:
             
             const Block2D srcBlock = Block2D(size, srcChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
             const Block2D dstBlock = Block2D(size, dstChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
-
-            chunkBlocks[chunkBlocks.size() - 1].push_back(srcBlock);
+          
+            if (sccltran->type == SCCL_SEND || sccltran->type == SCCL_RECV_COPY_SEND || sccltran->type == SCCL_RECV_REDUCE_SEND || sccltran->type == SCCL_RECV_REDUCE_COPY || sccltran->type == SCCL_RECV_REDUCE_COPY_SEND)
+              //Consider only where input buffer is involved is involved
+              chunkBlocks[chunkBlocks.size() - 1].push_back(srcBlock);
             // printf("%d [%d, %d] step %d nelem %d, src: [%d, %d]; [%d, %d] nelem %d, dst: [%d, %d]; [%d, %d] \n", __LINE__, 0, bid, step, srcBlock.nelem(), srcBlock.chunkStartRow, srcBlock.chunkStartCol, srcBlock.chunkRows, srcBlock.chunkCols,
             // dstBlock.nelem(), dstBlock.chunkStartRow, dstBlock.chunkStartCol, dstBlock.chunkRows, dstBlock.chunkCols);
           }

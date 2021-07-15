@@ -404,6 +404,29 @@ public:
     return bytes;
   }
 
+  #define MIN(x,y) (((x) < (y)) ? (x) : (y))
+  #define SCCL_CHUNKSTEPS (NCCL_STEPS/2)
+  #define NCCL_STEPS 8
+
+  template<typename T>
+  static __host__ int getSCCLChunkSize(int buffSize, size_t size, int rows, int cols, int chunkCols, int nchunksPerLoop) {
+    const int stepSize = buffSize / (sizeof(T)*NCCL_STEPS);
+    int chunkSize = MIN(stepSize * SCCL_CHUNKSTEPS, DIVUP((cols*rows),nchunksPerLoop));
+    chunkSize = (chunkSize/cols) * cols;
+    //chunkSize should not have more than 'matrixRows' rows.
+    int chunkRows = MIN((chunkSize/chunkCols), (int)rows);
+
+    //Make chunkRows a perfect divisor of matrixRows;
+    for (; chunkRows >= 1; chunkRows--) {
+      if (rows % chunkRows == 0) {
+        break;
+      }
+    }
+    printf("cols %d chunkSize %d chunkRows %d\n", cols, chunkSize, chunkRows);
+    chunkSize = chunkRows * chunkCols;
+    return chunkSize;
+  }
+
   /// Initializes GEMM state from arguments.
   Status initialize(Arguments const &args, void *workspace = nullptr, cudaStream_t stream = nullptr) {
 
@@ -416,25 +439,31 @@ public:
       args.split_k_slices);
     
     //Do Chunk to Tile mapping
-    const size_t chunkSize = 393216;
-    const int rows = 8192;
-    const int cols = 3072;
+    
+    const int rows = args.problem_size.m();
+    const int cols = args.problem_size.n();
     const size_t size = rows*cols;
     std::vector<std::vector<Block2D>> chunkBlocks;
     int combinedRanks = 1;
+
+    const int chunkld = args.scclAlgo->chunkld;
+    const int numChunks = cols/chunkld;
+    int chunkSize = getSCCLChunkSize<ElementC>(4194304, size, rows, cols, chunkld, args.scclAlgo->nchunksPerLoop);
     int chunkRows = chunkSize/args.scclAlgo->chunkld;
-    
+    int device = cudaGetDevice(&device);
+    const int numTotalChunks = (rows/chunkRows * cols/chunkld);
+    const int numScclChunks2D = numTotalChunks/args.scclAlgo->nchunksPerLoop;
+
+    if (numTotalChunks % args.scclAlgo->nchunksPerLoop != 0) {
+      return Status::kErrorInvalidProblem;
+    }
+
     for (int bid = 0; bid < args.scclAlgo->nChannels; bid++) {
-      const int chunkld = args.scclAlgo->chunkld;
-      const int numChunks = cols/chunkld;
       struct scclThreadBlock* scclTB = &args.scclAlgo->scclTB[bid];
       const int channelId = scclTB->channelId;
       uint32_t scclMaxAllowedCount = 1;// TODO: fix this args->scclMaxAllowedCount;
-      const int numTotalChunks = (rows/chunkRows * cols/chunkld);
-      const int numScclChunks2D = numTotalChunks/args.scclAlgo->nchunksPerLoop;
       
       chunkBlocks.push_back(std::vector<Block2D>());
-
       for (int iter = 0, gridChunkIdx = 0; gridChunkIdx < numScclChunks2D; gridChunkIdx += 1, iter++) {
         for (int step = 0; step < scclTB->nsteps; step++) {
           struct scclTransfer* sccltran = &scclTB->transfers[step];
@@ -450,10 +479,10 @@ public:
             const Block2D dstBlock = Block2D(size, dstChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
           
             if (sccltran->type == SCCL_SEND || sccltran->type == SCCL_RECV_COPY_SEND || sccltran->type == SCCL_RECV_REDUCE_SEND || sccltran->type == SCCL_RECV_REDUCE_COPY || sccltran->type == SCCL_RECV_REDUCE_COPY_SEND)
-              //Consider only where input buffer is involved is involved
+              //Consider only where input buffer is involved
               chunkBlocks[chunkBlocks.size() - 1].push_back(srcBlock);
             // printf("%d [%d, %d] step %d nelem %d, src: [%d, %d]; [%d, %d] nelem %d, dst: [%d, %d]; [%d, %d] \n", __LINE__, 0, bid, step, srcBlock.nelem(), srcBlock.chunkStartRow, srcBlock.chunkStartCol, srcBlock.chunkRows, srcBlock.chunkCols,
-            // dstBlock.nelem(), dstBlock.chunkStartRow, dstBlock.chunkStartCol, dstBlock.chunkRows, dstBlock.chunkCols);
+            //        dstBlock.nelem(), dstBlock.chunkStartRow, dstBlock.chunkStartCol, dstBlock.chunkRows, dstBlock.chunkCols);
           }
         }
       }
@@ -574,13 +603,14 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(cudaStream_t stream = nullptr) {
+  Status run(int outerIter = 0, cudaStream_t stream = nullptr) {
 
     ThreadblockSwizzle threadblock_swizzle;
 
     dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
+    params_.outerIteration = outerIter;
     cudaError_t result;
 
     int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
@@ -610,8 +640,8 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status operator()(cudaStream_t stream = nullptr) {
-    return run(stream);
+  Status operator()(int outerIter = 0, cudaStream_t stream = nullptr) {
+    return run(outerIter, stream);
   }
 
   /// Runs the kernel using initialized state.

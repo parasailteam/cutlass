@@ -35,6 +35,15 @@
 #include "cutlass/scclAlgorithm.h"
 #define SCCL_MAX_ITER 65536
 
+struct ChunkInfo {
+  int numTiles;
+  int status;
+  int bid;
+  uint64_t syncVal;
+};
+
+// static_assert(sizeof(struct ChunkInfo) == 0x20, "Size of Chunk Info must be a power of 2.");
+
 #include "cutlass/gemm/threadblock/threadblock_swizzle.h"
 #include "cutlass/gemm/kernel/scclgemm.h"
 
@@ -439,7 +448,7 @@ public:
 #define COMPUTE_FLAG(__WORKINDEX__,__GRIDOFFSET_ITER__,__STEP__) \
    SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)__WORKINDEX__ + ((uint64_t)__GRIDOFFSET_ITER__ * SCCL_MAX_NUM_STEPS + (uint64_t)__STEP__)
   /// Initializes GEMM state from arguments.
-  Status initialize(Arguments const &args, void *workspace = nullptr, cudaStream_t stream = nullptr) {
+  Status initialize(Arguments const &args, int _workIndex = 0, void *workspace = nullptr, cudaStream_t stream = nullptr) {
 
     // Determine grid shape
     ThreadblockSwizzle threadblock_swizzle;
@@ -449,7 +458,7 @@ public:
       {ThreadblockShape::kM, ThreadblockShape::kN, ThreadblockShape::kK},
       args.split_k_slices);
     
-    workIndex = 0;
+    workIndex = _workIndex;
     //Do Chunk to Tile mapping
     
     const int rows = args.problem_size.m();
@@ -582,18 +591,21 @@ public:
     }
     assert (idx == numTiles*2);
 
+    ChunkInfo* chunkInfos = new ChunkInfo[numTilesForChunk.size()];
+
     int* hNumTilesForChunk = new int[numTilesForChunk.size()];
     for (auto it : numTilesForChunk) {
-      hNumTilesForChunk[it.first] = it.second;
+      chunkInfos[it.first].status = 0;
+      chunkInfos[it.first].numTiles = it.second;
     }
 
     int* hBidForChunk = new int[bidForChunk.size()];
     for (auto it : bidForChunk) {
-      hBidForChunk[it.first] = it.second;
+      chunkInfos[it.first].bid = it.second;
     }
     int* hSyncValForChunk = new int[syncValForChunk.size()];
     for (auto it : syncValForChunk) {
-      hSyncValForChunk[it.first] = it.second;
+      chunkInfos[it.first].syncVal = it.second;
     }
 
 
@@ -603,9 +615,7 @@ public:
     int* dTileIdx;
     int* dChunksForTile;
     int* dChunkStatus;
-    int* dNumTilesForChunk;
-    int* dBidForChunk;
-    int* dSyncValForChunk;
+    ChunkInfo* dChunkInfo;
 
     CUDACHECK(cudaMalloc(&dTileIdx, sizeof(int)));
     CUDACHECK(cudaMemset(dTileIdx, 0, sizeof(int)));
@@ -615,14 +625,8 @@ public:
     CUDACHECK(cudaMalloc(&dChunksForTile, sizeof(int) * hChunksForTile.size()));
     CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
 
-    CUDACHECK(cudaMalloc(&dNumTilesForChunk, sizeof(int) * numTilesForChunk.size()));
-    CUDACHECK(cudaMemcpy(dNumTilesForChunk, &hNumTilesForChunk[0], numTilesForChunk.size() * sizeof(int), cudaMemcpyHostToDevice));
-
-    CUDACHECK(cudaMalloc(&dBidForChunk, sizeof(int) * bidForChunk.size()));
-    CUDACHECK(cudaMemcpy(dBidForChunk, &hBidForChunk[0], bidForChunk.size() * sizeof(int), cudaMemcpyHostToDevice));
-
-    CUDACHECK(cudaMalloc(&dSyncValForChunk, sizeof(int) * syncValForChunk.size()));
-    CUDACHECK(cudaMemcpy(dSyncValForChunk, &hSyncValForChunk[0], syncValForChunk.size() * sizeof(int), cudaMemcpyHostToDevice));
+    CUDACHECK(cudaMalloc(&dChunkInfo, sizeof(ChunkInfo) * numTilesForChunk.size()));
+    CUDACHECK(cudaMemcpy(dChunkInfo, &chunkInfos[0], numTilesForChunk.size() * sizeof(ChunkInfo), cudaMemcpyHostToDevice));
 
     CUDACHECK(cudaMalloc(&dChunkStatus, numTiles * sizeof(int)));
     CUDACHECK(cudaMemset(dChunkStatus, 0, numTiles * sizeof(int)));
@@ -663,11 +667,9 @@ public:
       maxChunksForTile,
       dChunksForTile,
       dChunkStatus,
-      dNumTilesForChunk,
-      dBidForChunk,
-      dSyncValForChunk,
+      dChunkInfo,
       args.scclAlgo->flags,
-      0,
+      _workIndex,
       args.epilogue,
       static_cast<int *>(workspace)
     };
@@ -702,8 +704,9 @@ public:
     dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
-    params_.workIndex = workIndex;
+    params_.currWorkIndex = workIndex;
     workIndex += 1;
+
     cudaError_t result;
 
     int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
@@ -740,10 +743,11 @@ public:
   /// Runs the kernel using initialized state.
   Status operator()(
     Arguments const &args, 
+    int workIndex = 0,
     void *workspace = nullptr, 
     cudaStream_t stream = nullptr) {
     
-    Status status = initialize(args, workspace, stream);
+    Status status = initialize(args, workIndex, workspace, stream);
     
     if (status == Status::kSuccess) {
       status = run(stream);
@@ -936,9 +940,9 @@ public:
   }
 
   /// Initializes GEMM state from arguments.
-  Status initialize(Arguments const &args, void *workspace = nullptr, cudaStream_t stream = nullptr) {
+  Status initialize(Arguments const &args, int workIndex, void *workspace = nullptr, cudaStream_t stream = nullptr) {
 
-    return underlying_operator_.initialize(to_underlying_arguments(args), workspace, stream);
+    return underlying_operator_.initialize(to_underlying_arguments(args), workIndex, workspace, stream);
   }
 
   /// Lightweight update given a subset of arguments
@@ -961,10 +965,11 @@ public:
   /// Runs the kernel using initialized state.
   Status operator()(
     Arguments const &args, 
+    int workIndex = 0,
     void *workspace = nullptr, 
     cudaStream_t stream = nullptr) {
     
-    Status status = initialize(args, workspace, stream);
+    Status status = initialize(args, workIndex, workspace, stream);
     
     if (status == Status::kSuccess) {
       status = run(stream);

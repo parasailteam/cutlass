@@ -517,12 +517,9 @@ public:
     }
 
     std::set<std::pair<int, int>> chunkTBs;
-    std::vector<std::pair<int, int>> tileOrderAsPair;
+    std::vector<int> tileOrderAsPair;
     std::map<int, std::set<int>> tileToChunks;
     int tilesForChunk = 0;
-    std::map<int, int> numTilesForChunk;
-    std::map<int, int> bidForChunk;
-    std::map<int, int> syncValForChunk;
     
     //TODO: Scheduling of tiles is not ideal.
     for (auto channelChunks: chunkBlocks) {
@@ -549,20 +546,25 @@ public:
             if (chunkTBs.count(std::make_pair(ty,tx)) == 0) {
               //Each tile should be processed only once
               chunkTBs.insert(std::make_pair(ty,tx));
-              tileOrderAsPair.push_back(std::make_pair(tx/ThreadblockShape::kN, ty/ThreadblockShape::kM));
+              tileOrderAsPair.push_back(ty/ThreadblockShape::kM);
+              tileOrderAsPair.push_back(tx/ThreadblockShape::kN);
             }
 
             tiles++;
           }
         }
         
-        // printf("chunkIndex %d numTotalChunks %d\n", chunkIndex, numTotalChunks);
-        chunkInfos[chunkIndex] = { tiles, 0, channelChunks[channel].second.bid, channelChunks[channel].second.syncVal};
+        chunkInfos[chunkIndex/combinedChunks] = { tiles, 0, channelChunks[channel].second.bid, channelChunks[channel].second.syncVal};
       }
     }
 
-    int numTiles = (args.problem_size.m()*args.problem_size.n())/(ThreadblockShape::kMN);
-    int maxChunksForTile;
+    int numTiles = (args.problem_size.m()/ThreadblockShape::kM)*(args.problem_size.n()/ThreadblockShape::kN);
+
+    if (tileOrderAsPair.size() != 2*numTiles) {
+      return Status::kErrorInternal;
+    }
+
+    int maxChunksForTile = 0;
 
     for (auto v : tileToChunks) {
       maxChunksForTile = std::max(maxChunksForTile, (int)v.second.size());
@@ -581,18 +583,6 @@ public:
       }
     }
 
-    tileOrder = new int[numTiles * 2];
-    int idx = 0;
-    for (int i = 0; i < tileOrderAsPair.size(); i++) {
-      tileOrder[idx] = tileOrderAsPair[i].second; //Swap because x ("m") is row and y ("n") is column.
-      tileOrder[idx+1] = tileOrderAsPair[i].first;
-
-      idx += 2;
-    }
-    assert (idx == numTiles*2);
-
-
-
     //TODO: Create these as part of the workspace
     int* dThreadBlockToTileMap;
     int* dTileIdx;
@@ -602,14 +592,13 @@ public:
     CUDACHECK(cudaMalloc(&dTileIdx, sizeof(int)));
     CUDACHECK(cudaMemset(dTileIdx, 0, sizeof(int)));
     CUDACHECK(cudaMalloc(&dThreadBlockToTileMap, numTiles * 2 * sizeof(int)));
-    CUDACHECK(cudaMemcpy(dThreadBlockToTileMap, tileOrder, 
+    CUDACHECK(cudaMemcpy(dThreadBlockToTileMap, &tileOrderAsPair[0], 
                          numTiles * 2 * sizeof(int), cudaMemcpyHostToDevice));
-    CUDACHECK(cudaMalloc(&dChunksForTile, sizeof(int) * hChunksForTile.size()));
-    CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
-
     CUDACHECK(cudaMalloc(&dChunkInfo, sizeof(ChunkInfo) * numTotalChunks));
     CUDACHECK(cudaMemcpy(dChunkInfo, &chunkInfos[0], numTotalChunks * sizeof(ChunkInfo), cudaMemcpyHostToDevice));
-    delete tileOrder;
+
+    CUDACHECK(cudaMalloc(&dChunksForTile, sizeof(int) * hChunksForTile.size()));
+    CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
 
     if (kSplitKSerial) {
       if (args.split_k_slices > 1) {

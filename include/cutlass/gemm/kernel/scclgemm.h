@@ -76,6 +76,13 @@ struct SCCLGemm {
     typename OutputOp::Params output_op;
     int* tileIdx; //TODO: make these tensor ref?
     int* threadBlockToTileMap;
+    int maxChunksForTile;
+    int* chunksForTile;
+    int* chunkStatus;
+    int* numTilesForChunk;
+    int* bidForChunk;
+    int* syncValForChunk;
+    volatile scclFlag* scclFlags;
     int outerIteration;
     int *semaphore;
     int gemm_k_iterations;
@@ -98,6 +105,12 @@ struct SCCLGemm {
       typename Epilogue::OutputTileIterator::TensorRef ref_D,
       int* tileIdx,
       int* threadBlockToTileMap,
+      int maxChunksForTile,
+      int* chunksForTile,
+      int* numTilesForChunk,
+      int* bidForChunk,
+      int* syncValForChunk,
+      volatile scclFlag* scclFlags,
       int outerIteration = 0,
       typename OutputOp::Params output_op = typename OutputOp::Params(),
       int *workspace = nullptr
@@ -114,6 +127,12 @@ struct SCCLGemm {
       ref_D(ref_D),
       tileIdx(tileIdx),
       threadBlockToTileMap(threadBlockToTileMap),
+      maxChunksForTile(maxChunksForTile),
+      chunksForTile(chunksForTile),
+      numTilesForChunk(numTilesForChunk),
+      bidForChunk(bidForChunk),
+      syncValForChunk(syncValForChunk),
+      scclFlags(scclFlags),
       outerIteration(outerIteration),
       output_op(output_op) {
 
@@ -372,6 +391,20 @@ struct SCCLGemm {
 
       __threadfence();
       semaphore.release(lock);
+    }
+
+    //Write Chunk Status
+    if (threadIdx.x < params.maxChunksForTile && threadIdx.y == 0) {
+      int tile = threadblock_tile_offset.m() * params.grid_tiled_shape.n() + threadblock_tile_offset.n();
+      int chunk = params.chunksForTile[tile * params.maxChunksForTile + threadIdx.x]; // x ("m") * (number of y-dim ("n") tiles) + y ("n"
+      if (chunk != -1) {
+        // int chunkStatus = atomicAdd(&params.chunkStatus[chunk], 1);
+        // if (chunkStatus == params.numTilesForChunk[chunk]) {
+        //   int bid = params.bidForChunk[chunk];
+        //   uint64_t syncVal = params.syncValForChunk[chunk];
+        //   params.scclFlags[bid].flag = syncVal;
+        // }
+      }
     }
   }
 };

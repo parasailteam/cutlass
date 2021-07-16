@@ -44,6 +44,9 @@
 #include <tuple>
 #include <set>
 #include <map>
+#include <utility>
+#include <functional>
+#define SCCL_MAX_ITER 65536
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -422,11 +425,18 @@ public:
         break;
       }
     }
-    printf("cols %d chunkSize %d chunkRows %d\n", cols, chunkSize, chunkRows);
+    // printf("cols %d chunkSize %d chunkRows %d\n", cols, chunkSize, chunkRows);
     chunkSize = chunkRows * chunkCols;
     return chunkSize;
   }
 
+  struct SyncInfo {
+    int bid;
+    long syncVal;
+  };
+
+#define COMPUTE_FLAG(__WORKINDEX__,__GRIDOFFSET_ITER__,__STEP__) \
+   SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)__WORKINDEX__ + ((uint64_t)__GRIDOFFSET_ITER__ * SCCL_MAX_NUM_STEPS + (uint64_t)__STEP__)
   /// Initializes GEMM state from arguments.
   Status initialize(Arguments const &args, void *workspace = nullptr, cudaStream_t stream = nullptr) {
 
@@ -443,7 +453,7 @@ public:
     const int rows = args.problem_size.m();
     const int cols = args.problem_size.n();
     const size_t size = rows*cols;
-    std::vector<std::vector<Block2D>> chunkBlocks;
+    std::vector<std::vector<std::pair<Block2D, SyncInfo>>> chunkBlocks;
     int combinedRanks = 1;
 
     const int chunkld = args.scclAlgo->chunkld;
@@ -463,7 +473,7 @@ public:
       const int channelId = scclTB->channelId;
       uint32_t scclMaxAllowedCount = 1;// TODO: fix this args->scclMaxAllowedCount;
       
-      chunkBlocks.push_back(std::vector<Block2D>());
+      chunkBlocks.push_back(std::vector<std::pair<Block2D, SyncInfo>>());
       for (int iter = 0, gridChunkIdx = 0; gridChunkIdx < numScclChunks2D; gridChunkIdx += 1, iter++) {
         for (int step = 0; step < scclTB->nsteps; step++) {
           struct scclTransfer* sccltran = &scclTB->transfers[step];
@@ -478,9 +488,15 @@ public:
             const Block2D srcBlock = Block2D(size, srcChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
             const Block2D dstBlock = Block2D(size, dstChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
           
-            if (sccltran->type == SCCL_SEND || sccltran->type == SCCL_RECV_COPY_SEND || sccltran->type == SCCL_RECV_REDUCE_SEND || sccltran->type == SCCL_RECV_REDUCE_COPY || sccltran->type == SCCL_RECV_REDUCE_COPY_SEND)
+            if (sccltran->type == SCCL_SEND || sccltran->type == SCCL_RECV_COPY_SEND || sccltran->type == SCCL_RECV_REDUCE_SEND || sccltran->type == SCCL_RECV_REDUCE_COPY || sccltran->type == SCCL_RECV_REDUCE_COPY_SEND) {
+              struct SyncInfo syncInfo;
+
+              syncInfo.bid = bid;
+              syncInfo.syncVal = COMPUTE_FLAG(1, iter, step);
               //Consider only where input buffer is involved
-              chunkBlocks[chunkBlocks.size() - 1].push_back(srcBlock);
+              chunkBlocks[chunkBlocks.size() - 1].push_back(std::make_pair(srcBlock, syncInfo));
+            }
+
             // printf("%d [%d, %d] step %d nelem %d, src: [%d, %d]; [%d, %d] nelem %d, dst: [%d, %d]; [%d, %d] \n", __LINE__, 0, bid, step, srcBlock.nelem(), srcBlock.chunkStartRow, srcBlock.chunkStartCol, srcBlock.chunkRows, srcBlock.chunkCols,
             //        dstBlock.nelem(), dstBlock.chunkStartRow, dstBlock.chunkStartCol, dstBlock.chunkRows, dstBlock.chunkCols);
           }
@@ -492,10 +508,14 @@ public:
     std::vector<std::pair<int, int>> tileOrderAsPair;
     std::map<int, std::set<int>> tileToChunks;
     int tilesForChunk = 0;
-
+    std::map<int, int> numTilesForChunk;
+    std::map<int, int> bidForChunk;
+    std::map<int, int> syncValForChunk;
+    
+    //TODO: Scheduling of tiles is not ideal.
     for (auto channelChunks: chunkBlocks) {
       for (int channel = 0; channel < channelChunks.size(); channel++) {
-        auto block = channelChunks[channel];
+        auto block = channelChunks[channel].first;
         int cy = block.chunkStartRow;
         int cx = block.chunkStartCol;
         int m = block.chunkRows;
@@ -505,25 +525,51 @@ public:
 
         //For a chunk get all tiles required to obtain this chunk
         int startTy = (cy/ ThreadblockShape::kM) * ThreadblockShape::kM;
-
+        int tiles = 0;
+        int combinedChunks = 1;
         for (int ty = startTy; ty < min(cy + m, args.problem_size.m()); ty += ThreadblockShape::kM) {
           for (int tx = cx; tx < min(cx + n, args.problem_size.n()); tx += ThreadblockShape::kN) {
-            // int tileIndex = ty/ShapeMMAThreadBlock::kM * (N/ShapeMMAThreadBlock::kN) + tx/ShapeMMAThreadBlock::kN;
-            // if (tileToChunks[tileIndex].count(chunkIndex/combinedChunks) == 0) {
-            //   tileToChunks[tileIndex].insert(chunkIndex/combinedChunks);
-            // }
+            int tileIndex = ty/ThreadblockShape::kM * (args.problem_size.n()/ThreadblockShape::kN) + tx/ThreadblockShape::kN;
+            if (tileToChunks[tileIndex].count(chunkIndex/combinedChunks) == 0) {
+              tileToChunks[tileIndex].insert(chunkIndex/combinedChunks);
+            }
 
             if (chunkTBs.count(std::make_pair(ty,tx)) == 0) {
               //Each tile should be processed only once
               chunkTBs.insert(std::make_pair(ty,tx));
               tileOrderAsPair.push_back(std::make_pair(tx/ThreadblockShape::kN, ty/ThreadblockShape::kM));
             }
+
+            tiles++;
           }
         }
+
+        numTilesForChunk[chunkIndex] = tiles;
+        bidForChunk[chunkIndex] = channelChunks[channel].second.bid;
+        syncValForChunk[chunkIndex] = channelChunks[channel].second.syncVal;
       }
     }
 
     int numTiles = (args.problem_size.m()*args.problem_size.n())/(ThreadblockShape::kMN);
+    int maxChunksForTile;
+
+    for (auto v : tileToChunks) {
+      maxChunksForTile = std::max(maxChunksForTile, (int)v.second.size());
+    }
+
+    std::vector<int> hChunksForTile = std::vector<int>(maxChunksForTile * numTiles, 0);
+
+    for (auto it : tileToChunks) {
+      int i = 0;
+      for (int c : it.second) {
+        hChunksForTile[it.first * maxChunksForTile + i] = c;
+        i++;
+      }
+      for (; i < maxChunksForTile; i++) {
+        hChunksForTile[it.first * maxChunksForTile + i] = -1;
+      }
+    }
+
     tileOrder = new int[numTiles * 2];
     int idx = 0;
     for (int i = 0; i < tileOrderAsPair.size(); i++) {
@@ -532,16 +578,49 @@ public:
 
       idx += 2;
     }
+    assert (idx == numTiles*2);
+
+    int* hNumTilesForChunk = new int[numTilesForChunk.size()];
+    for (auto it : numTilesForChunk) {
+      hNumTilesForChunk[it.first] = it.second;
+    }
+
+    int* hBidForChunk = new int[bidForChunk.size()];
+    for (auto it : bidForChunk) {
+      hBidForChunk[it.first] = it.second;
+    }
+    int* hSyncValForChunk = new int[syncValForChunk.size()];
+    for (auto it : syncValForChunk) {
+      hSyncValForChunk[it.first] = it.second;
+    }
+
+
 
     //TODO: Create these as part of the workspace
     int* dThreadBlockToTileMap;
     int* dTileIdx;
-    
+    int* dChunksForTile;
+    int* dNumTilesForChunk;
+    int* dBidForChunk;
+    int* dSyncValForChunk;
+
     CUDACHECK(cudaMalloc(&dTileIdx, sizeof(int)));
     CUDACHECK(cudaMemset(dTileIdx, 0, sizeof(int)));
     CUDACHECK(cudaMalloc(&dThreadBlockToTileMap, numTiles * 2 * sizeof(int)));
     CUDACHECK(cudaMemcpy(dThreadBlockToTileMap, tileOrder, 
                          numTiles * 2 * sizeof(int), cudaMemcpyHostToDevice));
+    CUDACHECK(cudaMalloc(&dChunksForTile, sizeof(int) * hChunksForTile.size()));
+    CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
+
+    CUDACHECK(cudaMalloc(&dNumTilesForChunk, sizeof(int) * numTilesForChunk.size()));
+    CUDACHECK(cudaMemcpy(dNumTilesForChunk, &hNumTilesForChunk[0], numTilesForChunk.size() * sizeof(int), cudaMemcpyHostToDevice));
+
+    CUDACHECK(cudaMalloc(&dBidForChunk, sizeof(int) * bidForChunk.size()));
+    CUDACHECK(cudaMemcpy(dBidForChunk, &hBidForChunk[0], bidForChunk.size() * sizeof(int), cudaMemcpyHostToDevice));
+
+    CUDACHECK(cudaMalloc(&dSyncValForChunk, sizeof(int) * syncValForChunk.size()));
+    CUDACHECK(cudaMemcpy(dSyncValForChunk, &hSyncValForChunk[0], syncValForChunk.size() * sizeof(int), cudaMemcpyHostToDevice));
+    delete tileOrder;
 
     if (kSplitKSerial) {
       if (args.split_k_slices > 1) {
@@ -575,6 +654,12 @@ public:
       args.ref_D,
       dTileIdx,
       dThreadBlockToTileMap,
+      maxChunksForTile,
+      dChunksForTile,
+      dNumTilesForChunk,
+      dBidForChunk,
+      dSyncValForChunk,
+      args.scclAlgo->flags,
       0,
       args.epilogue,
       static_cast<int *>(workspace)

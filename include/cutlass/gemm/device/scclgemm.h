@@ -33,6 +33,7 @@
 #include "cutlass/arch/arch.h"
 #include "cutlass/device_kernel.h"
 #include "cutlass/scclAlgorithm.h"
+#define SCCL_MAX_ITER 65536
 
 #include "cutlass/gemm/threadblock/threadblock_swizzle.h"
 #include "cutlass/gemm/kernel/scclgemm.h"
@@ -46,7 +47,6 @@
 #include <map>
 #include <utility>
 #include <functional>
-#define SCCL_MAX_ITER 65536
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -358,6 +358,7 @@ private:
   typename GemmKernel::Params params_;
 
   int *tileOrder;
+  int workIndex;
 
 public:
 
@@ -492,7 +493,7 @@ public:
               struct SyncInfo syncInfo;
 
               syncInfo.bid = bid;
-              syncInfo.syncVal = COMPUTE_FLAG(1, iter, step);
+              syncInfo.syncVal = COMPUTE_FLAG(0, iter, step);
               //Consider only where input buffer is involved
               chunkBlocks[chunkBlocks.size() - 1].push_back(std::make_pair(srcBlock, syncInfo));
             }
@@ -600,6 +601,7 @@ public:
     int* dThreadBlockToTileMap;
     int* dTileIdx;
     int* dChunksForTile;
+    int* dChunkStatus;
     int* dNumTilesForChunk;
     int* dBidForChunk;
     int* dSyncValForChunk;
@@ -620,6 +622,9 @@ public:
 
     CUDACHECK(cudaMalloc(&dSyncValForChunk, sizeof(int) * syncValForChunk.size()));
     CUDACHECK(cudaMemcpy(dSyncValForChunk, &hSyncValForChunk[0], syncValForChunk.size() * sizeof(int), cudaMemcpyHostToDevice));
+
+    CUDACHECK(cudaMalloc(&dChunkStatus, numTiles * sizeof(int)));
+    CUDACHECK(cudaMemset(dChunkStatus, 0, numTiles * sizeof(int)));
     delete tileOrder;
 
     if (kSplitKSerial) {
@@ -656,11 +661,12 @@ public:
       dThreadBlockToTileMap,
       maxChunksForTile,
       dChunksForTile,
+      dChunkStatus,
       dNumTilesForChunk,
       dBidForChunk,
       dSyncValForChunk,
       args.scclAlgo->flags,
-      0,
+      0, 0,
       args.epilogue,
       static_cast<int *>(workspace)
     };
@@ -696,6 +702,8 @@ public:
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
     params_.outerIteration = outerIter;
+    workIndex += 1;
+    params_.workIndex = workIndex;
     cudaError_t result;
 
     int smem_size = int(sizeof(typename GemmKernel::SharedStorage));

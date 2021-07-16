@@ -83,6 +83,7 @@ struct SCCLGemm {
     int* bidForChunk;
     int* syncValForChunk;
     volatile scclFlag* scclFlags;
+    int workIndex;
     int outerIteration;
     int *semaphore;
     int gemm_k_iterations;
@@ -107,11 +108,13 @@ struct SCCLGemm {
       int* threadBlockToTileMap,
       int maxChunksForTile,
       int* chunksForTile,
+      int* chunkStatus,
       int* numTilesForChunk,
       int* bidForChunk,
       int* syncValForChunk,
       volatile scclFlag* scclFlags,
       int outerIteration = 0,
+      int workIndex = 0,
       typename OutputOp::Params output_op = typename OutputOp::Params(),
       int *workspace = nullptr
     ):
@@ -128,12 +131,14 @@ struct SCCLGemm {
       tileIdx(tileIdx),
       threadBlockToTileMap(threadBlockToTileMap),
       maxChunksForTile(maxChunksForTile),
+      chunkStatus(chunkStatus),
       chunksForTile(chunksForTile),
       numTilesForChunk(numTilesForChunk),
       bidForChunk(bidForChunk),
       syncValForChunk(syncValForChunk),
       scclFlags(scclFlags),
       outerIteration(outerIteration),
+      workIndex(workIndex),
       output_op(output_op) {
 
       int total_gemm_k_iterations = (problem_size.k() + Mma::Shape::kK - 1) / Mma::Shape::kK;
@@ -398,12 +403,13 @@ struct SCCLGemm {
       int tile = threadblock_tile_offset.m() * params.grid_tiled_shape.n() + threadblock_tile_offset.n();
       int chunk = params.chunksForTile[tile * params.maxChunksForTile + threadIdx.x]; // x ("m") * (number of y-dim ("n") tiles) + y ("n"
       if (chunk != -1) {
-        // int chunkStatus = atomicAdd(&params.chunkStatus[chunk], 1);
-        // if (chunkStatus == params.numTilesForChunk[chunk]) {
-        //   int bid = params.bidForChunk[chunk];
-        //   uint64_t syncVal = params.syncValForChunk[chunk];
-        //   params.scclFlags[bid].flag = syncVal;
-        // }
+        int chunkStatus = atomicAdd(&params.chunkStatus[chunk], 1);
+        if (params.chunkStatus[chunk] - params.outerIteration*params.numTilesForChunk[chunk] == params.numTilesForChunk[chunk]) {
+          int bid = params.bidForChunk[chunk];
+          unsigned long long syncVal = params.syncValForChunk[chunk];
+          syncVal += SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)params.workIndex;
+          atomicMax((unsigned long long*)&params.scclFlags[bid].flag, syncVal);
+        }
       }
     }
   }

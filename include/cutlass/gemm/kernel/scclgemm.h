@@ -61,6 +61,15 @@ struct SCCLGemm {
   using WarpCount = typename Mma::WarpCount;
   static int const kThreadCount = 32 * WarpCount::kCount;
 
+  struct Workspace {
+    int* tileIdx; //TODO: make these tensor ref?
+    int* threadBlockToTileMap;
+    int maxChunksForTile;
+    int* chunksForTile;
+    ChunkInfo* chunkInfos;
+    int* semaphore;
+  };
+
   /// Parameters structure
   struct Params {
     cutlass::gemm::GemmCoord problem_size;
@@ -74,15 +83,11 @@ struct SCCLGemm {
     typename Epilogue::OutputTileIterator::Params params_D;
     typename Epilogue::OutputTileIterator::TensorRef ref_D;
     typename OutputOp::Params output_op;
-    int* tileIdx; //TODO: make these tensor ref?
-    int* threadBlockToTileMap;
-    int maxChunksForTile;
-    int* chunksForTile;
-    ChunkInfo* chunkInfos;
     volatile scclFlag* scclFlags;
     int startWorkIndex;
     int currWorkIndex;
-    int *semaphore;
+    Workspace workspace;
+    int* semaphore;
     int gemm_k_iterations;
     int gemm_k_size;
 
@@ -91,7 +96,7 @@ struct SCCLGemm {
     //
 
     CUTLASS_HOST_DEVICE
-    Params(): semaphore(0), gemm_k_iterations(0), gemm_k_size(0) { }
+    Params(): workspace(), gemm_k_iterations(0), gemm_k_size(0) { }
 
     CUTLASS_HOST_DEVICE
     Params(
@@ -101,15 +106,10 @@ struct SCCLGemm {
       typename Mma::IteratorB::TensorRef ref_B,
       typename Epilogue::OutputTileIterator::TensorRef ref_C,
       typename Epilogue::OutputTileIterator::TensorRef ref_D,
-      int* tileIdx,
-      int* threadBlockToTileMap,
-      int maxChunksForTile,
-      int* chunksForTile,
-      ChunkInfo* chunkInfos,
       volatile scclFlag* scclFlags,
       int startWorkIndex,
-      typename OutputOp::Params output_op = typename OutputOp::Params(),
-      int *workspace = nullptr
+      Workspace workspace,
+      typename OutputOp::Params output_op = typename OutputOp::Params()
     ):
       problem_size(problem_size),
       grid_tiled_shape(grid_tiled_shape),
@@ -121,11 +121,7 @@ struct SCCLGemm {
       ref_C(ref_C),
       params_D(ref_D.layout()),
       ref_D(ref_D),
-      tileIdx(tileIdx),
-      threadBlockToTileMap(threadBlockToTileMap),
-      maxChunksForTile(maxChunksForTile),
-      chunksForTile(chunksForTile),
-      chunkInfos(chunkInfos),
+      workspace(workspace),
       scclFlags(scclFlags),
       startWorkIndex(startWorkIndex),
       output_op(output_op) {
@@ -134,8 +130,7 @@ struct SCCLGemm {
       int gemm_k_iterations = (total_gemm_k_iterations + grid_tiled_shape.k() - 1) / grid_tiled_shape.k();
       
       gemm_k_size = gemm_k_iterations * Mma::Shape::kK;
-
-    semaphore = workspace;
+      semaphore = workspace.semaphore;
     }
   };
 
@@ -209,8 +204,8 @@ struct SCCLGemm {
     // Compute threadblock location
     ThreadblockSwizzle threadblock_swizzle;
 
-    int* atomicTBIndex = params.tileIdx;
-    int* threadBlockTileIndex = params.threadBlockToTileMap;
+    int* atomicTBIndex = params.workspace.tileIdx;
+    int* threadBlockTileIndex = params.workspace.threadBlockToTileMap;
 
     if (threadIdx.x <= 1 && threadIdx.y == 0) {
       int _tbIndex;
@@ -388,14 +383,14 @@ struct SCCLGemm {
     }
 
     //Write Chunk Status
-    if (threadIdx.x < params.maxChunksForTile && threadIdx.y == 0) {
+    if (threadIdx.x < params.workspace.maxChunksForTile && threadIdx.y == 0) {
       int tile = threadblock_tile_offset.m() * params.grid_tiled_shape.n() + threadblock_tile_offset.n();
-      int chunk = params.chunksForTile[tile * params.maxChunksForTile + threadIdx.x]; // x ("m") * (number of y-dim ("n") tiles) + y ("n"
+      int chunk = params.workspace.chunksForTile[tile * params.workspace.maxChunksForTile + threadIdx.x]; // x ("m") * (number of y-dim ("n") tiles) + y ("n"
       if (chunk != -1) {
-        int chunkStatus = atomicAdd(&params.chunkInfos[chunk].status, 1);
-        if (params.chunkInfos[chunk].status == (params.currWorkIndex - params.startWorkIndex + 1)*params.chunkInfos[chunk].numTiles) {
-          int bid = params.chunkInfos[chunk].bid;
-          unsigned long long syncVal = params.chunkInfos[chunk].syncVal;
+        int chunkStatus = atomicAdd(&params.workspace.chunkInfos[chunk].status, 1);
+        if (params.workspace.chunkInfos[chunk].status == (params.currWorkIndex - params.startWorkIndex + 1)*params.workspace.chunkInfos[chunk].numTiles) {
+          int bid = params.workspace.chunkInfos[chunk].bid;
+          unsigned long long syncVal = params.workspace.chunkInfos[chunk].syncVal;
           syncVal += SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)(params.currWorkIndex + 1);
           atomicMax((unsigned long long*)&params.scclFlags[bid].flag, syncVal);
         }

@@ -365,7 +365,7 @@ private:
 
   /// Kernel parameters object
   typename GemmKernel::Params params_;
-
+  typename GemmKernel::Workspace workspace_;
   int *tileOrder;
   int workIndex;
 
@@ -599,6 +599,7 @@ public:
 
     CUDACHECK(cudaMalloc(&dChunksForTile, sizeof(int) * hChunksForTile.size()));
     CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
+    workspace_ = {dTileIdx, dThreadBlockToTileMap, maxChunksForTile, dChunksForTile, dChunkInfo};
 
     if (kSplitKSerial) {
       if (args.split_k_slices > 1) {
@@ -630,15 +631,10 @@ public:
       args.ref_B.non_const_ref(),
       args.ref_C.non_const_ref(),
       args.ref_D,
-      dTileIdx,
-      dThreadBlockToTileMap,
-      maxChunksForTile,
-      dChunksForTile,
-      dChunkInfo,
       args.scclAlgo->flags,
       _workIndex,
+      workspace_,
       args.epilogue,
-      static_cast<int *>(workspace)
     };
 
     return Status::kSuccess;

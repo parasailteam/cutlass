@@ -442,7 +442,7 @@ public:
 
   struct SyncInfo {
     int bid;
-    long syncVal;
+    uint64_t syncVal;
   };
 
 #define COMPUTE_FLAG(__WORKINDEX__,__GRIDOFFSET_ITER__,__STEP__) \
@@ -474,6 +474,7 @@ public:
     int device = cudaGetDevice(&device);
     const int numTotalChunks = (rows/chunkRows * cols/chunkld);
     const int numScclChunks2D = numTotalChunks/args.scclAlgo->nchunksPerLoop;
+    ChunkInfo* chunkInfos = new ChunkInfo[numTotalChunks];
 
     if (numTotalChunks % args.scclAlgo->nchunksPerLoop != 0) {
       return Status::kErrorInvalidProblem;
@@ -554,10 +555,9 @@ public:
             tiles++;
           }
         }
-
-        numTilesForChunk[chunkIndex] = tiles;
-        bidForChunk[chunkIndex] = channelChunks[channel].second.bid;
-        syncValForChunk[chunkIndex] = channelChunks[channel].second.syncVal;
+        
+        // printf("chunkIndex %d numTotalChunks %d\n", chunkIndex, numTotalChunks);
+        chunkInfos[chunkIndex] = { tiles, 0, channelChunks[channel].second.bid, channelChunks[channel].second.syncVal};
       }
     }
 
@@ -591,30 +591,12 @@ public:
     }
     assert (idx == numTiles*2);
 
-    ChunkInfo* chunkInfos = new ChunkInfo[numTilesForChunk.size()];
-
-    int* hNumTilesForChunk = new int[numTilesForChunk.size()];
-    for (auto it : numTilesForChunk) {
-      chunkInfos[it.first].status = 0;
-      chunkInfos[it.first].numTiles = it.second;
-    }
-
-    int* hBidForChunk = new int[bidForChunk.size()];
-    for (auto it : bidForChunk) {
-      chunkInfos[it.first].bid = it.second;
-    }
-    int* hSyncValForChunk = new int[syncValForChunk.size()];
-    for (auto it : syncValForChunk) {
-      chunkInfos[it.first].syncVal = it.second;
-    }
-
 
 
     //TODO: Create these as part of the workspace
     int* dThreadBlockToTileMap;
     int* dTileIdx;
     int* dChunksForTile;
-    int* dChunkStatus;
     ChunkInfo* dChunkInfo;
 
     CUDACHECK(cudaMalloc(&dTileIdx, sizeof(int)));
@@ -625,11 +607,8 @@ public:
     CUDACHECK(cudaMalloc(&dChunksForTile, sizeof(int) * hChunksForTile.size()));
     CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
 
-    CUDACHECK(cudaMalloc(&dChunkInfo, sizeof(ChunkInfo) * numTilesForChunk.size()));
-    CUDACHECK(cudaMemcpy(dChunkInfo, &chunkInfos[0], numTilesForChunk.size() * sizeof(ChunkInfo), cudaMemcpyHostToDevice));
-
-    CUDACHECK(cudaMalloc(&dChunkStatus, numTiles * sizeof(int)));
-    CUDACHECK(cudaMemset(dChunkStatus, 0, numTiles * sizeof(int)));
+    CUDACHECK(cudaMalloc(&dChunkInfo, sizeof(ChunkInfo) * numTotalChunks));
+    CUDACHECK(cudaMemcpy(dChunkInfo, &chunkInfos[0], numTotalChunks * sizeof(ChunkInfo), cudaMemcpyHostToDevice));
     delete tileOrder;
 
     if (kSplitKSerial) {
@@ -666,7 +645,6 @@ public:
       dThreadBlockToTileMap,
       maxChunksForTile,
       dChunksForTile,
-      dChunkStatus,
       dChunkInfo,
       args.scclAlgo->flags,
       _workIndex,

@@ -78,7 +78,6 @@ struct SCCLGemm {
     int* threadBlockToTileMap;
     int maxChunksForTile;
     int* chunksForTile;
-    int* chunkStatus;
     ChunkInfo* chunkInfos;
     volatile scclFlag* scclFlags;
     int startWorkIndex;
@@ -106,7 +105,6 @@ struct SCCLGemm {
       int* threadBlockToTileMap,
       int maxChunksForTile,
       int* chunksForTile,
-      int* chunkStatus,
       ChunkInfo* chunkInfos,
       volatile scclFlag* scclFlags,
       int startWorkIndex,
@@ -126,7 +124,6 @@ struct SCCLGemm {
       tileIdx(tileIdx),
       threadBlockToTileMap(threadBlockToTileMap),
       maxChunksForTile(maxChunksForTile),
-      chunkStatus(chunkStatus),
       chunksForTile(chunksForTile),
       chunkInfos(chunkInfos),
       scclFlags(scclFlags),

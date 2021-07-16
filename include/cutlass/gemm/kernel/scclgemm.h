@@ -84,7 +84,6 @@ struct SCCLGemm {
     int* syncValForChunk;
     volatile scclFlag* scclFlags;
     int workIndex;
-    int outerIteration;
     int *semaphore;
     int gemm_k_iterations;
     int gemm_k_size;
@@ -113,8 +112,7 @@ struct SCCLGemm {
       int* bidForChunk,
       int* syncValForChunk,
       volatile scclFlag* scclFlags,
-      int outerIteration = 0,
-      int workIndex = 0,
+      int workIndex,
       typename OutputOp::Params output_op = typename OutputOp::Params(),
       int *workspace = nullptr
     ):
@@ -137,7 +135,6 @@ struct SCCLGemm {
       bidForChunk(bidForChunk),
       syncValForChunk(syncValForChunk),
       scclFlags(scclFlags),
-      outerIteration(outerIteration),
       workIndex(workIndex),
       output_op(output_op) {
 
@@ -228,7 +225,7 @@ struct SCCLGemm {
       int tbIndex;
 
       if (threadIdx.x == 0)
-        _tbIndex = atomicAdd(atomicTBIndex, 1) - params.outerIteration * params.grid_tiled_shape.m()*params.grid_tiled_shape.n(); //blockIdx.y * gridDim.x + blockIdx.x; 
+        _tbIndex = atomicAdd(atomicTBIndex, 1) - params.workIndex * params.grid_tiled_shape.m()*params.grid_tiled_shape.n(); //blockIdx.y * gridDim.x + blockIdx.x; 
       
       tbIndex = __shfl_sync(0b11, _tbIndex, 0, 2);
 
@@ -404,10 +401,10 @@ struct SCCLGemm {
       int chunk = params.chunksForTile[tile * params.maxChunksForTile + threadIdx.x]; // x ("m") * (number of y-dim ("n") tiles) + y ("n"
       if (chunk != -1) {
         int chunkStatus = atomicAdd(&params.chunkStatus[chunk], 1);
-        if (params.chunkStatus[chunk] - params.outerIteration*params.numTilesForChunk[chunk] == params.numTilesForChunk[chunk]) {
+        if (params.chunkStatus[chunk] - params.workIndex*params.numTilesForChunk[chunk] == params.numTilesForChunk[chunk]) {
           int bid = params.bidForChunk[chunk];
           unsigned long long syncVal = params.syncValForChunk[chunk];
-          syncVal += SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)params.workIndex;
+          syncVal += SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)(params.workIndex + 1);
           atomicMax((unsigned long long*)&params.scclFlags[bid].flag, syncVal);
         }
       }

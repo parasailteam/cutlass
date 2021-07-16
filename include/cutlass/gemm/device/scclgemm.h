@@ -449,6 +449,7 @@ public:
       {ThreadblockShape::kM, ThreadblockShape::kN, ThreadblockShape::kK},
       args.split_k_slices);
     
+    workIndex = 0;
     //Do Chunk to Tile mapping
     
     const int rows = args.problem_size.m();
@@ -666,7 +667,7 @@ public:
       dBidForChunk,
       dSyncValForChunk,
       args.scclAlgo->flags,
-      0, 0,
+      0,
       args.epilogue,
       static_cast<int *>(workspace)
     };
@@ -694,16 +695,15 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(int outerIter = 0, cudaStream_t stream = nullptr) {
+  Status run(cudaStream_t stream = nullptr) {
 
     ThreadblockSwizzle threadblock_swizzle;
 
     dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
-    params_.outerIteration = outerIter;
-    workIndex += 1;
     params_.workIndex = workIndex;
+    workIndex += 1;
     cudaError_t result;
 
     int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
@@ -733,8 +733,8 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status operator()(int outerIter = 0, cudaStream_t stream = nullptr) {
-    return run(outerIter, stream);
+  Status operator()(cudaStream_t stream = nullptr) {
+    return run(stream);
   }
 
   /// Runs the kernel using initialized state.

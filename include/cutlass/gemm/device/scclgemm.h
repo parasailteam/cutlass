@@ -44,6 +44,8 @@ struct ChunkInfo {
 
 // static_assert(sizeof(struct ChunkInfo) == 0x20, "Size of Chunk Info must be a power of 2.");
 
+#define ALIGN_UP(x,y) (((x) + (y) - 1)/(y))*(y)
+
 #include "cutlass/gemm/threadblock/threadblock_swizzle.h"
 #include "cutlass/gemm/kernel/scclgemm.h"
 
@@ -64,31 +66,6 @@ namespace gemm {
 namespace device {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
-
-//TODO: Use MatrixCoord or Tensor4d ?
-struct Block2D {
-  int chunkStartRow;
-  int chunkStartCol;
-  int chunkRows;
-  int chunkCols;
-
-   Block2D(const ssize_t size, const int chunkIdx, const int chunkSize, const int numChunks, 
-                                     const int chunkRows, const int chunkCols, const int rows, const int ld) {
-    chunkStartRow = chunkIdx / numChunks * chunkRows;
-    chunkStartCol = chunkIdx % numChunks * chunkCols;
-    int nelem = min(chunkSize, (int)(size - (chunkStartRow * ld + (rows - chunkStartRow) * (ld - (ld - chunkStartCol)))));
-    this->chunkRows = min(min(nelem/chunkCols, chunkRows), rows - chunkStartRow);
-    this->chunkCols = chunkCols;
-  }
-
-   Block2D() :
-    chunkStartRow(-1), chunkStartCol(-1), chunkRows(-1), chunkCols(-1)
-  {}
-  
-  bool isValid() const {return chunkStartCol >= 0 && chunkStartRow >= 0 && chunkRows > 0 && chunkCols > 0;}
-   
-  int nelem() const {return chunkRows * chunkCols;}
-};
 
 /*! Gemm device-level operator. This is an interface to efficient CUTLASS GEMM kernels that may
   be invoked from host code.
@@ -323,6 +300,7 @@ class SCCLGemm {
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
     scclAlgorithm* scclAlgo;
+    std::vector<std::vector<NCCLChunk>> ncclChunks;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
 
@@ -345,6 +323,7 @@ class SCCLGemm {
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       scclAlgorithm* scclAlgo,
+      std::vector<std::vector<NCCLChunk>>& ncclChunks,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
       int split_k_slices = 1
@@ -355,6 +334,7 @@ class SCCLGemm {
       ref_C(ref_C_),
       ref_D(ref_D_),
       scclAlgo(scclAlgo),
+      ncclChunks(ncclChunks),
       epilogue(epilogue_),
       split_k_slices(split_k_slices) {
 
@@ -368,6 +348,13 @@ private:
   typename GemmKernel::Workspace workspace_;
   int *tileOrder;
   int workIndex;
+
+  //Workspace Buffer Offsets
+  size_t semaphoreOff;
+  size_t tileIdxOff;
+  size_t tileOrderOff;
+  size_t chunksForTileOff;
+  size_t chunkInfosOff;
 
 public:
 
@@ -397,7 +384,7 @@ public:
   }
 
   /// Gets the workspace size
-  static size_t get_workspace_size(Arguments const &args) {
+  size_t get_workspace_size(Arguments const &args) {
     
     size_t bytes = 0;
 
@@ -409,10 +396,35 @@ public:
       {ThreadblockShape::kM, ThreadblockShape::kN, ThreadblockShape::kK},
       args.split_k_slices);
     
+    semaphoreOff = 0;
+
     if (kSplitKSerial && args.split_k_slices > 1) {
 
       bytes += sizeof(int) * size_t(tiled_shape.m()) * size_t(tiled_shape.n());
     }
+
+    ALIGN_UP(bytes, 128);
+    
+    tileIdxOff = bytes;
+    bytes += sizeof(int);
+
+    ALIGN_UP(bytes, 128);
+    
+    tileOrderOff = bytes;
+    bytes += tiled_shape.m() * tiled_shape.n() * sizeof(int);
+    
+    ALIGN_UP(bytes, 128);
+
+    chunksForTileOff = bytes;
+    size_t numTotalChunks = 0;
+    bytes += numTotalChunks * sizeof(int);
+
+    ALIGN_UP(bytes, 128);
+
+    chunkInfosOff = bytes;
+    bytes += numTotalChunks * sizeof(ChunkInfo);
+
+    ALIGN_UP(bytes, 128);
 
     return bytes;
   }
@@ -450,6 +462,9 @@ public:
   /// Initializes GEMM state from arguments.
   Status initialize(Arguments const &args, int _workIndex = 0, void *workspace = nullptr, cudaStream_t stream = nullptr) {
 
+    if (workspace == nullptr) 
+      return Status::kErrorInternal;
+
     // Determine grid shape
     ThreadblockSwizzle threadblock_swizzle;
 
@@ -459,8 +474,8 @@ public:
       args.split_k_slices);
     
     workIndex = _workIndex;
-    //Do Chunk to Tile mapping
     
+    //Do Chunk to Tile mapping
     const int rows = args.problem_size.m();
     const int cols = args.problem_size.n();
     const size_t size = rows*cols;
@@ -522,9 +537,12 @@ public:
     int tilesForChunk = 0;
     
     //TODO: Scheduling of tiles is not ideal.
-    for (auto channelChunks: chunkBlocks) {
-      for (int channel = 0; channel < channelChunks.size(); channel++) {
-        auto block = channelChunks[channel].first;
+    for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
+      int it = 0;
+      for (auto ncclChunk : args.ncclChunks[bid]) {
+        auto block = ncclChunk.chunk;
+        if (block.chunkStartRow == -1)
+          break;
         int cy = block.chunkStartRow;
         int cx = block.chunkStartCol;
         int m = block.chunkRows;
@@ -554,8 +572,10 @@ public:
           }
         }
         
-        chunkInfos[chunkIndex/combinedChunks] = { tiles, 0, channelChunks[channel].second.bid, channelChunks[channel].second.syncVal};
+        chunkInfos[chunkIndex/combinedChunks] = { tiles, 0, 0, 1};
+        it++;
       }
+
     }
 
     int numTiles = (args.problem_size.m()/ThreadblockShape::kM)*(args.problem_size.n()/ThreadblockShape::kN);
@@ -833,6 +853,7 @@ class SCCLGemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
     scclAlgorithm* scclAlgo;
+    std::vector<NCCLChunk> ncclChunks;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
 
@@ -853,6 +874,7 @@ class SCCLGemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       scclAlgorithm* scclAlgo,
+      std::vector<NCCLChunk>& ncclChunks,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
       int split_k_slices = 1
@@ -863,6 +885,7 @@ class SCCLGemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       ref_C(ref_C_),
       ref_D(ref_D_),
       scclAlgo(scclAlgo),
+      ncclChunks(ncclChunks),
       epilogue(epilogue_),
       split_k_slices(split_k_slices) { }
   };
@@ -885,6 +908,7 @@ public:
       {args.ref_C.data(), args.ref_C.stride(0)},
       {args.ref_D.data(), args.ref_D.stride(0)},
       args.scclAlgo,
+      args.ncclChunks,
       args.epilogue,
       args.split_k_slices
     );

@@ -383,6 +383,31 @@ public:
     return Status::kSuccess;
   }
 
+  size_t get_max_chunks_for_tile(Arguments const& args) {
+    int maxChunksForTile = 0;
+    int maxChunkRows = 0;
+    int maxChunkCols = 0;
+    for (auto& blockChunks : args.ncclChunks) {
+      for (auto& chunk : blockChunks) {
+        maxChunkRows = max(maxChunkRows, chunk.chunk.chunkRows);
+        maxChunkCols = max(maxChunkCols, chunk.chunk.chunkCols);
+      }
+    }
+    
+    if (maxChunkRows % ThreadblockShape::kM == 0) {
+      maxChunksForTile = 1;
+    } else {
+      maxChunksForTile = 2;
+    }
+
+    if (maxChunkCols % ThreadblockShape::kN == 0) {
+      maxChunksForTile *= 1;
+    } else {
+      maxChunksForTile *= 2;
+    }
+    
+    return maxChunksForTile;
+  }
   /// Gets the workspace size
   size_t get_workspace_size(Arguments const &args) {
     
@@ -405,7 +430,7 @@ public:
 
     size_t numTotalChunks = 0;
     for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
-      numTotalChunks += args.ncclChunks.size();
+      numTotalChunks += args.ncclChunks[bid].size();
     }
 
     bytes = ALIGN_UP(bytes, 128);
@@ -415,15 +440,15 @@ public:
     bytes = ALIGN_UP(bytes, 128);
     
     tileOrderOff = bytes;
-    bytes += tiled_shape.m() * tiled_shape.n() * sizeof(int);
-    bytes = ALIGN_UP(bytes, 128);
-
-    chunksForTileOff = bytes;
-    bytes += numTotalChunks * sizeof(int);
+    bytes += tiled_shape.m() * tiled_shape.n() * 2 * sizeof(int);
     bytes = ALIGN_UP(bytes, 128);
 
     chunkInfosOff = bytes;
     bytes += numTotalChunks * sizeof(ChunkInfo);
+    bytes = ALIGN_UP(bytes, 128);
+
+    chunksForTileOff = bytes;
+    bytes += tiled_shape.m() * tiled_shape.n() * get_max_chunks_for_tile(args) * sizeof(int);
     bytes = ALIGN_UP(bytes, 128);
 
     return bytes;
@@ -434,9 +459,9 @@ public:
 #define COMPUTE_FLAG(__WORKINDEX__,__GRIDOFFSET_ITER__,__STEP__) \
    SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)__WORKINDEX__ + ((uint64_t)__GRIDOFFSET_ITER__ * SCCL_MAX_NUM_STEPS + (uint64_t)__STEP__)
   /// Initializes GEMM state from arguments.
-  Status initialize(Arguments const &args, int _workIndex = 0, void *workspace = nullptr, cudaStream_t stream = nullptr) {
+  Status initialize(Arguments const &args, int _workIndex = 0, void *workspacePtr = nullptr, cudaStream_t stream = nullptr) {
 
-    if (workspace == nullptr) 
+    if (workspacePtr == nullptr) 
       return Status::kErrorInternal;
 
     // Determine grid shape
@@ -455,7 +480,7 @@ public:
     
     int numTotalChunks = 0;
     for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
-      numTotalChunks += args.ncclChunks.size();
+      numTotalChunks += args.ncclChunks[bid].size();
     }
 
     ChunkInfo* chunkInfos = new ChunkInfo[numTotalChunks];
@@ -528,33 +553,29 @@ public:
       }
     }
 
-    //TODO: Create these as part of the workspace
-    int* dThreadBlockToTileMap;
-    int* dTileIdx;
-    int* dChunksForTile;
-    ChunkInfo* dChunkInfo;
+    //Transfer Host data to Device in the workspace
+    int* dTileIdx = (int*)(((char*)workspacePtr) + tileIdxOff);
+    int* dThreadBlockToTileMap = (int*)(((char*)workspacePtr) + tileOrderOff);
+    ChunkInfo* dChunkInfo = (ChunkInfo*)(((char*)workspacePtr) + chunkInfosOff);
+    int* dChunksForTile = (int*)(((char*)workspacePtr) + chunksForTileOff);
 
-    CUDACHECK(cudaMalloc(&dTileIdx, sizeof(int)));
     CUDACHECK(cudaMemset(dTileIdx, 0, sizeof(int)));
-    CUDACHECK(cudaMalloc(&dThreadBlockToTileMap, numTiles * 2 * sizeof(int)));
     CUDACHECK(cudaMemcpy(dThreadBlockToTileMap, &tileOrderAsPair[0], 
                          numTiles * 2 * sizeof(int), cudaMemcpyHostToDevice));
-    CUDACHECK(cudaMalloc(&dChunkInfo, sizeof(ChunkInfo) * numTotalChunks));
     CUDACHECK(cudaMemcpy(dChunkInfo, &chunkInfos[0], numTotalChunks * sizeof(ChunkInfo), cudaMemcpyHostToDevice));
-
-    CUDACHECK(cudaMalloc(&dChunksForTile, sizeof(int) * hChunksForTile.size()));
     CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
     workspace_ = {dTileIdx, dThreadBlockToTileMap, maxChunksForTile, dChunksForTile, dChunkInfo};
 
     if (kSplitKSerial) {
       if (args.split_k_slices > 1) {
-        if (!workspace) {
+        if (!workspacePtr) {
           return Status::kErrorWorkspaceNull;
         }
-
+        std::cerr << "Do not support split_k_slices > 1 " << std::endl;
+        return Status::kErrorInvalidProblem;
         size_t bytes = get_workspace_size(args);
       
-        cudaError_t result = cudaMemsetAsync(workspace, 0, bytes, stream);
+        cudaError_t result = cudaMemsetAsync(workspacePtr, 0, bytes, stream);
 
         if (result != cudaSuccess) {
           return Status::kErrorInternal;

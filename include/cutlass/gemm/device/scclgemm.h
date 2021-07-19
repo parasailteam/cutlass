@@ -403,59 +403,33 @@ public:
       bytes += sizeof(int) * size_t(tiled_shape.m()) * size_t(tiled_shape.n());
     }
 
-    ALIGN_UP(bytes, 128);
+    size_t numTotalChunks = 0;
+    for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
+      numTotalChunks += args.ncclChunks.size();
+    }
+
+    bytes = ALIGN_UP(bytes, 128);
     
     tileIdxOff = bytes;
     bytes += sizeof(int);
-
-    ALIGN_UP(bytes, 128);
+    bytes = ALIGN_UP(bytes, 128);
     
     tileOrderOff = bytes;
     bytes += tiled_shape.m() * tiled_shape.n() * sizeof(int);
-    
-    ALIGN_UP(bytes, 128);
+    bytes = ALIGN_UP(bytes, 128);
 
     chunksForTileOff = bytes;
-    size_t numTotalChunks = 0;
     bytes += numTotalChunks * sizeof(int);
-
-    ALIGN_UP(bytes, 128);
+    bytes = ALIGN_UP(bytes, 128);
 
     chunkInfosOff = bytes;
     bytes += numTotalChunks * sizeof(ChunkInfo);
-
-    ALIGN_UP(bytes, 128);
+    bytes = ALIGN_UP(bytes, 128);
 
     return bytes;
   }
 
   #define MIN(x,y) (((x) < (y)) ? (x) : (y))
-  #define SCCL_CHUNKSTEPS (NCCL_STEPS/2)
-  #define NCCL_STEPS 8
-
-  template<typename T>
-  static __host__ int getSCCLChunkSize(int buffSize, size_t size, int rows, int cols, int chunkCols, int nchunksPerLoop) {
-    const int stepSize = buffSize / (sizeof(T)*NCCL_STEPS);
-    int chunkSize = MIN(stepSize * SCCL_CHUNKSTEPS, DIVUP((cols*rows),nchunksPerLoop));
-    chunkSize = (chunkSize/cols) * cols;
-    //chunkSize should not have more than 'matrixRows' rows.
-    int chunkRows = MIN((chunkSize/chunkCols), (int)rows);
-
-    //Make chunkRows a perfect divisor of matrixRows;
-    for (; chunkRows >= 1; chunkRows--) {
-      if (rows % chunkRows == 0) {
-        break;
-      }
-    }
-    // printf("cols %d chunkSize %d chunkRows %d\n", cols, chunkSize, chunkRows);
-    chunkSize = chunkRows * chunkCols;
-    return chunkSize;
-  }
-
-  struct SyncInfo {
-    int bid;
-    uint64_t syncVal;
-  };
 
 #define COMPUTE_FLAG(__WORKINDEX__,__GRIDOFFSET_ITER__,__STEP__) \
    SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)__WORKINDEX__ + ((uint64_t)__GRIDOFFSET_ITER__ * SCCL_MAX_NUM_STEPS + (uint64_t)__STEP__)
@@ -478,78 +452,29 @@ public:
     //Do Chunk to Tile mapping
     const int rows = args.problem_size.m();
     const int cols = args.problem_size.n();
-    const size_t size = rows*cols;
-    std::vector<std::vector<std::pair<Block2D, SyncInfo>>> chunkBlocks;
-    int combinedRanks = 1;
+    
+    int numTotalChunks = 0;
+    for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
+      numTotalChunks += args.ncclChunks.size();
+    }
 
-    const int chunkld = args.scclAlgo->chunkld;
-    const int numChunks = cols/chunkld;
-    int chunkSize = getSCCLChunkSize<ElementC>(4194304, size, rows, cols, chunkld, args.scclAlgo->nchunksPerLoop);
-    int chunkRows = chunkSize/args.scclAlgo->chunkld;
-    int device = cudaGetDevice(&device);
-    const int numTotalChunks = (rows/chunkRows * cols/chunkld);
-    const int numScclChunks2D = numTotalChunks/args.scclAlgo->nchunksPerLoop;
     ChunkInfo* chunkInfos = new ChunkInfo[numTotalChunks];
-
-    if (numTotalChunks % args.scclAlgo->nchunksPerLoop != 0) {
-      return Status::kErrorInvalidProblem;
-    }
-
-    for (int bid = 0; bid < args.scclAlgo->nChannels; bid++) {
-      struct scclThreadBlock* scclTB = &args.scclAlgo->scclTB[bid];
-      const int channelId = scclTB->channelId;
-      uint32_t scclMaxAllowedCount = 1;// TODO: fix this args->scclMaxAllowedCount;
-      
-      chunkBlocks.push_back(std::vector<std::pair<Block2D, SyncInfo>>());
-      for (int iter = 0, gridChunkIdx = 0; gridChunkIdx < numScclChunks2D; gridChunkIdx += 1, iter++) {
-        for (int step = 0; step < scclTB->nsteps; step++) {
-          struct scclTransfer* sccltran = &scclTB->transfers[step];
-          int count = sccltran->count;
-
-          for (int c = 0; c < count; c += scclMaxAllowedCount) {     
-            int dstChunkIdx = gridChunkIdx + (sccltran->dstoffset + c)*numScclChunks2D;
-            int srcChunkIdx = gridChunkIdx + (sccltran->srcoffset + c)*numScclChunks2D;
-            
-            int thisCount = min(scclMaxAllowedCount, count-c);
-            
-            const Block2D srcBlock = Block2D(size, srcChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
-            const Block2D dstBlock = Block2D(size, dstChunkIdx, chunkSize, numChunks, chunkRows, chunkld, rows, cols);
-          
-            if (sccltran->type == SCCL_SEND || sccltran->type == SCCL_RECV_COPY_SEND || sccltran->type == SCCL_RECV_REDUCE_SEND || sccltran->type == SCCL_RECV_REDUCE_COPY || sccltran->type == SCCL_RECV_REDUCE_COPY_SEND) {
-              struct SyncInfo syncInfo;
-
-              syncInfo.bid = bid;
-              syncInfo.syncVal = COMPUTE_FLAG(0, iter, step);
-              //Consider only where input buffer is involved
-              chunkBlocks[chunkBlocks.size() - 1].push_back(std::make_pair(srcBlock, syncInfo));
-            }
-
-            // printf("%d [%d, %d] step %d nelem %d, src: [%d, %d]; [%d, %d] nelem %d, dst: [%d, %d]; [%d, %d] \n", __LINE__, 0, bid, step, srcBlock.nelem(), srcBlock.chunkStartRow, srcBlock.chunkStartCol, srcBlock.chunkRows, srcBlock.chunkCols,
-            //        dstBlock.nelem(), dstBlock.chunkStartRow, dstBlock.chunkStartCol, dstBlock.chunkRows, dstBlock.chunkCols);
-          }
-        }
-      }
-    }
+    int device = cudaGetDevice(&device);
 
     std::set<std::pair<int, int>> chunkTBs;
     std::vector<int> tileOrderAsPair;
     std::map<int, std::set<int>> tileToChunks;
-    int tilesForChunk = 0;
     
     //TODO: Scheduling of tiles is not ideal.
     for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
-      int it = 0;
       for (auto ncclChunk : args.ncclChunks[bid]) {
         auto block = ncclChunk.chunk;
-        if (block.chunkStartRow == -1)
-          break;
         int cy = block.chunkStartRow;
         int cx = block.chunkStartCol;
         int m = block.chunkRows;
         int n = block.chunkCols;
 
-        int chunkIndex = cy/chunkRows * args.problem_size.n()/args.scclAlgo->chunkld + cx/args.scclAlgo->chunkld;
-
+        int chunkIndex = cy/m * args.problem_size.n()/n + cx/n;
         //For a chunk get all tiles required to obtain this chunk
         int startTy = (cy/ ThreadblockShape::kM) * ThreadblockShape::kM;
         int tiles = 0;
@@ -573,7 +498,6 @@ public:
         }
         
         chunkInfos[chunkIndex/combinedChunks] = { tiles, 0, 0, 1};
-        it++;
       }
 
     }
@@ -581,6 +505,7 @@ public:
     int numTiles = (args.problem_size.m()/ThreadblockShape::kM)*(args.problem_size.n()/ThreadblockShape::kN);
 
     if (tileOrderAsPair.size() != 2*numTiles) {
+      std::cerr << "number of tiles scheduled " << tileOrderAsPair.size() << " != " << " 2 * total tiles " << (2 * numTiles) << std::endl;
       return Status::kErrorInternal;
     }
 

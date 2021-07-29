@@ -32,14 +32,15 @@
 #include "cutlass/numeric_types.h"
 #include "cutlass/arch/arch.h"
 #include "cutlass/device_kernel.h"
-#include "cutlass/scclAlgorithm.h"
+#include "nccl.h"
 #define SCCL_MAX_ITER 65536
+#define COMPUTE_FLAG_INDEX(__BID__,__GRIDOFFSET_ITER__,__STEP__) \
+   SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*__BID__ + (__GRIDOFFSET_ITER__ * SCCL_MAX_NUM_STEPS + __STEP__)
 
 struct ChunkInfo {
   int numTiles;
   int status;
-  int bid;
-  uint64_t syncVal;
+  int flagsIndex;
 };
 
 // static_assert(sizeof(struct ChunkInfo) == 0x20, "Size of Chunk Info must be a power of 2.");
@@ -299,7 +300,8 @@ class SCCLGemm {
     TensorRef<ElementB const, LayoutB> ref_B;
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
-    scclAlgorithm* scclAlgo;
+    scclFlag* scclFlags;
+    int flagsPerBlock;
     std::vector<std::vector<NCCLChunk>> ncclChunks;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
@@ -309,20 +311,21 @@ class SCCLGemm {
     //
 
     /// Default ctor
-    CUTLASS_HOST_DEVICE
+    
     Arguments(): problem_size(0, 0, 0), split_k_slices(1) {
 
     }
 
     /// Constructs an Arguments structure 
-    CUTLASS_HOST_DEVICE
+    
     Arguments(
       GemmCoord problem_size_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
-      scclAlgorithm* scclAlgo,
+      scclFlag* scclFlags,
+      int flagsPerBlock,
       std::vector<std::vector<NCCLChunk>>& ncclChunks,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
@@ -333,7 +336,8 @@ class SCCLGemm {
       ref_B(ref_B_),
       ref_C(ref_C_),
       ref_D(ref_D_),
-      scclAlgo(scclAlgo),
+      scclFlags(scclFlags),
+      flagsPerBlock(flagsPerBlock),
       ncclChunks(ncclChunks),
       epilogue(epilogue_),
       split_k_slices(split_k_slices) {
@@ -389,18 +393,22 @@ public:
     int maxChunkCols = 0;
     for (auto& blockChunks : args.ncclChunks) {
       for (auto& chunk : blockChunks) {
-        maxChunkRows = max(maxChunkRows, chunk.chunk.chunkRows);
-        maxChunkCols = max(maxChunkCols, chunk.chunk.chunkCols);
+        maxChunkRows = max(maxChunkRows, chunk.chunk.rows);
+        maxChunkCols = max(maxChunkCols, chunk.chunk.cols);
       }
     }
-    
-    if (maxChunkRows % ThreadblockShape::kM == 0) {
+
+    if (maxChunkRows < ThreadblockShape::kM) {
+      maxChunksForTile = ThreadblockShape::kM/maxChunkRows;
+    } else if (maxChunkRows % ThreadblockShape::kM == 0) {
       maxChunksForTile = 1;
     } else {
       maxChunksForTile = 2;
     }
 
-    if (maxChunkCols % ThreadblockShape::kN == 0) {
+    if (maxChunkCols < ThreadblockShape::kN) {
+      maxChunksForTile *= ThreadblockShape::kN/maxChunkCols;
+    } else if (maxChunkCols % ThreadblockShape::kN == 0) {
       maxChunksForTile *= 1;
     } else {
       maxChunksForTile *= 2;
@@ -479,34 +487,39 @@ public:
     const int cols = args.problem_size.n();
     
     int numTotalChunks = 0;
+    int maxChunks = 0;
     for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
       numTotalChunks += args.ncclChunks[bid].size();
+      maxChunks = max((int)args.ncclChunks[bid].size(), maxChunks);
     }
 
-    ChunkInfo* chunkInfos = new ChunkInfo[numTotalChunks];
-    int device = cudaGetDevice(&device);
-
+    std::vector<ChunkInfo> chunkInfos = std::vector<ChunkInfo>(numTotalChunks);
     std::set<std::pair<int, int>> chunkTBs;
     std::vector<int> tileOrderAsPair;
     std::map<int, std::set<int>> tileToChunks;
-    
-    //TODO: Scheduling of tiles is not ideal.
-    for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
-      for (auto ncclChunk : args.ncclChunks[bid]) {
+    int gpuid;
+    cudaGetDevice(&gpuid);
+    //Schedule tiles of first chunk of all blocks.
+    //Then second chunk of all blocks, and so on.
+    for (auto chunk = 0; chunk < maxChunks; chunk++) {
+      for (int bid = 0; bid < args.ncclChunks.size(); bid++) {
+        if (chunk >= args.ncclChunks[bid].size())
+          continue;
+        auto ncclChunk = args.ncclChunks[bid][chunk];
         auto block = ncclChunk.chunk;
-        int cy = block.chunkStartRow;
-        int cx = block.chunkStartCol;
-        int m = block.chunkRows;
-        int n = block.chunkCols;
+        int cy = block.startRow;
+        int cx = block.startCol;
+        int m = block.rows;
+        int n = block.cols;
 
-        int chunkIndex = cy/m * args.problem_size.n()/n + cx/n;
+        int chunkIndex = cy/m * (cols/n) + cx/n;
         //For a chunk get all tiles required to obtain this chunk
         int startTy = (cy/ ThreadblockShape::kM) * ThreadblockShape::kM;
         int tiles = 0;
         int combinedChunks = 1;
-        for (int ty = startTy; ty < min(cy + m, args.problem_size.m()); ty += ThreadblockShape::kM) {
-          for (int tx = cx; tx < min(cx + n, args.problem_size.n()); tx += ThreadblockShape::kN) {
-            int tileIndex = ty/ThreadblockShape::kM * (args.problem_size.n()/ThreadblockShape::kN) + tx/ThreadblockShape::kN;
+        for (int ty = startTy; ty < min(cy + m, rows); ty += ThreadblockShape::kM) {
+          for (int tx = cx; tx < min(cx + n, cols); tx += ThreadblockShape::kN) {
+            int tileIndex = ty/ThreadblockShape::kM * (cols/ThreadblockShape::kN) + tx/ThreadblockShape::kN;
             if (tileToChunks[tileIndex].count(chunkIndex/combinedChunks) == 0) {
               tileToChunks[tileIndex].insert(chunkIndex/combinedChunks);
             }
@@ -520,14 +533,13 @@ public:
 
             tiles++;
           }
-        }
-        
-        chunkInfos[chunkIndex/combinedChunks] = { tiles, 0, 0, 1};
+        } 
+        // if (gpuid == 0) printf("gpuid %d chunkIndex %d (%d, %d):(%dx%d) tiles %d index %d\n", gpuid, chunkIndex, cy, cx, m, n, tiles, ncclChunk.bid *  args.flagsPerBlock + ncclChunk.iter);
+        chunkInfos[chunkIndex/combinedChunks] = { tiles, 0, ncclChunk.bid * args.flagsPerBlock + ncclChunk.iter};
       }
-
     }
 
-    int numTiles = (args.problem_size.m()/ThreadblockShape::kM)*(args.problem_size.n()/ThreadblockShape::kN);
+    int numTiles = grid_shape.m()*grid_shape.n();
 
     if (tileOrderAsPair.size() != 2*numTiles) {
       std::cerr << "number of tiles scheduled " << tileOrderAsPair.size() << " != " << " 2 * total tiles " << (2 * numTiles) << std::endl;
@@ -562,9 +574,12 @@ public:
     CUDACHECK(cudaMemset(dTileIdx, 0, sizeof(int)));
     CUDACHECK(cudaMemcpy(dThreadBlockToTileMap, &tileOrderAsPair[0], 
                          numTiles * 2 * sizeof(int), cudaMemcpyHostToDevice));
-    CUDACHECK(cudaMemcpy(dChunkInfo, &chunkInfos[0], numTotalChunks * sizeof(ChunkInfo), cudaMemcpyHostToDevice));
-    CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), cudaMemcpyHostToDevice));
-    workspace_ = {dTileIdx, dThreadBlockToTileMap, maxChunksForTile, dChunksForTile, dChunkInfo};
+    CUDACHECK(cudaMemcpy(dChunkInfo, &chunkInfos[0], numTotalChunks * sizeof(ChunkInfo), 
+                         cudaMemcpyHostToDevice));
+    CUDACHECK(cudaMemcpy(dChunksForTile, &hChunksForTile[0], hChunksForTile.size() * sizeof(int), 
+                         cudaMemcpyHostToDevice));
+
+    workspace_ = {dTileIdx, dThreadBlockToTileMap, maxChunksForTile, dChunksForTile, dChunkInfo, gpuid};
 
     if (kSplitKSerial) {
       if (args.split_k_slices > 1) {
@@ -583,7 +598,6 @@ public:
       }
     }
     else {
-
       if (args.split_k_slices > 1) {
         return Status::kErrorInvalidProblem;
       }
@@ -597,7 +611,7 @@ public:
       args.ref_B.non_const_ref(),
       args.ref_C.non_const_ref(),
       args.ref_D,
-      args.scclAlgo->flags,
+      args.scclFlags,
       _workIndex,
       workspace_,
       args.epilogue,
@@ -798,8 +812,9 @@ class SCCLGemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     TensorRef<ElementB const, LayoutB> ref_B;
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
-    scclAlgorithm* scclAlgo;
+    scclFlag* scclFlags;
     std::vector<NCCLChunk> ncclChunks;
+    int flagsPerBlock;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
 
@@ -819,7 +834,8 @@ class SCCLGemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       TensorRef<ElementB const, LayoutB> ref_B_,
       TensorRef<ElementC const, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
-      scclAlgorithm* scclAlgo,
+      scclFlag* scclFlags,
+      int flagsPerBlock,
       std::vector<NCCLChunk>& ncclChunks,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
@@ -830,7 +846,8 @@ class SCCLGemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       ref_B(ref_B_),
       ref_C(ref_C_),
       ref_D(ref_D_),
-      scclAlgo(scclAlgo),
+      scclFlags(scclFlags),
+      flagsPerBlock(flagsPerBlock),
       ncclChunks(ncclChunks),
       epilogue(epilogue_),
       split_k_slices(split_k_slices) { }
@@ -853,7 +870,8 @@ public:
       {args.ref_A.data(), args.ref_A.stride(0)},
       {args.ref_C.data(), args.ref_C.stride(0)},
       {args.ref_D.data(), args.ref_D.stride(0)},
-      args.scclAlgo,
+      args.scclFlags,
+      args.flagsPerBlock,
       args.ncclChunks,
       args.epilogue,
       args.split_k_slices

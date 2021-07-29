@@ -67,6 +67,7 @@ struct SCCLGemm {
     int maxChunksForTile;
     int* chunksForTile;
     ChunkInfo* chunkInfos;
+    int device;
     int* semaphore;
   };
 
@@ -197,12 +198,20 @@ struct SCCLGemm {
     return Status::kSuccess;
   }
 
+  static inline __device__ uint getSMID(void) {
+  uint ret;
+  asm("mov.u32 %0, %smid;" : "=r"(ret));
+  return ret;
+}
+
   /// Executes one GEMM
   CUTLASS_DEVICE
   void operator()(Params const &params, SharedStorage &shared_storage) {
 
     // Compute threadblock location
     ThreadblockSwizzle threadblock_swizzle;
+    // if (threadIdx.x == 0 && params.workspace.device == 0)
+    //   printf("blockIdx %d, %d sm %d\n", blockIdx.x, blockIdx.y, getSMID());
 
     int* atomicTBIndex = params.workspace.tileIdx;
     int* threadBlockTileIndex = params.workspace.threadBlockToTileMap;
@@ -212,23 +221,27 @@ struct SCCLGemm {
       int tbIndex;
 
       if (threadIdx.x == 0)
-        _tbIndex = atomicAdd(atomicTBIndex, 1) - (params.currWorkIndex - params.startWorkIndex) * params.grid_tiled_shape.m()*params.grid_tiled_shape.n(); //blockIdx.y * gridDim.x + blockIdx.x; 
+        _tbIndex = atomicAdd(atomicTBIndex, 1) - (params.currWorkIndex - params.startWorkIndex) * params.grid_tiled_shape.m()*params.grid_tiled_shape.n(); // blockIdx.y * gridDim.x + blockIdx.x;
       
       tbIndex = __shfl_sync(0b11, _tbIndex, 0, 2);
-
+      // if (threadIdx.x == 0 && _tbIndex >= 1536/2) 
+      //   printf("tbIndex %d atomicTBIndex %p (params.currWorkIndex - params.startWorkIndex) %d totaltbs %d\n", _tbIndex, atomicTBIndex, (params.currWorkIndex - params.startWorkIndex), gridDim.x*gridDim.y);
       *((int*)shared_storage.epilogue.data() + threadIdx.x) = threadBlockTileIndex[2*tbIndex + threadIdx.x];
     }
 
     __syncthreads();
     int tbIndexM = *((int*)shared_storage.epilogue.data());
     int tbIndexN = *((int*)shared_storage.epilogue.data() + 1);
-
+      // if (threadIdx.x == 0 && (tbIndexM == 33 || tbIndexM == 32) && tbIndexN <= 24) {
+      //   printf("219 %d, %d; %dx%d  %d\n", tbIndexM, tbIndexN, gridDim.x, gridDim.y, (params.currWorkIndex - params.startWorkIndex) * params.grid_tiled_shape.m()*params.grid_tiled_shape.n());
+      // }
     cutlass::gemm::GemmCoord threadblock_tile_offset = cutlass::gemm::GemmCoord(tbIndexM, tbIndexN, 0);
-
+    // if (tbIndexM >= 50 && threadIdx.x == 0) 
+    //   printf("tbIndexM %d tbIndexN %d\n", tbIndexM, tbIndexN);
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
       params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
-
+      // printf("233: %d x %d\n", threadblock_tile_offset.m(), threadblock_tile_offset.n());
       return;
     }
 
@@ -386,13 +399,15 @@ struct SCCLGemm {
     if (threadIdx.x < params.workspace.maxChunksForTile && threadIdx.y == 0) {
       int tile = threadblock_tile_offset.m() * params.grid_tiled_shape.n() + threadblock_tile_offset.n();
       int chunk = params.workspace.chunksForTile[tile * params.workspace.maxChunksForTile + threadIdx.x]; // x ("m") * (number of y-dim ("n") tiles) + y ("n"
+      
+      // if (threadblock_tile_offset.m() * Mma::Shape::kM ==2048 && threadblock_tile_offset.n() * Mma::Shape::kN == 1024)
+      //     printf("393: chunkIndex %d chunkStatus %d %d x %d ; %d x %d\n",chunk, params.workspace.chunkInfos[chunk].status, tbIndexM, tbIndexN, threadblock_tile_offset.m(), threadblock_tile_offset.n());
       if (chunk != -1) {
         int chunkStatus = atomicAdd(&params.workspace.chunkInfos[chunk].status, 1);
-        if (params.workspace.chunkInfos[chunk].status == (params.currWorkIndex - params.startWorkIndex + 1)*params.workspace.chunkInfos[chunk].numTiles) {
-          int bid = params.workspace.chunkInfos[chunk].bid;
-          unsigned long long syncVal = params.workspace.chunkInfos[chunk].syncVal;
-          syncVal += SCCL_MAX_ITER*SCCL_MAX_NUM_STEPS*(uint64_t)(params.currWorkIndex + 1);
-          atomicMax((unsigned long long*)&params.scclFlags[bid].flag, syncVal);
+        int goalChunkStatus = (params.currWorkIndex - params.startWorkIndex + 1)*params.workspace.chunkInfos[chunk].numTiles;
+        if (params.workspace.chunkInfos[chunk].status == goalChunkStatus) {
+          int index = params.workspace.chunkInfos[chunk].flagsIndex;
+          params.scclFlags[index].flag = params.currWorkIndex + 1;
         }
       }
     }

@@ -116,7 +116,10 @@ cudaError_t CutlassSgemmNN(
 
   // Define a CUTLASS GEMM type
   CutlassGemm gemm_operator;
-
+  cudaStream_t producer_stream;
+  CUDA_CHECK(cudaStreamCreate(&producer_stream));
+  cudaStream_t consumer_stream;
+  CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   // Construct the CUTLASS GEMM arguments object.
   //
   // One of CUTLASS's design patterns is to define gemm argument objects that are constructible
@@ -129,6 +132,7 @@ cudaError_t CutlassSgemmNN(
   int* outputTileStatsMap;
   OverlapHandle handle(M, N, 1, 1);
   handle.allocTileStatusMap(128, 128, 1);
+  handle.producerOrConsumer_ = true;
   //C = A * B
   CutlassGemm::Arguments args(handle,
                               {M, N, K},  // Gemm Problem dimensions
@@ -142,9 +146,11 @@ cudaError_t CutlassSgemmNN(
   // Launch the CUTLASS GEMM kernel.
   //
   
-  cutlass::Status status = gemm_operator(args);
+  cutlass::Status status = gemm_operator(args, NULL, producer_stream);
   assert(M == M2);
   assert(N == K2);
+  
+  handle.producerOrConsumer_ = false;
 
   //E = C * D
   CutlassGemm::Arguments args2(handle,
@@ -159,7 +165,7 @@ cudaError_t CutlassSgemmNN(
 // Launch the CUTLASS GEMM kernel.
 //
 
-status = gemm_operator(args2);
+status = gemm_operator(args2, NULL, consumer_stream);
 
   //
   // Return a cudaError_t if the CUTLASS GEMM operator returned an error code.
@@ -168,6 +174,7 @@ status = gemm_operator(args2);
   if (status != cutlass::Status::kSuccess) {
     return cudaErrorUnknown;
   }
+  CUDA_CHECK(cudaDeviceSynchronize());
 
   // Return success, if no errors were encountered.
   return cudaSuccess;

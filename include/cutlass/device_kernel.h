@@ -46,7 +46,8 @@ template <typename Operator>
 __global__
 void Kernel(typename Operator::Params params, OverlapHandle overlapHandle) {
   // Wait for tile of this thread block to be processed by other kernel
-  //overlapHandle.waitOnTile(blockIdx.x, blockIdx.y, blockIdx.z, 1);
+  if (overlapHandle.isConsumer())
+    overlapHandle.waitOnTile(blockIdx.x, blockIdx.y, blockIdx.z, 1);
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 
@@ -59,7 +60,8 @@ void Kernel(typename Operator::Params params, OverlapHandle overlapHandle) {
   op(params, *shared_storage);
 
   //Tile of this thread block is processed
-  //overlapHandle.setTileStatus(blockIdx.x, blockIdx.y, blockIdx.z, 1);
+  if (overlapHandle.isProducer())
+    overlapHandle.setTileStatus(blockIdx.x, blockIdx.y, blockIdx.z, 1);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

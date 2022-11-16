@@ -72,7 +72,7 @@ template <
   typename Element_,         ///< Element data type
   bool ScatterD = false,     ///< Scatter D operand or not
   typename PermuteDLayout = layout::NoPermute,     ///< Permute D operand or not
-  bool UseCUDAStore = false
+  bool UseCUDAStore = true
 >
 class PredicatedTileIterator {
 public:
@@ -378,6 +378,7 @@ public:
   CUTLASS_DEVICE
   void store_with_byte_offset(Fragment const &frag, int64_t byte_offset) const {
     uint8_t *byte_pointer = store_byte_pointer_;
+    // *byte_pointer = 0.0;
     AccessType const *frag_ptr = reinterpret_cast<AccessType const *>(&frag);
 
     CUTLASS_PRAGMA_UNROLL
@@ -400,21 +401,21 @@ public:
 
           AccessType *memory_pointer = reinterpret_cast<AccessType *>(byte_pointer + byte_offset);
 
-          if (ScatterD && row_guard) {
+          /*if (ScatterD && row_guard) {
             assert(indices_);
 
             memory_pointer = reinterpret_cast<AccessType *>(byte_pointer + byte_offset +
               LongIndex(indices_[row_offset + thread_start_row_]) * LongIndex(params_.stride));
-          }
+          }*/
 
           CUTLASS_PRAGMA_UNROLL
           for (int column = 0; column < ThreadMap::Iterations::kColumn; ++column) {
 
             bool guard = row_guard && mask_.predicates[column];
 
-            int col_offset = column * ThreadMap::Delta::kColumn;
+            // int col_offset = column * ThreadMap::Delta::kColumn;
             
-            if (PermuteD) {
+            /*if (PermuteD) {
               int col = col_offset + thread_start_column_;
               int row = row_offset + thread_start_row_;
 
@@ -423,10 +424,11 @@ public:
               // Locate memory_pointer
               memory_pointer = reinterpret_cast<AccessType *>(byte_pointer + byte_offset
                  + permute_layout_(init_coord) * sizeof(AccessType) / kElementsPerAccess);
-            }
+            }*/
 
             if (UseCUDAStore) {
               if (guard) {
+                #pragma overlap
                 memory_pointer[0] =
                     frag_ptr[frag_row_idx * ThreadMap::Iterations::kColumn + column];
               }

@@ -58,6 +58,8 @@
 #include <sstream>
 #include <vector>
 
+#include "cutlass/overlap_handle.h"
+
 // Helper methods to check for errors
 #include "helper.h"
 
@@ -119,7 +121,11 @@ cudaError_t CutlassSgemmNN(
   // The benefits of this pattern are (1.) a structured, composable strategy for passing host-constructible
   // arguments to kernels and (2.) minimized initialization overhead on kernel entry.
   //
-  CutlassGemm::Arguments args({M , N, K},  // Gemm Problem dimensions
+  int* outputTileStatsMap;
+  OverlapHandle handle(M, N, 1, 1);
+  handle.allocTileStatusMap(128, 128, 1);
+  CutlassGemm::Arguments args(handle,
+                              {M, N, K},  // Gemm Problem dimensions
                               {A, lda},    // Tensor-ref for source matrix A
                               {B, ldb},    // Tensor-ref for source matrix B
                               {C, ldc},    // Tensor-ref for source matrix C

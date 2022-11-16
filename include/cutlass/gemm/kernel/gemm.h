@@ -42,6 +42,8 @@
 #include "cutlass/semaphore.h"
 #include "cutlass/arch/arch.h"
 
+#include "cutlass/overlap_handle.h"
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -70,6 +72,7 @@ struct Gemm {
 
   /// Parameters structure
   struct Params {
+    OverlapHandle overlap_handle;
     cutlass::gemm::GemmCoord problem_size;
     cutlass::gemm::GemmCoord grid_tiled_shape;
     int swizzle_log_tile;
@@ -98,6 +101,7 @@ struct Gemm {
 
     CUTLASS_HOST_DEVICE
     Params(
+      OverlapHandle overlap_handle,
       cutlass::gemm::GemmCoord const & problem_size,
       cutlass::gemm::GemmCoord const & grid_tiled_shape,
       typename Mma::IteratorA::TensorRef ref_A,
@@ -110,6 +114,7 @@ struct Gemm {
       int const *gather_B_indices = nullptr,
       int const *scatter_D_indices = nullptr
     ):
+      overlap_handle(overlap_handle),
       problem_size(problem_size),
       grid_tiled_shape(grid_tiled_shape),
       swizzle_log_tile(ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
@@ -125,7 +130,7 @@ struct Gemm {
       gather_A_indices(gather_A_indices),
       gather_B_indices(gather_B_indices),
       scatter_D_indices(scatter_D_indices) {
-
+      // printf("128: swizzle_log_tile %d\n", swizzle_log_tile);
       int total_gemm_k_iterations = (problem_size.k() + Mma::Shape::kK - 1) / Mma::Shape::kK;
       int gemm_k_iterations = (total_gemm_k_iterations + grid_tiled_shape.k() - 1) / grid_tiled_shape.k();
       
@@ -201,7 +206,6 @@ struct Gemm {
   /// Executes one GEMM
   CUTLASS_DEVICE
   void operator()(Params const &params, SharedStorage &shared_storage) {
-
     // Compute threadblock location
     ThreadblockSwizzle threadblock_swizzle;
 
@@ -214,7 +218,7 @@ struct Gemm {
 
       return;
     }
-
+    // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
     // Compute initial location in logical coordinates
     cutlass::MatrixCoord tb_offset_A{
       threadblock_tile_offset.m() * Mma::Shape::kM,
@@ -369,6 +373,8 @@ struct Gemm {
 
       semaphore.release(lock);
     }
+
+    // setTileStatus(blockIdx.x, blockIdx.y, blockIdx.z, 1);
   }
 };
 

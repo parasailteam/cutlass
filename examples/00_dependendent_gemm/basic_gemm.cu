@@ -132,6 +132,7 @@ cudaError_t CutlassSgemmNN(
   //
   
   for (int r = 0; r < iters; r++) {
+    handle.iter += 1;
     handle.producerOrConsumer_ = true;
     //C = A * B
     CutlassGemm::Arguments args(handle,
@@ -567,7 +568,16 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     // Verify.
     //
     CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
-    
+    //warmup
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, 10);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    if (result != cudaSuccess) {
+      std::cerr << "CUTLASS GEMM kernel failed: "
+        << cudaGetErrorString(result) << std::endl;
+      return result;
+    }
+
     CUDA_CHECK(cudaEventRecord(start, producer_stream));
     
     result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, epochs);
@@ -600,6 +610,17 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
       return result;
     }
 
+    CUDA_CHECK(cudaMemset(C_cutlass, 0, sizeof_C));
+    CUDA_CHECK(cudaMemset(C_reference, 0, sizeof_C));
+    CUDA_CHECK(cudaMemset(E_cutlass, 0, sizeof_E));
+    CUDA_CHECK(cudaMemset(E_reference, 0, sizeof_E));
+    
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, 1);
+    if (result != cudaSuccess) {
+      std::cerr << "CUTLASS GEMM kernel failed: "
+        << cudaGetErrorString(result) << std::endl;
+      return result;
+    }
     CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
 
     
@@ -669,9 +690,9 @@ int main(int argc, const char *arg[]) {
     problem[0],     // GEMM M dimension
     problem[1],     // GEMM N dimension
     problem[2],     // GEMM K dimension
+    problem[3],     // 2nd GEMM L dimension
     scalars[0],     // alpha
-    scalars[1],     // beta
-    problem[3]     // 2nd GEMM L dimension
+    scalars[1]     // beta
   );
 
 

@@ -569,14 +569,14 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     //
     CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
     //warmup
-    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, 10);
-    CUDA_CHECK(cudaDeviceSynchronize());
+    // result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, 10);
+    // CUDA_CHECK(cudaDeviceSynchronize());
 
-    if (result != cudaSuccess) {
-      std::cerr << "CUTLASS GEMM kernel failed: "
-        << cudaGetErrorString(result) << std::endl;
-      return result;
-    }
+    // if (result != cudaSuccess) {
+    //   std::cerr << "CUTLASS GEMM kernel failed: "
+    //     << cudaGetErrorString(result) << std::endl;
+    //   return result;
+    // }
 
     CUDA_CHECK(cudaEventRecord(start, producer_stream));
     
@@ -621,6 +621,7 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
         << cudaGetErrorString(result) << std::endl;
       return result;
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
     CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
 
     
@@ -632,6 +633,7 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
       return result;
     }
     CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream));
     double endTime = convertTimeValToDouble(getTimeOfDay());
     double elapsedTime = (endTime - startTime)/1e3; //convert from microseconds to milliseconds
     // printf("612: endTime %lf startTime %lf elapsed %lf\n",  endTime, startTime, endTime - startTime);

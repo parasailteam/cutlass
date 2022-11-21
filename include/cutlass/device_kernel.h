@@ -46,8 +46,11 @@ template <typename Operator>
 __global__
 void Kernel(typename Operator::Params params, OverlapHandle overlapHandle) {
   // Wait for tile of this thread block to be processed by other kernel
-  if (overlapHandle.enable() && overlapHandle.isConsumer())
-    overlapHandle.waitOnTile(blockIdx.x, blockIdx.y, blockIdx.z, 1);
+  if (overlapHandle.enable() && overlapHandle.isConsumer()) {
+    for (int col = 0; col < overlapHandle.ySize; col += 128)
+      //TODO: Can combine all into one
+      overlapHandle.waitOnTile(col/128, blockIdx.y, blockIdx.z, 1);
+  }
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 

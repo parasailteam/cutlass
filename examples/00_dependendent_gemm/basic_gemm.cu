@@ -94,7 +94,10 @@ cudaError_t CutlassSgemmNN(
   float* D,
   int ldd,
   float* E,
-  int lde) {
+  int lde,
+  OverlapHandle& handle,
+  cudaStream_t producer_stream, cudaStream_t consumer_stream,
+  int iters = 100) {
 
   // Define type definition for single-precision CUTLASS GEMM with column-major
   // input matrices and 128x128x8 threadblock tile size (chosen by default).
@@ -113,13 +116,11 @@ cudaError_t CutlassSgemmNN(
                                                   ColumnMajor,  // Layout of B matrix
                                                   float,        // Data-type of C matrix
                                                   ColumnMajor>; // Layout of C matrix
+  
+  CutlassGemm gemm_operator;
 
   // Define a CUTLASS GEMM type
-  CutlassGemm gemm_operator;
-  cudaStream_t producer_stream;
-  CUDA_CHECK(cudaStreamCreate(&producer_stream));
-  cudaStream_t consumer_stream;
-  CUDA_CHECK(cudaStreamCreate(&consumer_stream));
+
   // Construct the CUTLASS GEMM arguments object.
   //
   // One of CUTLASS's design patterns is to define gemm argument objects that are constructible
@@ -129,52 +130,51 @@ cudaError_t CutlassSgemmNN(
   // The benefits of this pattern are (1.) a structured, composable strategy for passing host-constructible
   // arguments to kernels and (2.) minimized initialization overhead on kernel entry.
   //
-  int* outputTileStatsMap;
-  OverlapHandle handle(M, N, 1, 1);
-  handle.allocTileStatusMap(128, 128, 1);
-  handle.producerOrConsumer_ = true;
-  //C = A * B
-  CutlassGemm::Arguments args(handle,
-                              {M, N, K},  // Gemm Problem dimensions
-                              {A, lda},    // Tensor-ref for source matrix A
-                              {B, ldb},    // Tensor-ref for source matrix B
-                              {C, ldc},    // Tensor-ref for source matrix C
-                              {C, ldc},    // Tensor-ref for destination matrix D (may be different memory than source C matrix)
-                              {alpha, beta}); // Scalars used in the Epilogue
-
-  //
-  // Launch the CUTLASS GEMM kernel.
-  //
   
-  cutlass::Status status = gemm_operator(args, NULL, producer_stream);
-  assert(M == M2);
-  assert(N == K2);
-  
-  handle.producerOrConsumer_ = false;
+  for (int r = 0; r < iters; r++) {
+    handle.producerOrConsumer_ = true;
+    //C = A * B
+    CutlassGemm::Arguments args(handle,
+                                {M, N, K},  // Gemm Problem dimensions
+                                {A, lda},    // Tensor-ref for source matrix A
+                                {B, ldb},    // Tensor-ref for source matrix B
+                                {C, ldc},    // Tensor-ref for source matrix C
+                                {C, ldc},    // Tensor-ref for destination matrix D (may be different memory than source C matrix)
+                                {alpha, beta}); // Scalars used in the Epilogue
 
-  //E = C * D
-  CutlassGemm::Arguments args2(handle,
-    {M2, N2, K2},  // Gemm Problem dimensions
-    {C, ldc},    // Tensor-ref for source matrix A
-    {D, ldd},    // Tensor-ref for source matrix B
-    {E, lde},    // Tensor-ref for source matrix C
-    {E, lde},    // Tensor-ref for destination matrix D (may be different memory than source C matrix)
-    {alpha, beta}); // Scalars used in the Epilogue
+    //
+    // Launch the CUTLASS GEMM kernel.
+    //
+    
+    cutlass::Status status = gemm_operator(args, NULL, producer_stream);
+    assert(M == M2);
+    assert(N == K2);
+    
+    handle.producerOrConsumer_ = false;
 
-//
-// Launch the CUTLASS GEMM kernel.
-//
+    //E = C * D
+    CutlassGemm::Arguments args2(handle,
+      {M2, N2, K2},  // Gemm Problem dimensions
+      {C, ldc},    // Tensor-ref for source matrix A
+      {D, ldd},    // Tensor-ref for source matrix B
+      {E, lde},    // Tensor-ref for source matrix C
+      {E, lde},    // Tensor-ref for destination matrix D (may be different memory than source C matrix)
+      {alpha, beta}); // Scalars used in the Epilogue
 
-status = gemm_operator(args2, NULL, consumer_stream);
+    //
+    // Launch the CUTLASS GEMM kernel.
+    //
 
-  //
-  // Return a cudaError_t if the CUTLASS GEMM operator returned an error code.
-  //
+    status = gemm_operator(args2, NULL, consumer_stream);
 
-  if (status != cutlass::Status::kSuccess) {
-    return cudaErrorUnknown;
+    //
+    // Return a cudaError_t if the CUTLASS GEMM operator returned an error code.
+    //
+
+    if (status != cutlass::Status::kSuccess) {
+      return cudaErrorUnknown;
+    }
   }
-  CUDA_CHECK(cudaDeviceSynchronize());
 
   // Return success, if no errors were encountered.
   return cudaSuccess;
@@ -316,7 +316,129 @@ cudaError_t ReferenceGemm(
   return cudaGetLastError();
 }
 
+cudaError_t CheckResults(int M,
+  int N,
+  int K,
+  float alpha,
+  float const *A,
+  int lda,
+  float const *B,
+  int ldb,
+  float beta,
+  float *C_cutlass,
+  float *C_reference,
+  int ldc,
+  int M2, int N2, int K2,
+  float* D,
+  int ldd,
+  float* E_cutlass,
+  float* E_reference,
+  int lde) {
+  
+  cudaError_t result;
+  size_t sizeof_C = sizeof(float) * ldc * N;
+  size_t sizeof_E = sizeof(float) * lde * N2;
+
+  // Launch reference GEMM
+  result = ReferenceGemm(M, N, K, alpha, A, lda, B, ldb, beta, C_reference, ldc);
+  
+  if (result != cudaSuccess) {
+    std::cerr << "Reference GEMM kernel failed: "
+      << cudaGetErrorString(result) << std::endl;
+
+    return result;
+  }
+
+  result = ReferenceGemm(M2, N2, K2, alpha, C_reference, ldc, D, ldd, beta, E_reference, lde);
+
+  // Copy to host and verify equivalence for C = A * B
+  {
+    std::vector<float> host_cutlass(ldc * N, 0);
+    std::vector<float> host_reference(ldc * N, 0);
+
+    result = cudaMemcpy(host_cutlass.data(), C_cutlass, sizeof_C, cudaMemcpyDeviceToHost);
+
+    if (result != cudaSuccess) {
+      std::cerr << "Failed to copy CUTLASS GEMM results: "
+        << cudaGetErrorString(result) << std::endl;
+
+    
+      return result;
+    }
+
+    result = cudaMemcpy(host_reference.data(), C_reference, sizeof_C, cudaMemcpyDeviceToHost);
+
+    if (result != cudaSuccess) {
+      std::cerr << "Failed to copy Reference GEMM results: "
+        << cudaGetErrorString(result) << std::endl;
+
+    
+      return result;
+    }
+    //
+    // Test for bit equivalence of results.
+    //
+
+    if (host_cutlass != host_reference) {
+      std::cerr << "CUTLASS results incorrect for C = A * B" << std::endl;
+
+      return cudaErrorUnknown;
+    }
+  }
+
+  // Copy to host and verify equivalence for E = C * D
+  {
+    std::vector<float> host_cutlass(lde * N2, 0);
+    std::vector<float> host_reference(lde * N2, 0);
+
+    result = cudaMemcpy(host_cutlass.data(), E_cutlass, sizeof_E, cudaMemcpyDeviceToHost);
+
+    if (result != cudaSuccess) {
+      std::cerr << "Failed to copy CUTLASS GEMM results: "
+        << cudaGetErrorString(result) << std::endl;
+
+    
+      return result;
+    }
+
+    result = cudaMemcpy(host_reference.data(), E_reference, sizeof_E, cudaMemcpyDeviceToHost);
+
+    if (result != cudaSuccess) {
+      std::cerr << "Failed to copy Reference GEMM results: "
+        << cudaGetErrorString(result) << std::endl;
+
+      return result;
+    }
+
+    if (host_cutlass != host_reference) {
+      std::cerr << "CUTLASS results incorrect for E = C * D" << std::endl;
+
+      return cudaErrorUnknown;
+    }
+  }
+
+  std::cout << "Passed" << std::endl;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+#include<time.h>
+#include <sys/time.h>
+
+static double convertTimeValToDouble(struct timeval _time) {
+  return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
+}
+
+static struct timeval getTimeOfDay () {
+  struct timeval _time;
+
+  if (gettimeofday (&_time, NULL) == -1) {
+    fprintf (stderr, "gettimeofday returned -1\n");
+    perror ("");
+    abort ();
+  }
+
+  return _time;
+}
 
 /// Allocate several matrices in GPU device memory and call a single-precision
 /// CUTLASS GEMM kernel.
@@ -417,126 +539,80 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   }
 
   //
-  // Launch CUTLASS GEMM.
+  // Launch Baseline Dependant GEMMs.
   //
-
-  result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde);
-
-  if (result != cudaSuccess) {
-    std::cerr << "CUTLASS GEMM kernel failed: "
-      << cudaGetErrorString(result) << std::endl;
-
-    cudaFree(C_reference);
-    cudaFree(C_cutlass);
-    cudaFree(B);
-    cudaFree(A);
-
-    return result;
-  }
-
-  //
-  // Verify.
-  //
-
-  // Launch reference GEMM
-  result = ReferenceGemm(M, N, K, alpha, A, lda, B, ldb, beta, C_reference, ldc);
+  int epochs = 100;
+  cudaStream_t producer_stream;
+  OverlapHandle baselineHandle;
+  CUDA_CHECK(cudaStreamCreate(&producer_stream));
   
-  if (result != cudaSuccess) {
-    std::cerr << "Reference GEMM kernel failed: "
-      << cudaGetErrorString(result) << std::endl;
+  cudaEvent_t start;
+  cudaEvent_t end;
+  float elapsedTime = 0;
+  
+  CUDA_CHECK(cudaEventCreate(&start));
+  CUDA_CHECK(cudaEventCreate(&end));
 
-    cudaFree(C_reference);
-    cudaFree(C_cutlass);
-    cudaFree(B);
-    cudaFree(A);
-
-    return result;
-  }
-
-  result = ReferenceGemm(M, L, N, alpha, C_reference, ldc, D, ldd, beta, E_reference, lde);
-
-  // Copy to host and verify equivalence for C = A * B
   {
-    std::vector<float> host_cutlass(ldc * N, 0);
-    std::vector<float> host_reference(ldc * N, 0);
-
-    result = cudaMemcpy(host_cutlass.data(), C_cutlass, sizeof_C, cudaMemcpyDeviceToHost);
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, 1);
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     if (result != cudaSuccess) {
-      std::cerr << "Failed to copy CUTLASS GEMM results: "
+      std::cerr << "CUTLASS GEMM kernel failed: "
         << cudaGetErrorString(result) << std::endl;
-
-      cudaFree(C_reference);
-      cudaFree(C_cutlass);
-      cudaFree(B);
-      cudaFree(A);
-
       return result;
     }
 
-    result = cudaMemcpy(host_reference.data(), C_reference, sizeof_C, cudaMemcpyDeviceToHost);
-
+    //
+    // Verify.
+    //
+    CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
+    
+    CUDA_CHECK(cudaEventRecord(start, producer_stream));
+    
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, epochs);
     if (result != cudaSuccess) {
-      std::cerr << "Failed to copy Reference GEMM results: "
+      std::cerr << "CUTLASS GEMM kernel failed: "
         << cudaGetErrorString(result) << std::endl;
-
-      cudaFree(C_reference);
-      cudaFree(C_cutlass);
-      cudaFree(B);
-      cudaFree(A);
-
       return result;
     }
-    //
-    // Test for bit equivalence of results.
-    //
-
-    if (host_cutlass != host_reference) {
-      std::cerr << "CUTLASS results incorrect for C = A * B" << std::endl;
-
-      return cudaErrorUnknown;
-    }
+    CUDA_CHECK(cudaEventRecord(end, producer_stream));
+    CUDA_CHECK(cudaEventSynchronize(end));
+    CUDA_CHECK(cudaEventElapsedTime(&elapsedTime, start, end));
+    printf("baseline elapsedtime %f milliseconds\n", elapsedTime/(float)epochs);
   }
 
-  // Copy to host and verify equivalence for E = C * D
+
+  //Launch overlapped gemms
+  cudaStream_t consumer_stream;
+  OverlapHandle overlapHandle(M, N, 1, 1);
+  CUDA_CHECK(cudaStreamCreate(&consumer_stream));
+  overlapHandle.allocTileStatusMap(128, 128, 1);
   {
-    std::vector<float> host_cutlass(lde * L, 0);
-    std::vector<float> host_reference(lde * L, 0);
-
-    result = cudaMemcpy(host_cutlass.data(), E_cutlass, sizeof_E, cudaMemcpyDeviceToHost);
-
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, 1);
     if (result != cudaSuccess) {
-      std::cerr << "Failed to copy CUTLASS GEMM results: "
+      std::cerr << "CUTLASS GEMM kernel failed: "
         << cudaGetErrorString(result) << std::endl;
-
-      cudaFree(C_reference);
-      cudaFree(C_cutlass);
-      cudaFree(B);
-      cudaFree(A);
-
       return result;
     }
 
-    result = cudaMemcpy(host_reference.data(), E_reference, sizeof_E, cudaMemcpyDeviceToHost);
+    CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
 
+    
+    double startTime = convertTimeValToDouble(getTimeOfDay());
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, epochs);
     if (result != cudaSuccess) {
-      std::cerr << "Failed to copy Reference GEMM results: "
+      std::cerr << "CUTLASS GEMM kernel failed: "
         << cudaGetErrorString(result) << std::endl;
-
-      cudaFree(C_reference);
-      cudaFree(C_cutlass);
-      cudaFree(B);
-      cudaFree(A);
-
       return result;
     }
-
-    if (host_cutlass != host_reference) {
-      std::cerr << "CUTLASS results incorrect for E = C * D" << std::endl;
-
-      return cudaErrorUnknown;
-    }
+    CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+    double endTime = convertTimeValToDouble(getTimeOfDay());
+    double elapsedTime = (endTime - startTime)/1e3; //convert from microseconds to milliseconds
+    // printf("612: endTime %lf startTime %lf elapsed %lf\n",  endTime, startTime, endTime - startTime);
+    printf("overlapped elapsedtime %lf milliseconds\n", elapsedTime/(float)epochs);
   }
+
 
   //
   // Free device memory allocations.
@@ -593,9 +669,6 @@ int main(int argc, const char *arg[]) {
     problem[4]     // 2nd GEMM L dimension
   );
 
-  if (result == cudaSuccess) {
-    std::cout << "Passed." << std::endl;
-  }
 
   // Exit.
   return result == cudaSuccess ? 0 : -1;

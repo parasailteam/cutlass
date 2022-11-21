@@ -584,6 +584,10 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
 
 
   //Launch overlapped gemms
+  CUDA_CHECK(cudaMemset(C_cutlass, 0, sizeof_C));
+  CUDA_CHECK(cudaMemset(C_reference, 0, sizeof_C));
+  CUDA_CHECK(cudaMemset(E_cutlass, 0, sizeof_E));
+  CUDA_CHECK(cudaMemset(E_reference, 0, sizeof_E));
   cudaStream_t consumer_stream;
   OverlapHandle overlapHandle(M, N, 1, 1);
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
@@ -643,7 +647,7 @@ int main(int argc, const char *arg[]) {
   // GEMM problem dimensions.
   int problem[4] = { 128, 128, 128, 128 };
 
-  for (int i = 1; i < argc && i < 4; ++i) {
+  for (int i = 1; i < argc && i < 5; ++i) {
     std::stringstream ss(arg[i]);
     ss >> problem[i - 1];
   }
@@ -651,7 +655,7 @@ int main(int argc, const char *arg[]) {
   // Scalars used for linear scaling the result of the matrix product.
   float scalars[2] = { 1, 0 };
 
-  for (int i = 4; i < argc && i < 6; ++i) {
+  for (int i = 5; i < argc && i < 7; ++i) {
     std::stringstream ss(arg[i]);
     ss >> scalars[i - 4];
   }
@@ -660,13 +664,14 @@ int main(int argc, const char *arg[]) {
   // Run the CUTLASS GEMM test.
   //
 
+  printf("problem[0] %d problem[1] %d problem[2] %d problem[3] %d\n", problem[0], problem[1], problem[2], problem[3]);
   cudaError_t result = TestCutlassGemm(
     problem[0],     // GEMM M dimension
     problem[1],     // GEMM N dimension
     problem[2],     // GEMM K dimension
     scalars[0],     // alpha
     scalars[1],     // beta
-    problem[4]     // 2nd GEMM L dimension
+    problem[3]     // 2nd GEMM L dimension
   );
 
 

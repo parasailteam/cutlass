@@ -634,8 +634,8 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
         << cudaGetErrorString(result) << std::endl;
       return result;
     }
-    CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
-    CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+    // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+    // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
     double endTime = convertTimeValToDouble(getTimeOfDay());
     double elapsedTime = (endTime - startTime)/1e3; //convert from microseconds to milliseconds
     // printf("612: endTime %lf startTime %lf elapsed %lf\n",  endTime, startTime, endTime - startTime);

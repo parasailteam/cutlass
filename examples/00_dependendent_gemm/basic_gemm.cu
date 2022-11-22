@@ -175,6 +175,8 @@ cudaError_t CutlassSgemmNN(
     if (status != cutlass::Status::kSuccess) {
       return cudaErrorUnknown;
     }
+
+    CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
   }
 
   // Return success, if no errors were encountered.

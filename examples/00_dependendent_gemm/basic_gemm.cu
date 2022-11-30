@@ -544,11 +544,11 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   //
   // Launch Baseline Dependant GEMMs.
   //
-  int epochs = 0;
-  int warmup = 0;
+  int epochs = 100;
+  int warmup = 10;
   cudaStream_t producer_stream;
   OverlapHandle baselineHandle;
-  baselineHandle.setGridDims(1, 1, 1);
+  baselineHandle.setGridDims(0, 0, 0);
   CUDA_CHECK(cudaStreamCreate(&producer_stream));
   
   cudaEvent_t start;
@@ -603,7 +603,7 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   CUDA_CHECK(cudaMemset(E_reference, 0, sizeof_E));
   cudaStream_t consumer_stream;
   OverlapHandle overlapHandle(N, M, 1, 1);
-  overlapHandle.setGridDims(1,1,1);
+  overlapHandle.setGridDims(1,40,1);
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   overlapHandle.allocTileStatusMap(128, 128, 1);
   double overlapTime = 0;

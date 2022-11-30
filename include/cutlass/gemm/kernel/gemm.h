@@ -211,13 +211,6 @@ struct Gemm {
     for (uint block_idx_y = blockIdx.y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += gridDim.y) {
     
     uint block_idx_z = 0;
-    if (overlapHandle.enable() && overlapHandle.isConsumer()) {
-      // Wait for tile of this thread block to be processed by other kernel
-      for (int col = 0; col < overlapHandle.xSize; col += 128)
-        //TODO: Can combine all into one
-        overlapHandle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
-    }
-
     ThreadblockSwizzle threadblock_swizzle;
     cutlass::gemm::GemmCoord threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, blockIdx.z);
@@ -228,6 +221,14 @@ struct Gemm {
 
       return;
     }
+
+    if (overlapHandle.enable() && overlapHandle.isConsumer()) {
+      // Wait for tile of this thread block to be processed by other kernel
+      for (int col = 0; col < overlapHandle.xSize; col += 128)
+        //TODO: Can combine all into one
+        overlapHandle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
+    }
+
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
     // Compute initial location in logical coordinates
     cutlass::MatrixCoord tb_offset_A{

@@ -21,36 +21,36 @@ T divup(T x, T y) {
 }
 
 struct OverlapHandle {
-  int xSize;
-  int ySize;
-  int zSize;
+  uint xSize;
+  uint ySize;
+  uint zSize;
 
-  int xTile;
-  int yTile;
-  int zTile;
+  uint xTile;
+  uint yTile;
+  uint zTile;
 
-  int xGridDim;
-  int yGridDim;
-  int zGridDim;
+  uint xGridDim;
+  uint yGridDim;
+  uint zGridDim;
 
-  int* tileStatusMap;
-  int expectedInputStatusVal;
-  int iter;
+  uint* tileStatusMap;
+  uint expectedInputStatusVal;
+  uint iter;
   bool enable_;
   //True for producer and false for consumer
   bool producerOrConsumer_;
 
   DEVICE_FUNC HOST_FUNC OverlapHandle() : enable_(false), iter(0), xGridDim(0), yGridDim(0), zGridDim(0) {}
 
-  DEVICE_FUNC HOST_FUNC OverlapHandle(int xSize_, int ySize_, int zSize_, 
-                                      int expectedInputStatusVal_) : 
+  DEVICE_FUNC HOST_FUNC OverlapHandle(uint xSize_, uint ySize_, uint zSize_, 
+                                      uint expectedInputStatusVal_) : 
     xSize(xSize_), ySize(ySize_), zSize(zSize_), 
     expectedInputStatusVal(expectedInputStatusVal_),
     enable_(true),
     producerOrConsumer_(false), iter(0)
   {}
 
-  void setGridDims(int xGridDim_, int yGridDim_, int zGridDim_) {
+  void setGridDims(uint xGridDim_, uint yGridDim_, uint zGridDim_) {
     xGridDim = xGridDim_;
     yGridDim = yGridDim_;
     zGridDim = zGridDim_;
@@ -69,7 +69,7 @@ struct OverlapHandle {
     return error;
   }
 
-  HOST_FUNC cudaError_t allocTileStatusMap(int xTile_, int yTile_, int zTile_) {
+  HOST_FUNC cudaError_t allocTileStatusMap(uint xTile_, uint yTile_, uint zTile_) {
     xTile = xTile_;
     yTile = yTile_;
     zTile = zTile_;
@@ -82,7 +82,7 @@ struct OverlapHandle {
     return clearTileStatusMap();
   }
 
-  DEVICE_FUNC int getLinearTileIdx(int xTileIdx, int yTileIdx, int zTileIdx) {
+  DEVICE_FUNC int getLinearTileIdx(uint xTileIdx, uint yTileIdx, uint zTileIdx) {
     int xMaxTiles = xSize/xTile;
     int yMaxTiles = ySize/yTile;
     int zMaxTiles = zSize/zTile;
@@ -96,11 +96,11 @@ struct OverlapHandle {
     return linearTileIdx;
   }
 
-  DEVICE_FUNC void waitOnTile(int xTileIdx, int yTileIdx, int zTileIdx, int expectedInputStatusVal) {
+  DEVICE_FUNC void waitOnTile(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint expectedInputStatusVal) {
     if (threadIdx.x == 0) {
-      volatile int* waitBuffer = tileStatusMap;
+      volatile uint* waitBuffer = tileStatusMap;
 
-      int linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
+      uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
       // printf("waitBuffer[linearTileIdx] %d iter %d expectedInputStatusVal\n", waitBuffer[linearTileIdx], iter, expectedInputStatusVal);
       while(waitBuffer[linearTileIdx] < iter * expectedInputStatusVal);
     }
@@ -108,10 +108,10 @@ struct OverlapHandle {
     __syncthreads();
   }
 
-  DEVICE_FUNC void setTileStatus(int xTileIdx, int yTileIdx, int zTileIdx, int tileStatus) {
+  DEVICE_FUNC void setTileStatus(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus) {
     __syncthreads();
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-      int linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
+      uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
       // printf("tileStatusMap[linearTileIdx] %d\n", tileStatusMap[linearTileIdx]);
       tileStatusMap[linearTileIdx] = iter * tileStatus;
     }

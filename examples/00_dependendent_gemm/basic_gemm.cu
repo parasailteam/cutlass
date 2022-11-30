@@ -425,7 +425,7 @@ cudaError_t CheckResults(int M,
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 #include<time.h>
-#include <sys/time.h>
+#include<sys/time.h>
 
 static double convertTimeValToDouble(struct timeval _time) {
   return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
@@ -544,14 +544,15 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   //
   // Launch Baseline Dependant GEMMs.
   //
-  int epochs = 100;
+  int epochs = 0;
+  int warmup = 0;
   cudaStream_t producer_stream;
   OverlapHandle baselineHandle;
   CUDA_CHECK(cudaStreamCreate(&producer_stream));
   
   cudaEvent_t start;
   cudaEvent_t end;
-  float elapsedTime = 0;
+  float baselineTime = 0;
   
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
@@ -571,8 +572,8 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     //
     CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
     //warmup
-    // result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, 10);
-    // CUDA_CHECK(cudaDeviceSynchronize());
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, warmup);
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     // if (result != cudaSuccess) {
     //   std::cerr << "CUTLASS GEMM kernel failed: "
@@ -590,10 +591,9 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     }
     CUDA_CHECK(cudaEventRecord(end, producer_stream));
     CUDA_CHECK(cudaEventSynchronize(end));
-    CUDA_CHECK(cudaEventElapsedTime(&elapsedTime, start, end));
-    printf("baseline elapsedtime %f milliseconds\n", elapsedTime/(float)epochs);
+    CUDA_CHECK(cudaEventElapsedTime(&baselineTime, start, end));
+    printf("baseline elapsedtime %f milliseconds\n", baselineTime/(float)epochs);
   }
-
 
   //Launch overlapped gemms
   CUDA_CHECK(cudaMemset(C_cutlass, 0, sizeof_C));
@@ -604,19 +604,8 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   OverlapHandle overlapHandle(M, N, 1, 1);
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   overlapHandle.allocTileStatusMap(128, 128, 1);
+  double overlapTime = 0;
   {
-    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, 1);
-    if (result != cudaSuccess) {
-      std::cerr << "CUTLASS GEMM kernel failed: "
-        << cudaGetErrorString(result) << std::endl;
-      return result;
-    }
-
-    CUDA_CHECK(cudaMemset(C_cutlass, 0, sizeof_C));
-    CUDA_CHECK(cudaMemset(C_reference, 0, sizeof_C));
-    CUDA_CHECK(cudaMemset(E_cutlass, 0, sizeof_E));
-    CUDA_CHECK(cudaMemset(E_reference, 0, sizeof_E));
-    
     result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, 1);
     if (result != cudaSuccess) {
       std::cerr << "CUTLASS GEMM kernel failed: "
@@ -626,7 +615,14 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     CUDA_CHECK(cudaDeviceSynchronize());
     CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
 
-    
+    //warmup
+    result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, warmup);
+    if (result != cudaSuccess) {
+      std::cerr << "CUTLASS GEMM kernel failed: "
+        << cudaGetErrorString(result) << std::endl;
+      return result;
+    }
+
     double startTime = convertTimeValToDouble(getTimeOfDay());
     result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, epochs);
     if (result != cudaSuccess) {
@@ -637,11 +633,12 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
     // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
     double endTime = convertTimeValToDouble(getTimeOfDay());
-    double elapsedTime = (endTime - startTime)/1e3; //convert from microseconds to milliseconds
+    overlapTime = (endTime - startTime)/1e3; //convert from microseconds to milliseconds
     // printf("612: endTime %lf startTime %lf elapsed %lf\n",  endTime, startTime, endTime - startTime);
-    printf("overlapped elapsedtime %lf milliseconds\n", elapsedTime/(float)epochs);
+    printf("overlapped elapsedtime %lf milliseconds\n", overlapTime/(float)epochs);
   }
 
+  printf("speedup %lf\n", baselineTime/(double)overlapTime);
 
   //
   // Free device memory allocations.

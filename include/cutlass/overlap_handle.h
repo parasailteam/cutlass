@@ -15,6 +15,11 @@
 //   }                                                 \
 // } while(0);
 
+template<typename T>
+T divup(T x, T y) {
+  return (x + y - 1)/y;
+}
+
 struct OverlapHandle {
   int xSize;
   int ySize;
@@ -45,8 +50,8 @@ struct OverlapHandle {
 
   HOST_FUNC cudaError_t clearTileStatusMap() {
     if (tileStatusMap == NULL) return cudaErrorInvalidValue;
-
-    cudaError_t error = cudaMemset(tileStatusMap, 0, sizeof(int) * (xSize/xTile) * (ySize/yTile) * (zSize/zTile));
+    //TODO: a single function to get total size
+    cudaError_t error = cudaMemset(tileStatusMap, 0, sizeof(int) * divup(xSize, xTile) * divup(ySize, yTile) * divup(zSize, zTile));
     return error;
   }
 
@@ -57,7 +62,7 @@ struct OverlapHandle {
     
     cudaError_t error;
 
-    error = cudaMalloc(&tileStatusMap, sizeof(int) * (xSize/xTile) * (ySize/yTile) * (zSize/zTile));
+    error = cudaMalloc(&tileStatusMap, sizeof(int) * divup(xSize, xTile) * divup(ySize, yTile) * divup(zSize, zTile));
     if (error != cudaSuccess) return error;
 
     return clearTileStatusMap();

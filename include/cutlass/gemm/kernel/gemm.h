@@ -205,10 +205,19 @@ struct Gemm {
 
   /// Executes one GEMM
   CUTLASS_DEVICE
-  void operator()(Params const &params, SharedStorage &shared_storage) {
-    // Compute threadblock location    
+  void operator()(Params const &params, OverlapHandle& overlapHandle, SharedStorage &shared_storage) {
+    // Compute threadblock location
     for (uint block_idx_x = blockIdx.x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += gridDim.x) {
-    for (uint block_idx_y = blockIdx.y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += gridDim.y) {    
+    for (uint block_idx_y = blockIdx.y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += gridDim.y) {
+    
+    uint block_idx_z = 0;
+    if (overlapHandle.enable() && overlapHandle.isConsumer()) {
+      // Wait for tile of this thread block to be processed by other kernel
+      for (int col = 0; col < overlapHandle.xSize; col += 128)
+        //TODO: Can combine all into one
+        overlapHandle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
+    }
+
     ThreadblockSwizzle threadblock_swizzle;
     cutlass::gemm::GemmCoord threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, blockIdx.z);
@@ -374,8 +383,11 @@ struct Gemm {
 
       semaphore.release(lock);
     }
-    
-    // setTileStatus(blockIdx.x, blockIdx.y, blockIdx.z, 1);
+
+    //Tile of this thread block is processed
+  if (overlapHandle.enable() && overlapHandle.isProducer())
+    overlapHandle.setTileStatus(block_idx_x, block_idx_y, blockIdx.z, 1);
+
   }}}
 };
 

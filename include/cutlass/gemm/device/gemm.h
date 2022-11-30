@@ -479,7 +479,13 @@ public:
 
     ThreadblockSwizzle threadblock_swizzle;
 
-    dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+    dim3 grid;
+    if (params_.overlap_handle.validGridDims())
+      grid = threadblock_swizzle.get_grid_shape(GemmCoord(params_.overlap_handle.xGridDim,
+                                                          params_.overlap_handle.yGridDim,
+                                                          params_.overlap_handle.zGridDim));
+    else
+      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
     cudaError_t result;

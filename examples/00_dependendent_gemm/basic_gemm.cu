@@ -548,6 +548,7 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   int warmup = 0;
   cudaStream_t producer_stream;
   OverlapHandle baselineHandle;
+  baselineHandle.setGridDims(1, 1, 1);
   CUDA_CHECK(cudaStreamCreate(&producer_stream));
   
   cudaEvent_t start;
@@ -594,7 +595,7 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     CUDA_CHECK(cudaEventElapsedTime(&baselineTime, start, end));
     printf("baseline elapsedtime %f milliseconds\n", baselineTime/(float)epochs);
   }
-
+  return result;
   //Launch overlapped gemms
   CUDA_CHECK(cudaMemset(C_cutlass, 0, sizeof_C));
   CUDA_CHECK(cudaMemset(C_reference, 0, sizeof_C));

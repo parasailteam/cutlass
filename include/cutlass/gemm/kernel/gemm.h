@@ -206,14 +206,12 @@ struct Gemm {
   /// Executes one GEMM
   CUTLASS_DEVICE
   void operator()(Params const &params, SharedStorage &shared_storage) {
-    // Compute threadblock location
-    ThreadblockSwizzle threadblock_swizzle;
-    
+    // Compute threadblock location    
     for (uint block_idx_x = blockIdx.x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += gridDim.x) {
-    for (uint block_idx_y = blockIdx.y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += gridDim.y) {
-
+    for (uint block_idx_y = blockIdx.y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += gridDim.y) {    
+    ThreadblockSwizzle threadblock_swizzle;
     cutlass::gemm::GemmCoord threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, 0);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, blockIdx.z);
 
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
@@ -293,7 +291,7 @@ struct Gemm {
     //
 
     threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, blockIdx.z);
 
     //assume identity swizzle
     MatrixCoord threadblock_offset(
@@ -376,7 +374,7 @@ struct Gemm {
 
       semaphore.release(lock);
     }
-
+    
     // setTileStatus(blockIdx.x, blockIdx.y, blockIdx.z, 1);
   }}}
 };

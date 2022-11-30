@@ -29,6 +29,10 @@ struct OverlapHandle {
   int yTile;
   int zTile;
 
+  int xGridDim;
+  int yGridDim;
+  int zGridDim;
+
   int* tileStatusMap;
   int expectedInputStatusVal;
   int iter;
@@ -36,7 +40,7 @@ struct OverlapHandle {
   //True for producer and false for consumer
   bool producerOrConsumer_;
 
-  DEVICE_FUNC HOST_FUNC OverlapHandle() : enable_(false), iter(0) {}
+  DEVICE_FUNC HOST_FUNC OverlapHandle() : enable_(false), iter(0), xGridDim(0), yGridDim(0), zGridDim(0) {}
 
   DEVICE_FUNC HOST_FUNC OverlapHandle(int xSize_, int ySize_, int zSize_, 
                                       int expectedInputStatusVal_) : 
@@ -45,6 +49,16 @@ struct OverlapHandle {
     enable_(true),
     producerOrConsumer_(false), iter(0)
   {}
+
+  void setGridDims(int xGridDim_, int yGridDim_, int zGridDim_) {
+    xGridDim = xGridDim_;
+    yGridDim = yGridDim_;
+    zGridDim = zGridDim_;
+  }
+
+  HOST_FUNC bool validGridDims() {
+    return xGridDim > 0 && yGridDim > 0 && zGridDim > 0;
+  }
 
   DEVICE_FUNC bool enable() {return enable_;}
 

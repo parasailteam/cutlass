@@ -72,7 +72,7 @@ template <
   typename Element_,         ///< Element data type
   bool ScatterD = false,     ///< Scatter D operand or not
   typename PermuteDLayout = layout::NoPermute,     ///< Permute D operand or not
-  bool UseCUDAStore = true
+  bool UseCUDAStore = false
 >
 class PredicatedTileIterator {
 public:

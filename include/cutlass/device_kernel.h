@@ -44,7 +44,7 @@ namespace cutlass {
 /// Generic CUTLASS kernel template.
 template <typename Operator>
 __global__
-void Kernel(typename Operator::Params params, OverlapHandle overlapHandle) {
+void Kernel(typename Operator::Params params) {
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 
@@ -54,7 +54,22 @@ void Kernel(typename Operator::Params params, OverlapHandle overlapHandle) {
 
   Operator op;
 
-  op(params, overlapHandle, *shared_storage);
+  op(params, *shared_storage);
+}
+
+template <typename Operator>
+__global__
+void KernelOverlap(typename Operator::Params params) {
+  // Dynamic shared memory base pointer
+  extern __shared__ int SharedStorageBase[];
+
+  // Declare pointer to dynamic shared memory.
+  typename Operator::SharedStorage *shared_storage =
+      reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
+
+  Operator op;
+
+  op.run_overlap_gemm(params, *shared_storage);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

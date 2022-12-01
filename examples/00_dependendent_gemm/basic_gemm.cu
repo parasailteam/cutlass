@@ -147,7 +147,7 @@ cudaError_t CutlassSgemmNN(
     // Launch the CUTLASS GEMM kernel.
     //
     
-    cutlass::Status status = gemm_operator(args, NULL, producer_stream);
+    cutlass::Status status = gemm_operator(args, handle.enable(), NULL, producer_stream);
     assert(M == M2);
     assert(N == K2);
     
@@ -166,7 +166,7 @@ cudaError_t CutlassSgemmNN(
     // Launch the CUTLASS GEMM kernel.
     //
 
-    status = gemm_operator(args2, NULL, consumer_stream);
+    status = gemm_operator(args2, handle.enable(), NULL, consumer_stream);
 
     //
     // Return a cudaError_t if the CUTLASS GEMM operator returned an error code.
@@ -603,7 +603,7 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   CUDA_CHECK(cudaMemset(E_reference, 0, sizeof_E));
   cudaStream_t consumer_stream;
   OverlapHandle overlapHandle(N, M, 1, 1);
-  overlapHandle.setGridDims(1,40,1);
+  overlapHandle.setGridDims(0,0,0);
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   overlapHandle.allocTileStatusMap(128, 128, 1);
   double overlapTime = 0;

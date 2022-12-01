@@ -475,12 +475,12 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(cudaStream_t stream = nullptr) {
+  Status run(bool overlap, cudaStream_t stream = nullptr) {
 
     ThreadblockSwizzle threadblock_swizzle;
 
     dim3 grid;
-    if (params_.overlap_handle.validGridDims())
+    if (overlap && params_.overlap_handle.validGridDims())
       grid = threadblock_swizzle.get_grid_shape(GemmCoord(params_.overlap_handle.xGridDim,
                                                           params_.overlap_handle.yGridDim,
                                                           params_.overlap_handle.zGridDim));
@@ -501,8 +501,11 @@ public:
         return Status::kErrorInternal;
       }
     }
-
-    cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_, params_.overlap_handle);
+    
+    if (overlap)
+      cutlass::KernelOverlap<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
+    else
+      cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
 
     result = cudaGetLastError();
 
@@ -510,20 +513,21 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status operator()(cudaStream_t stream = nullptr) {
-    return run(stream);
+  Status operator()(bool overlap, cudaStream_t stream = nullptr) {
+    return run(overlap, stream);
   }
 
   /// Runs the kernel using initialized state.
   Status operator()(
-    Arguments const &args, 
+    Arguments const &args,
+    bool overlap,
     void *workspace = nullptr, 
     cudaStream_t stream = nullptr) {
     
     Status status = initialize(args, workspace);
     
     if (status == Status::kSuccess) {
-      status = run(stream);
+      status = run(stream, overlap);
     }
 
     return status;
@@ -750,26 +754,27 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(cudaStream_t stream = nullptr) {
+  Status run(bool overlap, cudaStream_t stream = nullptr) {
 
-    return underlying_operator_.run(stream);
+    return underlying_operator_.run(overlap, stream);
   }
 
   /// Runs the kernel using initialized state.
-  Status operator()(cudaStream_t stream = nullptr) {
-    return run(stream);
+  Status operator()(bool overlap, cudaStream_t stream = nullptr) {
+    return run(overlap, stream);
   }
 
   /// Runs the kernel using initialized state.
   Status operator()(
     Arguments const &args, 
+    bool overlap,
     void *workspace = nullptr, 
     cudaStream_t stream = nullptr) {
     
     Status status = initialize(args, workspace, stream);
     
     if (status == Status::kSuccess) {
-      status = run(stream);
+      status = run(overlap, stream);
     }
 
     return status;

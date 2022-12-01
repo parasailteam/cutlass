@@ -60,7 +60,7 @@ struct OverlapHandle {
     return xGridDim > 0 && yGridDim > 0 && zGridDim > 0;
   }
 
-  DEVICE_FUNC bool enable() {return enable_;}
+  DEVICE_FUNC HOST_FUNC bool enable() {return enable_;}
 
   HOST_FUNC cudaError_t clearTileStatusMap() {
     if (tileStatusMap == NULL) return cudaErrorInvalidValue;

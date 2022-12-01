@@ -375,13 +375,25 @@ struct Gemm {
 
   /// Executes one GEMM
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage) {
-    // Compute threadblock location
-    for (uint block_idx_y = blockIdx.y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += gridDim.y) {
-    for (uint block_idx_x = blockIdx.x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += gridDim.x) {
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
+    //Convert 1-D thread block id to 2-D
+    
+    //TODO: Assuming column major
+    //In column major, y-dim is M
+    const uint grid_dim_x = 1;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    const uint grid_dim_y = 78;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
+    const uint start_block_idx_y = blockIdx.x / 1;//params.grid_tiled_shape.m();
+    const uint start_block_idx_x = 0;//blockIdx.x % params.grid_tiled_shape.m();
+    // if (threadIdx.x == 0) {
+    //   printf("start_block_idx_y %d start_block_idx_x %d grid_dim_y %d grid_dim_x %d params.grid_tiled_shape.m() %d params.grid_tiled_shape.n() %d blockIdx.x %d\n", start_block_idx_y, start_block_idx_x, grid_dim_y, grid_dim_x, params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), blockIdx.x);
+    // }
+    for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) {
+    for (uint block_idx_x = start_block_idx_x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += grid_dim_x) {
 
     const uint block_idx_z = 0;
     ThreadblockSwizzle threadblock_swizzle;
+    
+    // Compute threadblock location
     cutlass::gemm::GemmCoord threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z);
 
@@ -392,11 +404,11 @@ struct Gemm {
       return;
     }
 
-    if (params.overlap_handle.isConsumer()) {
+    if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
-      // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
+      for (int col = 0; col < params.overlap_handle.xSize; col += 128)
         //TODO: Can combine all into one
-      params.overlap_handle.waitOnTiles(0, block_idx_y, block_idx_z, params.overlap_handle.xSize/128, 1);
+        params.overlap_handle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
     }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
@@ -556,7 +568,7 @@ struct Gemm {
     }
 
     //Tile of this thread block is processed
-    if (params.overlap_handle.isProducer())
+    if (isProducerOrConsumer)
       params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}}

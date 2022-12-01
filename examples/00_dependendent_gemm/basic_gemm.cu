@@ -134,6 +134,10 @@ cudaError_t CutlassSgemmNN(
   for (int r = 0; r < iters; r++) {
     handle.iter += 1;
     handle.producerOrConsumer_ = true;
+    
+    if (consumer_stream != producer_stream)
+      //producer for overlap
+      handle.setGridDims(78, 1, 1);
     //C = A * B
     CutlassGemm::Arguments args(handle,
                                 {M, N, K},  // Gemm Problem dimensions
@@ -152,7 +156,9 @@ cudaError_t CutlassSgemmNN(
     assert(N == K2);
     
     handle.producerOrConsumer_ = false;
-
+    if (consumer_stream != producer_stream)
+      //consumer for overlap
+      handle.setGridDims(79, 1, 1);
     //E = C * D
     CutlassGemm::Arguments args2(handle,
       {M2, N2, K2},  // Gemm Problem dimensions
@@ -421,6 +427,8 @@ cudaError_t CheckResults(int M,
   }
 
   std::cout << "Passed" << std::endl;
+
+  return cudaSuccess;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -571,7 +579,9 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
     //
     // Verify.
     //
-    CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
+    result = CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde) ;
+    if (result != cudaSuccess)
+      return result;
     //warmup
     result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, baselineHandle, producer_stream, producer_stream, warmup);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -603,7 +613,6 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
   CUDA_CHECK(cudaMemset(E_reference, 0, sizeof_E));
   cudaStream_t consumer_stream;
   OverlapHandle overlapHandle(N, M, 1, 1);
-  overlapHandle.setGridDims((N/128 >= 80) ? 78 : 0, 1, 1);
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   overlapHandle.allocTileStatusMap(128, 128, 1);
   double overlapTime = 0;
@@ -615,8 +624,10 @@ cudaError_t TestCutlassGemm(int M, int N, int K, int L, float alpha, float beta)
       return result;
     }
     CUDA_CHECK(cudaDeviceSynchronize());
-    CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
-
+    result = CheckResults(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, C_reference, ldc, M, L, N, D, ldd, E_cutlass, E_reference, lde);
+    if (result != cudaSuccess) {
+      return result;
+    }
     //warmup
     result = CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, M, L, N, D, ldd, E_cutlass, lde, overlapHandle, producer_stream, consumer_stream, warmup);
     if (result != cudaSuccess) {

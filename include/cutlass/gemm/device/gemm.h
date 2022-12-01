@@ -502,8 +502,12 @@ public:
       }
     }
     
-    if (overlap)
-      cutlass::KernelOverlap<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
+    if (overlap) {
+      if (params_.overlap_handle.isProducer())
+        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_);
+      else
+        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_);
+    }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
 

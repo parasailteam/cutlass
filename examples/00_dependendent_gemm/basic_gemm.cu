@@ -158,7 +158,7 @@ cudaError_t CutlassSgemmNN(
     handle.producerOrConsumer_ = false;
     if (consumer_stream != producer_stream)
       //consumer for overlap
-      handle.setGridDims(79, 1, 1);
+      handle.setGridDims(78, 1, 1);
     //E = C * D
     CutlassGemm::Arguments args2(handle,
       {M2, N2, K2},  // Gemm Problem dimensions

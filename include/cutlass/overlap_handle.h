@@ -108,6 +108,18 @@ struct OverlapHandle {
     __syncthreads();
   }
 
+  DEVICE_FUNC void waitOnTiles(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint numTiles, uint expectedInputStatusVal) {
+    if (threadIdx.x < numTiles) {
+      volatile uint* waitBuffer = tileStatusMap;
+
+      uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
+      // printf("waitBuffer[linearTileIdx] %d iter %d expectedInputStatusVal\n", waitBuffer[linearTileIdx], iter, expectedInputStatusVal);
+      while(waitBuffer[linearTileIdx + threadIdx.x] < iter * expectedInputStatusVal);
+    }
+
+    __syncthreads();
+  }
+
   DEVICE_FUNC void setTileStatus(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus) {
     __syncthreads();
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {

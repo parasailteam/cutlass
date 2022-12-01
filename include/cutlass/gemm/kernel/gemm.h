@@ -213,7 +213,6 @@ struct Gemm {
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
       params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
-
       return;
     }
 
@@ -393,11 +392,11 @@ struct Gemm {
       return;
     }
 
-    if (params.overlap_handle.enable() && params.overlap_handle.isConsumer()) {
+    if (params.overlap_handle.isConsumer()) {
       // Wait for tile of this thread block to be processed by other kernel
-      for (int col = 0; col < params.overlap_handle.xSize; col += 128)
+      // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
         //TODO: Can combine all into one
-        params.overlap_handle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
+      params.overlap_handle.waitOnTiles(0, block_idx_y, block_idx_z, params.overlap_handle.xSize/128, 1);
     }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
@@ -557,7 +556,7 @@ struct Gemm {
     }
 
     //Tile of this thread block is processed
-    if (params.overlap_handle.enable() && params.overlap_handle.isProducer())
+    if (params.overlap_handle.isProducer())
       params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}}

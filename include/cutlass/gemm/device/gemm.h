@@ -531,7 +531,7 @@ public:
     Status status = initialize(args, workspace);
     
     if (status == Status::kSuccess) {
-      status = run(stream, overlap);
+      status = run(overlap, stream);
     }
 
     return status;

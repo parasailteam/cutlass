@@ -5,7 +5,7 @@ baselineTimes = {}
 overlappedTimes = {}
 speedup = {}
 
-for d in range(1, 160, 2):
+for d in range(1, 160, 1):
   m = 128 * d
   n = 128
   k = 128
@@ -20,12 +20,12 @@ for d in range(1, 160, 2):
     otime = re.findall(r'overlapped elapsedtime ([\.\d]+) milliseconds', o)
     overlappedTimes[m] = otime[0]
     speedup[m] = float(btime[0])/float(otime[0])
-  print(f"{m}x128x128x128 & {btime[0]} & {otime[0]}")
+  print(f"{m} & 128 & 128 & 128 & {btime[0]} & {otime[0]}")
 
 print(baselineTimes)
 print(overlappedTimes)
 
-print("Size(MxNxKxL) & Baseline(ms) & Overlapped(ms) & Speedup")
+print("M & N & K & L & Baseline(ms) & Overlapped(ms) & Speedup")
 
 for d in baselineTimes:
-  print(f"{d}x128x128x128 & {baselineTimes[d]} & {overlappedTimes[d]} & {speedup[d]}")
+  print(f"{d} & 128 & 128 & 128 & {baselineTimes[d]} & {overlappedTimes[d]} & {speedup[d]}")

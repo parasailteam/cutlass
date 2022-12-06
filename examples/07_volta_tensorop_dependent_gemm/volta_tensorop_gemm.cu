@@ -138,15 +138,15 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 
 // The code section below describes datatype for input, output matrices and computation between
 // elements in input matrices.
-using ElementAccumulator = float;                   // <- data type of accumulator
-using ElementComputeEpilogue = ElementAccumulator;  // <- data type of epilogue operations
+using ElementAccumulator = cutlass::half_t;                   // <- data type of accumulator
+using ElementComputeEpilogue = float;  // <- data type of epilogue operations
 using ElementInputA = cutlass::half_t;              // <- data type of elements in input matrix A
 using ElementInputB = cutlass::half_t;              // <- data type of elements in input matrix B
-using ElementOutput = float;                        // <- data type of elements in output matrix D
+using ElementOutput = cutlass::half_t;                        // <- data type of elements in output matrix D
 
 // The code section below describes matrix layout of input and output matrices. Column Major for
 // Matrix A, Row Major for Matrix B and Row Major for Matrix C
-using LayoutInputA = cutlass::layout::ColumnMajor;
+using LayoutInputA = cutlass::layout::RowMajor;
 using LayoutInputB = cutlass::layout::RowMajor;
 using LayoutOutput = cutlass::layout::RowMajor;
 
@@ -216,9 +216,18 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
   LayoutOutput,
   ElementComputeEpilogue,
   ElementComputeEpilogue>
-  gemm_device;
+  gemm_device1;
+  cutlass::reference::device::Gemm<ElementInputA,
+  LayoutInputA,
+  ElementInputB,
+  LayoutInputB,
+  ElementOutput,
+  LayoutOutput,
+  ElementComputeEpilogue,
+  ElementComputeEpilogue>
+  gemm_device2;
   // Launch device reference gemm kernel
-  gemm_device(problem_size1,
+  gemm_device1(problem_size1,
               alpha,
               tensor_a.device_ref(),
               tensor_b.device_ref(),
@@ -238,8 +247,40 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
     tensor_c.host_view(),
     tensor_ref_c.host_view());
 
-  std::cout << (passed ? "Passed" : "Failed") << std::endl;
-  if (!passed) return cudaErrorUnknown;
+  if (!passed) {
+    std::cout << "Wrong results for C = A * B" << std::endl;
+    return cudaErrorUnknown;
+  }
+  tensor_ref_c.sync_device();
+  cudaDeviceSynchronize();
+
+  // Launch device reference gemm kernel
+  std::cout << problem_size2.m() << " " << problem_size2.n() << " " << problem_size2.k() << std::endl;
+  gemm_device2(problem_size2,
+    alpha,
+    tensor_ref_c.device_ref(),
+    tensor_d.device_ref(),
+    beta,
+    tensor_ref_e.device_ref(),
+    tensor_ref_e.device_ref());
+
+  // Wait for kernels to finish
+  cudaDeviceSynchronize();
+
+  // Copy output data from CUTLASS and reference kernel to host for comparison
+  tensor_e.sync_host();
+  tensor_ref_e.sync_host();
+
+  // Check if output from CUTLASS kernel and reference kernel are equal or not
+  passed = cutlass::reference::host::TensorEquals(
+  tensor_e.host_view(),
+  tensor_ref_e.host_view());
+
+  if (!passed) {
+  std::cout << "Wrong results for E = C * D" << std::endl;
+  return cudaErrorUnknown;
+  }
+  std::cout << "passed" << std::endl;
   return cudaSuccess;
 }
                      
@@ -265,7 +306,15 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
                                      tensor_c.device_ref(),  // <- reference to matrix C on device
                                      {alpha, beta},          // <- tuple of alpha and beta
                                      split_k_slices};        // <- k-dimension split factor
-
+  
+  typename Gemm::Arguments args2{handle,
+                                     problem_size2,  // <- problem size of matrix multiplication
+                                     tensor_c.device_ref(),  // <- reference to matrix A on device
+                                     tensor_d.device_ref(),  // <- reference to matrix B on device
+                                     tensor_e.device_ref(),  // <- reference to matrix C on device
+                                     tensor_e.device_ref(),  // <- reference to matrix C on device
+                                     {alpha, beta},          // <- tuple of alpha and beta
+                                     split_k_slices};        // <- k-dimension split factor
   // Using the arguments, query for extra workspace required for matrix multiplication computation
   size_t workspace_size = Gemm::get_workspace_size(args1);
 
@@ -273,18 +322,35 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
   cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
 
   // Instantiate CUTLASS kernel depending on templates
-  Gemm gemm_op;
+  Gemm gemm_op1;
 
   // Check the problem size is supported or not 
-  cutlass::Status status = gemm_op.can_implement(args1);
+  cutlass::Status status = gemm_op1.can_implement(args1);
   CUTLASS_CHECK(status);
 
   // Initialize CUTLASS kernel with arguments and workspace pointer
-  status = gemm_op.initialize(args1, workspace.get());
+  status = gemm_op1.initialize(args1, workspace.get());
+  CUTLASS_CHECK(status);
+
+  Gemm gemm_op2;
+  workspace_size = Gemm::get_workspace_size(args2);
+
+  // Allocate workspace memory
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+
+  // Check the problem size is supported or not 
+  status = gemm_op2.can_implement(args2);
+  CUTLASS_CHECK(status);
+
+  // Initialize CUTLASS kernel with arguments and workspace pointer
+  status = gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
 
   // Launch initialized CUTLASS kernel
-  status = gemm_op(args1, false, NULL, nullptr);
+  status = gemm_op1(args1, false, NULL, nullptr);
+  CUTLASS_CHECK(status);
+  CUDA_CHECK(cudaDeviceSynchronize());
+  status = gemm_op2(args2, false, NULL, nullptr);
   CUTLASS_CHECK(status);
 
   if (status != cutlass::Status::kSuccess) {
@@ -312,7 +378,7 @@ int run(int argc, char* arg[]) {
   }
 
   // GEMM problem dimensions.
-  int problem[4] = { 5120, 4096, 4096, 128 };
+  int problem[4] = {128, 128, 128, 128 };
 
   for (int i = 1; i < argc && i < 5; ++i) {
     std::stringstream ss(arg[i]);
@@ -349,7 +415,7 @@ int run(int argc, char* arg[]) {
       problem_size2.kn());  // <- Create matrix D with dimensions M x N used to store output from
                            // CUTLASS kernel
   cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_e(
-  problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
+      problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
                         // CUTLASS kernel
   
   cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_c(
@@ -372,18 +438,27 @@ int run(int argc, char* arg[]) {
       ElementInputB(4),
       ElementInputB(-4),
       0);  // <- Fill matrix B on host with uniform-distribution random data
-  // cutlass::reference::host::TensorFillRandomUniform(
-  //     tensor_d.host_view(),
-  //     1,
-  //     ElementInputB(4),
-  //     ElementInputB(-4),
-  //     0);  // <- Fill matrix B on host with uniform-distribution random data
+  cutlass::reference::host::TensorFillRandomUniform(
+      tensor_d.host_view(),
+      1,
+      ElementOutput(1),
+      ElementOutput(-1),
+      0);  // <- Fill matrix B on host with uniform-distribution random data
+
+  // cutlass::reference::host::TensorFill(
+  //   tensor_a.host_view());
+  // cutlass::reference::host::TensorFill(
+  //   tensor_b.host_view());
+  // cutlass::reference::host::TensorFill(
+  //   tensor_d.host_view());
   cutlass::reference::host::TensorFill(
       tensor_c.host_view());  // <- Fill matrix C on host with zeros
   cutlass::reference::host::TensorFill(
       tensor_ref_c.host_view());  // <- Fill matrix C on host with zeros
   cutlass::reference::host::TensorFill(
       tensor_e.host_view());  // <- fill matrix E on host with zeros
+  cutlass::reference::host::TensorFill(
+    tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
 
   // Copy data from host to GPU
   tensor_a.sync_device();

@@ -209,10 +209,10 @@ struct Gemm {
     ThreadblockSwizzle threadblock_swizzle;
     cutlass::gemm::GemmCoord threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-      printf("params.grid_tiled_shape.m() %d params.grid_tiled_shape.n() %d A %p B %p C %p D %p\n",
-      params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), params.ref_A.data(), params.ref_B.data(), params.ref_C.data(), params.ref_D.data());
-    }
+    // if (threadIdx.x == 0 && blockIdx.x == 0) {
+    //   printf("params.grid_tiled_shape.m() %d params.grid_tiled_shape.n() %d A %p B %p C %p D %p\n",
+    //   params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), params.ref_A.data(), params.ref_B.data(), params.ref_C.data(), params.ref_D.data());
+    // }
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
       params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {

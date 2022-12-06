@@ -381,15 +381,13 @@ struct Gemm {
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
     //Convert 1-D thread block id to 2-D
     
-    //TODO: Assuming column major
-    //In column major, y-dim is M
-    const uint grid_dim_x = 1;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
-    const uint grid_dim_y = isProducerOrConsumer ? 78 : 78;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
-    const uint start_block_idx_y = blockIdx.x / 1;//params.grid_tiled_shape.m();
-    const uint start_block_idx_x = 0;//blockIdx.x % params.grid_tiled_shape.m();
-    // if (threadIdx.x == 0) {
-    //   printf("start_block_idx_y %d start_block_idx_x %d grid_dim_y %d grid_dim_x %d params.grid_tiled_shape.m() %d params.grid_tiled_shape.n() %d blockIdx.x %d\n", start_block_idx_y, start_block_idx_x, grid_dim_y, grid_dim_x, params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), blockIdx.x);
-    // }
+    //In column major, y-dim is M,
+    //Using compile time constants to avoid expensive divide and mod
+    const uint grid_dim_x = isProducerOrConsumer ? 78 : 78;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
+    const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
+    const uint start_block_idx_x = blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+
     for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) {
     for (uint block_idx_x = start_block_idx_x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += grid_dim_x) {
 

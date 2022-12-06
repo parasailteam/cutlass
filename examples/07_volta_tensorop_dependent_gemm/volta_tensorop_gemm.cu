@@ -351,6 +351,10 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
   // Launch initialized CUTLASS kernel
   for (int r = 0; r < iters; r++) {
     handle.iter += 1;
+    if (consumer_stream != producer_stream)
+      //producer for overlap
+      handle.setGridDims(78, 1, 1);
+
     typename Gemm::Arguments args1{handle,
       problem_size1,  // <- problem size of matrix multiplication
       tensor_a.device_ref(),  // <- reference to matrix A on device
@@ -370,7 +374,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
       split_k_slices};        // <- k-dimension split factor
     
     handle.producerOrConsumer_ = true;
-    status = gemm_op1(args1, false, NULL, nullptr);
+    status = gemm_op1(args1, handle.enable(), NULL, producer_stream);
     CUTLASS_CHECK(status);
     
     if (status != cutlass::Status::kSuccess) {
@@ -378,7 +382,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
     }
 
     handle.producerOrConsumer_ = false;
-    status = gemm_op2(args2, false, NULL, nullptr);
+    status = gemm_op2(args2, handle.enable(), NULL, consumer_stream);
     CUTLASS_CHECK(status);
 
     if (status != cutlass::Status::kSuccess) {
@@ -390,6 +394,26 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
 
   return cudaSuccess;
 }
+
+#include<time.h>
+#include<sys/time.h>
+
+static double convertTimeValToDouble(struct timeval _time) {
+  return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
+}
+
+static struct timeval getTimeOfDay () {
+  struct timeval _time;
+
+  if (gettimeofday (&_time, NULL) == -1) {
+    fprintf (stderr, "gettimeofday returned -1\n");
+    perror ("");
+    abort ();
+  }
+
+  return _time;
+}
+
 
 int run(int argc, char* arg[]) {
   cudaDeviceProp props;
@@ -520,7 +544,7 @@ int run(int argc, char* arg[]) {
   cudaEvent_t end;
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
-  {
+  if (true) {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -548,6 +572,43 @@ int run(int argc, char* arg[]) {
     CUDA_CHECK(cudaEventSynchronize(end));
     CUDA_CHECK(cudaEventElapsedTime(&baselineTime, start, end));
     printf("baseline elapsedtime %f milliseconds\n", baselineTime/(float)epochs);
+  }
+
+  cutlass::reference::host::TensorFill(
+    tensor_c.host_view());  // <- Fill matrix C on host with zeros
+  cutlass::reference::host::TensorFill(
+    tensor_ref_c.host_view());  // <- Fill matrix C on host with zeros
+  cutlass::reference::host::TensorFill(
+    tensor_e.host_view());  // <- fill matrix E on host with zeros
+  cutlass::reference::host::TensorFill(
+    tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
+
+  OverlapHandle overlapHandle(problem_size1.m(), problem_size1.n(), 1, 1);
+  CUDA_CHECK(cudaStreamCreate(&consumer_stream));
+  overlapHandle.allocTileStatusMap(128, 128, 1);
+  double overlapTime = 0;
+
+  {
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, 1);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    result = check_results(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_ref_c, tensor_d, tensor_ref_e, tensor_c, tensor_e);
+    if (result != cudaSuccess) {
+      return 1;
+    }
+
+    //warmup
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, warmup);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    double startTime = convertTimeValToDouble(getTimeOfDay());
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, epochs);
+    double endTime = convertTimeValToDouble(getTimeOfDay());
+    overlapTime = (endTime - startTime)/1e3;
+
+    printf("overlapped elapsedtime %f milliseconds\n", overlapTime/(float)epochs);
   }
 
   return 0;

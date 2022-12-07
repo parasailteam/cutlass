@@ -11,7 +11,8 @@ for d in range(1, 160, 1):
   k = 128
   l = 128
 
-  (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d"%(m, n, k, l))
+  (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d 100"%(m, n, k, l))
+  
   if s == -1:
     print("error " + o)
   else:

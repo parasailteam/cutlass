@@ -73,7 +73,8 @@ struct Gemm {
   /// Parameters structure
   struct Params {
     OverlapHandle overlap_handle;
-    cutlass::gemm::GemmCoord problem_size;
+    cutlass::gemm::GemmCoord problem_size1;
+    cutlass::gemm::GemmCoord problem_size2;
     cutlass::gemm::GemmCoord grid_tiled_shape;
     int swizzle_log_tile;
     typename Mma::IteratorA::Params params_A;
@@ -84,6 +85,8 @@ struct Gemm {
     typename Epilogue::OutputTileIterator::TensorRef ref_C;
     typename Epilogue::OutputTileIterator::Params params_D;
     typename Epilogue::OutputTileIterator::TensorRef ref_D;
+    typename Epilogue::OutputTileIterator::Params params_E;
+    typename Epilogue::OutputTileIterator::TensorRef ref_E;
     typename OutputOp::Params output_op;
     int *semaphore;
     int gemm_k_size;
@@ -102,12 +105,14 @@ struct Gemm {
     CUTLASS_HOST_DEVICE
     Params(
       OverlapHandle overlap_handle,
-      cutlass::gemm::GemmCoord const & problem_size,
+      cutlass::gemm::GemmCoord const & problem_size1,
+      cutlass::gemm::GemmCoord const & problem_size2,
       cutlass::gemm::GemmCoord const & grid_tiled_shape,
       typename Mma::IteratorA::TensorRef ref_A,
       typename Mma::IteratorB::TensorRef ref_B,
       typename Epilogue::OutputTileIterator::TensorRef ref_C,
       typename Epilogue::OutputTileIterator::TensorRef ref_D,
+      typename Epilogue::OutputTileIterator::TensorRef ref_E,
       typename OutputOp::Params output_op = typename OutputOp::Params(),
       int *workspace = nullptr,
       int const *gather_A_indices = nullptr,
@@ -115,7 +120,8 @@ struct Gemm {
       int const *scatter_D_indices = nullptr
     ):
       overlap_handle(overlap_handle),
-      problem_size(problem_size),
+      problem_size1(problem_size1),
+      problem_size2(problem_size2),
       grid_tiled_shape(grid_tiled_shape),
       swizzle_log_tile(ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
       params_A(ref_A.layout()),
@@ -126,12 +132,14 @@ struct Gemm {
       ref_C(ref_C),
       params_D(ref_D.layout()),
       ref_D(ref_D),
+      params_E(ref_E.layout()),
+      ref_E(ref_E),
       output_op(output_op),
       gather_A_indices(gather_A_indices),
       gather_B_indices(gather_B_indices),
       scatter_D_indices(scatter_D_indices) {
       // printf("128: swizzle_log_tile %d\n", swizzle_log_tile);
-      int total_gemm_k_iterations = (problem_size.k() + Mma::Shape::kK - 1) / Mma::Shape::kK;
+      int total_gemm_k_iterations = (problem_size1.k() + Mma::Shape::kK - 1) / Mma::Shape::kK;
       int gemm_k_iterations = (total_gemm_k_iterations + grid_tiled_shape.k() - 1) / grid_tiled_shape.k();
       
       gemm_k_size = gemm_k_iterations * Mma::Shape::kK;
@@ -233,7 +241,7 @@ struct Gemm {
 
     // Problem size is a function of threadblock index in the K dimension
     int problem_size_k = min(
-      params.problem_size.k(), 
+      params.problem_size1.k(), 
       (threadblock_tile_offset.k() + 1) * params.gemm_k_size);
 
     // Compute threadblock-scoped matrix multiply-add
@@ -246,7 +254,7 @@ struct Gemm {
     typename Mma::IteratorA iterator_A(
       params.params_A,
       params.ref_A.data(),
-      {params.problem_size.m(), problem_size_k},
+      {params.problem_size1.m(), problem_size_k},
       thread_idx,
       tb_offset_A,
       params.gather_A_indices);
@@ -254,7 +262,7 @@ struct Gemm {
     typename Mma::IteratorB iterator_B(
       params.params_B,
       params.ref_B.data(),
-      {problem_size_k, params.problem_size.n()},
+      {problem_size_k, params.problem_size1.n()},
       thread_idx,
       tb_offset_B,
       params.gather_B_indices);
@@ -318,7 +326,7 @@ struct Gemm {
     typename Epilogue::OutputTileIterator iterator_C(
       params.params_C,
       params.ref_C.data(),
-      params.problem_size.mn(),
+      params.problem_size1.mn(),
       thread_idx,
       threadblock_offset,
       params.scatter_D_indices
@@ -326,9 +334,9 @@ struct Gemm {
 
     // Tile iterator writing to destination tensor.
     typename Epilogue::OutputTileIterator iterator_D(
-      params.params_D,
-      params.ref_D.data(),
-      params.problem_size.mn(),
+      params.params_C,
+      params.ref_C.data(),
+      params.problem_size1.mn(),
       thread_idx,
       threadblock_offset,
       params.scatter_D_indices
@@ -383,6 +391,7 @@ struct Gemm {
     
     //In column major, y-dim is M,
     //Using compile time constants to avoid expensive divide and mod
+    #if 0
     const uint grid_dim_x = isProducerOrConsumer ? 78 : 78;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
@@ -407,9 +416,9 @@ struct Gemm {
 
     if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
-      for (int col = 0; col < params.overlap_handle.xSize; col += 128)
+      for (int col = 0; col < params.overlap_handle.ySize; col += 128)
         //TODO: Can combine all into one
-        params.overlap_handle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
+        params.overlap_handle.waitOnTile(block_idx_x, col/128, block_idx_z, 1);
     }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
@@ -572,7 +581,9 @@ struct Gemm {
     if (isProducerOrConsumer)
       params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
-  }}}
+  }}
+  #endif
+  }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////

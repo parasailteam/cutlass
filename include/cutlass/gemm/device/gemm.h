@@ -297,11 +297,13 @@ class Gemm {
     // Data members
     //
     OverlapHandle overlap_handle;
-    GemmCoord problem_size;
+    GemmCoord problem_size1;
+    GemmCoord problem_size2;
     TensorRef<ElementA const, LayoutA> ref_A;
     TensorRef<ElementB const, LayoutB> ref_B;
-    TensorRef<ElementC const, LayoutC> ref_C;
+    TensorRef<ElementC, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
+    TensorRef<ElementC, LayoutC> ref_E;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
     // For gather+scatter operations
@@ -315,7 +317,7 @@ class Gemm {
 
     /// Default ctor
     CUTLASS_HOST_DEVICE
-    Arguments(): problem_size(0, 0, 0), split_k_slices(1) {
+    Arguments(): problem_size1(0,0,0), problem_size2(0,0,0), split_k_slices(1) {
 
     }
 
@@ -326,7 +328,7 @@ class Gemm {
       GemmCoord problem_size_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,
-      TensorRef<ElementC const, LayoutC> ref_C_,
+      TensorRef<ElementC, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
@@ -336,11 +338,46 @@ class Gemm {
       int const *scatter_D_indices_ = nullptr
     ):
       overlap_handle(overlap_handle_),
-      problem_size(problem_size_),
+      problem_size1(problem_size_),
+      problem_size2(0,0,0),
       ref_A(ref_A_),
       ref_B(ref_B_),
       ref_C(ref_C_),
       ref_D(ref_D_),
+      epilogue(epilogue_),
+      split_k_slices(split_k_slices),
+      gather_A_indices(gather_A_indices_),
+      gather_B_indices(gather_B_indices_),
+      scatter_D_indices(scatter_D_indices_) {
+
+    }
+
+    /// Constructs an Arguments structure 
+    CUTLASS_HOST_DEVICE
+    Arguments(
+      OverlapHandle overlap_handle_,
+      GemmCoord problem_size1_,
+      GemmCoord problem_size2_,
+      TensorRef<ElementA const, LayoutA> ref_A_,
+      TensorRef<ElementB const, LayoutB> ref_B_,
+      TensorRef<ElementC const, LayoutC> ref_C_,
+      TensorRef<ElementC, LayoutC> ref_D_,
+      TensorRef<ElementC, LayoutC> ref_E_,
+      typename EpilogueOutputOp::Params epilogue_ = 
+        typename EpilogueOutputOp::Params(),
+      int split_k_slices = 1,
+      int const *gather_A_indices_ = nullptr,
+      int const *gather_B_indices_ = nullptr,
+      int const *scatter_D_indices_ = nullptr
+    ):
+      overlap_handle(overlap_handle_),
+      problem_size1(problem_size1_),
+      problem_size2(problem_size2_),
+      ref_A(ref_A_),
+      ref_B(ref_B_),
+      ref_C(ref_C_),
+      ref_D(ref_D_),
+      ref_E(ref_E_),
       epilogue(epilogue_),
       split_k_slices(split_k_slices),
       gather_A_indices(gather_A_indices_),
@@ -368,17 +405,30 @@ public:
     }
 
     Status status = GemmKernel::can_implement(
-      args.problem_size,
+      args.problem_size1,
       args.ref_A.non_const_ref(),
       args.ref_B.non_const_ref(),
       args.ref_C.non_const_ref(),
-      args.ref_D
+      args.ref_C
     );
 
     if (status != Status::kSuccess) {
       return status;
     }
 
+    if (args.problem_size2.m() != 0) {
+      status = GemmKernel::can_implement(
+      args.problem_size2,
+      args.ref_C.non_const_ref(),
+      args.ref_D.non_const_ref(),
+      args.ref_E.non_const_ref(),
+      args.ref_E
+      );
+      if (status != Status::kSuccess) {
+        return status;
+      }
+    }
+    
     return Status::kSuccess;
   }
 
@@ -391,7 +441,7 @@ public:
     ThreadblockSwizzle threadblock_swizzle;
 
     cutlass::gemm::GemmCoord tiled_shape = threadblock_swizzle.get_tiled_shape(
-      args.problem_size, 
+      args.problem_size1, 
       {ThreadblockShape::kM, ThreadblockShape::kN, ThreadblockShape::kK},
       args.split_k_slices);
     
@@ -410,7 +460,7 @@ public:
     ThreadblockSwizzle threadblock_swizzle;
 
     cutlass::gemm::GemmCoord grid_shape = threadblock_swizzle.get_tiled_shape(
-      args.problem_size, 
+      args.problem_size1, 
       {ThreadblockShape::kM, ThreadblockShape::kN, ThreadblockShape::kK},
       args.split_k_slices);
 
@@ -439,12 +489,14 @@ public:
     // Initialize the Params structure
     params_ = typename GemmKernel::Params{
       args.overlap_handle,
-      args.problem_size,
+      args.problem_size1,
+      args.problem_size2,
       grid_shape,
       args.ref_A.non_const_ref(),
       args.ref_B.non_const_ref(),
       args.ref_C.non_const_ref(),
       args.ref_D,
+      args.ref_E.non_const_ref(),
       args.epilogue,
       static_cast<int *>(workspace),
       args.gather_A_indices,
@@ -468,6 +520,7 @@ public:
     params_.ref_B.reset(args.ref_B.non_const_ref().data());
     params_.ref_C.reset(args.ref_C.non_const_ref().data());
     params_.ref_D.reset(args.ref_D.data());
+    params_.ref_E.reset(args.ref_E.data());
     params_.output_op = args.epilogue;
     params_.semaphore = static_cast<int *>(workspace);
 
@@ -486,6 +539,7 @@ public:
                                                           params_.overlap_handle.zGridDim));
     else
       grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
     cudaError_t result;
@@ -658,17 +712,19 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     // Data members
     //
     OverlapHandle overlap_handle;
-    GemmCoord problem_size;
+    GemmCoord problem_size1;
+    GemmCoord problem_size2;
     TensorRef<ElementA const, LayoutA> ref_A;
     TensorRef<ElementB const, LayoutB> ref_B;
     TensorRef<ElementC const, LayoutC> ref_C;
     TensorRef<ElementC, LayoutC> ref_D;
+    TensorRef<ElementC, LayoutC> ref_E;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
     // For gather+scatter operations
-    int *gather_A_indices;
-    int *gather_B_indices;
-    int *scatter_D_indices;
+    int const *gather_A_indices;
+    int const *gather_B_indices;
+    int const *scatter_D_indices;
 
     //
     // Methods
@@ -676,7 +732,9 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
 
     /// Default ctor
     CUTLASS_HOST_DEVICE
-    Arguments() { }
+    Arguments(): problem_size1(0,0,0), problem_size2(0,0,0), split_k_slices(1) {
+
+    }
 
     /// Constructs an Arguments structure 
     CUTLASS_HOST_DEVICE
@@ -685,17 +743,18 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       GemmCoord problem_size_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,
-      TensorRef<ElementC const, LayoutC> ref_C_,
+      TensorRef<ElementC, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       typename EpilogueOutputOp::Params epilogue_ = 
         typename EpilogueOutputOp::Params(),
       int split_k_slices = 1,
-      int *gather_A_indices_ = nullptr,
-      int *gather_B_indices_ = nullptr,
-      int *scatter_D_indices_ = nullptr
+      int const *gather_A_indices_ = nullptr,
+      int const *gather_B_indices_ = nullptr,
+      int const *scatter_D_indices_ = nullptr
     ):
       overlap_handle(overlap_handle_),
-      problem_size(problem_size_),
+      problem_size1(problem_size_),
+      problem_size2(0,0,0),
       ref_A(ref_A_),
       ref_B(ref_B_),
       ref_C(ref_C_),
@@ -704,7 +763,43 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       split_k_slices(split_k_slices),
       gather_A_indices(gather_A_indices_),
       gather_B_indices(gather_B_indices_),
-      scatter_D_indices(scatter_D_indices_) { }
+      scatter_D_indices(scatter_D_indices_) {
+
+    }
+
+    /// Constructs an Arguments structure 
+    CUTLASS_HOST_DEVICE
+    Arguments(
+      OverlapHandle overlap_handle_,
+      GemmCoord problem_size1_,
+      GemmCoord problem_size2_,
+      TensorRef<ElementA const, LayoutA> ref_A_,
+      TensorRef<ElementB const, LayoutB> ref_B_,
+      TensorRef<ElementC const, LayoutC> ref_C_,
+      TensorRef<ElementC, LayoutC> ref_D_,
+      TensorRef<ElementC, LayoutC> ref_E_,
+      typename EpilogueOutputOp::Params epilogue_ = 
+        typename EpilogueOutputOp::Params(),
+      int split_k_slices = 1,
+      int const *gather_A_indices_ = nullptr,
+      int const *gather_B_indices_ = nullptr,
+      int const *scatter_D_indices_ = nullptr
+    ):
+      overlap_handle(overlap_handle_),
+      problem_size1(problem_size1_),
+      problem_size2(problem_size2_),
+      ref_A(ref_A_),
+      ref_B(ref_B_),
+      ref_C(ref_C_),
+      ref_D(ref_D_),
+      ref_E(ref_E_),
+      epilogue(epilogue_),
+      split_k_slices(split_k_slices),
+      gather_A_indices(gather_A_indices_),
+      gather_B_indices(gather_B_indices_),
+      scatter_D_indices(scatter_D_indices_) {
+
+    }
   };
 
 private:
@@ -720,11 +815,13 @@ public:
   static UnderlyingArguments to_underlying_arguments(Arguments const &args) {
     return UnderlyingArguments(
       args.overlap_handle,
-      {args.problem_size.n(), args.problem_size.m(), args.problem_size.k()},
+      {args.problem_size1.n(), args.problem_size1.m(), args.problem_size1.k()},
+      {args.problem_size2.n(), args.problem_size2.m(), args.problem_size2.k()},
       {args.ref_B.data(), args.ref_B.stride(0)},
       {args.ref_A.data(), args.ref_A.stride(0)},
       {args.ref_C.data(), args.ref_C.stride(0)},
       {args.ref_D.data(), args.ref_D.stride(0)},
+      {args.ref_E.data(), args.ref_E.stride(0)},
       args.epilogue,
       args.split_k_slices,
       args.gather_B_indices,

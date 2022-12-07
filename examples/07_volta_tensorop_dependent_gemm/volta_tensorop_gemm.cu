@@ -297,62 +297,62 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
                      cudaStream_t producer_stream, cudaStream_t consumer_stream,
                      int iters = 100) {
   
+  if (!handle.enable()) {
     int split_k_slices = 1;
-  // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
-  // instantiated CUTLASS kernel
-  typename Gemm::Arguments args1{handle,
-                                problem_size1,  // <- problem size of matrix multiplication
-                                tensor_a.device_ref(),  // <- reference to matrix A on device
-                                tensor_b.device_ref(),  // <- reference to matrix B on device
-                                tensor_c.device_ref(),  // <- reference to matrix C on device
-                                tensor_c.device_ref(),  // <- reference to matrix C on device
-                                {alpha, beta},          // <- tuple of alpha and beta
-                                split_k_slices};        // <- k-dimension split factor
+    // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
+    // instantiated CUTLASS kernel
+    typename Gemm::Arguments args1{handle,
+                                  problem_size1,  // <- problem size of matrix multiplication
+                                  tensor_a.device_ref(),  // <- reference to matrix A on device
+                                  tensor_b.device_ref(),  // <- reference to matrix B on device
+                                  tensor_c.device_ref(),  // <- reference to matrix C on device
+                                  tensor_c.device_ref(),  // <- reference to matrix C on device
+                                  {alpha, beta},          // <- tuple of alpha and beta
+                                  split_k_slices};        // <- k-dimension split factor
 
-  typename Gemm::Arguments args2{handle,
-                                problem_size2,  // <- problem size of matrix multiplication
-                                tensor_c.device_ref(),  // <- reference to matrix A on device
-                                tensor_d.device_ref(),  // <- reference to matrix B on device
-                                tensor_e.device_ref(),  // <- reference to matrix C on device
-                                tensor_e.device_ref(),  // <- reference to matrix C on device
-                                {alpha, beta},          // <- tuple of alpha and beta
-                                split_k_slices};        // <- k-dimension split factor
-  
-  // Using the arguments, query for extra workspace required for matrix multiplication computation
-  size_t workspace_size = Gemm::get_workspace_size(args1);
+    typename Gemm::Arguments args2{handle,
+                                  problem_size2,  // <- problem size of matrix multiplication
+                                  tensor_c.device_ref(),  // <- reference to matrix A on device
+                                  tensor_d.device_ref(),  // <- reference to matrix B on device
+                                  tensor_e.device_ref(),  // <- reference to matrix C on device
+                                  tensor_e.device_ref(),  // <- reference to matrix C on device
+                                  {alpha, beta},          // <- tuple of alpha and beta
+                                  split_k_slices};        // <- k-dimension split factor
+    
+    // Using the arguments, query for extra workspace required for matrix multiplication computation
+    size_t workspace_size = Gemm::get_workspace_size(args1);
 
-  // Allocate workspace memory
-  cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+    // Allocate workspace memory
+    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
 
-  // Instantiate CUTLASS kernel depending on templates
-  Gemm gemm_op1;
+    // Instantiate CUTLASS kernel depending on templates
+    Gemm gemm_op1;
 
-  // Check the problem size is supported or not 
-  cutlass::Status status = gemm_op1.can_implement(args1);
-  CUTLASS_CHECK(status);
+    // Check the problem size is supported or not 
+    cutlass::Status status = gemm_op1.can_implement(args1);
+    CUTLASS_CHECK(status);
 
-  // Initialize CUTLASS kernel with arguments and workspace pointer
-  status = gemm_op1.initialize(args1, workspace.get());
-  CUTLASS_CHECK(status);
+    // Initialize CUTLASS kernel with arguments and workspace pointer
+    status = gemm_op1.initialize(args1, workspace.get());
+    CUTLASS_CHECK(status);
 
-  Gemm gemm_op2;
-  workspace_size = Gemm::get_workspace_size(args2);
+    Gemm gemm_op2;
+    workspace_size = Gemm::get_workspace_size(args2);
 
-  // Allocate workspace memory
-  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+    // Allocate workspace memory
+    cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
 
-  // Check the problem size is supported or not 
-  status = gemm_op2.can_implement(args2);
-  CUTLASS_CHECK(status);
+    // Check the problem size is supported or not 
+    status = gemm_op2.can_implement(args2);
+    CUTLASS_CHECK(status);
 
-  // Initialize CUTLASS kernel with arguments and workspace pointer
-  status = gemm_op2.initialize(args2, workspace2.get());
-  CUTLASS_CHECK(status);
+    // Initialize CUTLASS kernel with arguments and workspace pointer
+    status = gemm_op2.initialize(args2, workspace2.get());
+    CUTLASS_CHECK(status);
 
-  // Launch initialized CUTLASS kernel
-  for (int r = 0; r < iters; r++) {
-    handle.iter += 1;
-    if (consumer_stream == producer_stream) {
+    // Launch initialized CUTLASS kernel
+    for (int r = 0; r < iters; r++) {
+      handle.iter += 1;
       status = gemm_op1(args1, false, NULL, producer_stream);
       CUTLASS_CHECK(status);
       
@@ -363,6 +363,50 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
         return cudaErrorUnknown;
       }
     }
+  } else {
+    int split_k_slices = 1;
+    // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
+    // instantiated CUTLASS kernel
+    handle.setGridDims(1, 1, 1);
+
+    typename Gemm::Arguments args{handle,
+                                  problem_size1,  // <- problem size of matrix multiplication
+                                  problem_size2,
+                                  tensor_a.device_ref(),  // <- reference to matrix A on device
+                                  tensor_b.device_ref(),  // <- reference to matrix B on device
+                                  tensor_c.device_ref(),  // <- reference to matrix C on device
+                                  tensor_d.device_ref(),  // <- reference to matrix C on device
+                                  tensor_e.device_ref(),
+                                  {alpha, beta},          // <- tuple of alpha and beta
+                                  split_k_slices};        // <- k-dimension split factor
+
+    // Using the arguments, query for extra workspace required for matrix multiplication computation
+    size_t workspace_size = Gemm::get_workspace_size(args);
+
+    // Allocate workspace memory
+    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+
+    // Instantiate CUTLASS kernel depending on templates
+    Gemm gemm_op;
+
+    // Check the problem size is supported or not 
+    cutlass::Status status = gemm_op.can_implement(args);
+    CUTLASS_CHECK(status);
+
+    // Initialize CUTLASS kernel with arguments and workspace pointer
+    status = gemm_op.initialize(args, workspace.get());
+    CUTLASS_CHECK(status);
+    // Launch initialized CUTLASS kernel
+    for (int r = 0; r < iters; r++) {
+      handle.iter += 1;
+      status = gemm_op(args, true, NULL, producer_stream);
+      CUTLASS_CHECK(status);
+      
+      if (status != cutlass::Status::kSuccess) {
+        return cudaErrorUnknown;
+      }
+    }
+  }
     // if (consumer_stream != producer_stream)
     //   //producer for overlap
     //   handle.setGridDims(78, 1, 1);
@@ -400,9 +444,6 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
     // if (status != cutlass::Status::kSuccess) {
     //   return cudaErrorUnknown;
     // }
-
-    CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
-  }
 
   return cudaSuccess;
 }
@@ -512,7 +553,7 @@ int run(int argc, char* arg[]) {
       1,
       ElementOutput(1),
       ElementOutput(-1),
-      0);  // <- Fill matrix B on host with uniform-distribution random data
+      1);  // <- Fill matrix B on host with uniform-distribution random data
 
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view());
@@ -546,7 +587,7 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int warmup = 10;
+  int warmup = 0;
   float baselineTime = 0;
   cudaEvent_t start;
   cudaEvent_t end;

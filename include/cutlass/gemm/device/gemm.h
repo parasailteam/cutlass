@@ -360,7 +360,7 @@ class Gemm {
       GemmCoord problem_size2_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,
-      TensorRef<ElementC const, LayoutC> ref_C_,
+      TensorRef<ElementC, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       TensorRef<ElementC, LayoutC> ref_E_,
       typename EpilogueOutputOp::Params epilogue_ = 
@@ -557,10 +557,7 @@ public:
     }
     
     if (overlap) {
-      if (params_.overlap_handle.isProducer())
-        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_);
-      else
-        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_);
+      cutlass::KernelOverlap<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
     }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);

@@ -386,13 +386,12 @@ struct Gemm {
 
   /// Executes one GEMM
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage) {
     //Convert 1-D thread block id to 2-D
     
     //In column major, y-dim is M,
     //Using compile time constants to avoid expensive divide and mod
-    #if 0
-    const uint grid_dim_x = isProducerOrConsumer ? 78 : 78;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    const uint grid_dim_x = true ? 78 : 78;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
     const uint start_block_idx_x = blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
@@ -414,12 +413,12 @@ struct Gemm {
       return;
     }
 
-    if (isProducerOrConsumer == false) {
-      // Wait for tile of this thread block to be processed by other kernel
-      for (int col = 0; col < params.overlap_handle.ySize; col += 128)
-        //TODO: Can combine all into one
-        params.overlap_handle.waitOnTile(block_idx_x, col/128, block_idx_z, 1);
-    }
+    // if (isProducerOrConsumer == false) {
+    //   // Wait for tile of this thread block to be processed by other kernel
+    //   for (int col = 0; col < params.overlap_handle.ySize; col += 128)
+    //     //TODO: Can combine all into one
+    //     params.overlap_handle.waitOnTile(block_idx_x, col/128, block_idx_z, 1);
+    // }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
     // Compute initial location in logical coordinates
@@ -435,7 +434,7 @@ struct Gemm {
 
     // Problem size is a function of threadblock index in the K dimension
     int problem_size_k = min(
-      params.problem_size.k(), 
+      params.problem_size1.k(), 
       (threadblock_tile_offset.k() + 1) * params.gemm_k_size);
 
     // Compute threadblock-scoped matrix multiply-add
@@ -448,7 +447,7 @@ struct Gemm {
     typename Mma::IteratorA iterator_A(
       params.params_A,
       params.ref_A.data(),
-      {params.problem_size.m(), problem_size_k},
+      {params.problem_size1.m(), problem_size_k},
       thread_idx,
       tb_offset_A,
       params.gather_A_indices);
@@ -456,7 +455,7 @@ struct Gemm {
     typename Mma::IteratorB iterator_B(
       params.params_B,
       params.ref_B.data(),
-      {problem_size_k, params.problem_size.n()},
+      {problem_size_k, params.problem_size1.n()},
       thread_idx,
       tb_offset_B,
       params.gather_B_indices);
@@ -520,7 +519,7 @@ struct Gemm {
     typename Epilogue::OutputTileIterator iterator_C(
       params.params_C,
       params.ref_C.data(),
-      params.problem_size.mn(),
+      params.problem_size1.mn(),
       thread_idx,
       threadblock_offset,
       params.scatter_D_indices
@@ -528,9 +527,9 @@ struct Gemm {
 
     // Tile iterator writing to destination tensor.
     typename Epilogue::OutputTileIterator iterator_D(
-      params.params_D,
-      params.ref_D.data(),
-      params.problem_size.mn(),
+      params.params_C,
+      params.ref_C.data(),
+      params.problem_size1.mn(),
       thread_idx,
       threadblock_offset,
       params.scatter_D_indices
@@ -578,11 +577,10 @@ struct Gemm {
     }
 
     //Tile of this thread block is processed
-    if (isProducerOrConsumer)
-      params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
+    // if (isProducerOrConsumer)
+    //   params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}
-  #endif
   }
 };
 

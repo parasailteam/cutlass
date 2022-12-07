@@ -57,7 +57,7 @@ void Kernel(typename Operator::Params params) {
   op(params, *shared_storage);
 }
 
-template <typename Operator, bool isProducerOrConsumer>
+template <typename Operator>
 __global__
 void KernelOverlap(typename Operator::Params params) {
   // Dynamic shared memory base pointer
@@ -68,7 +68,7 @@ void KernelOverlap(typename Operator::Params params) {
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, isProducerOrConsumer);
+  op.run_overlap_gemm(params, *shared_storage);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

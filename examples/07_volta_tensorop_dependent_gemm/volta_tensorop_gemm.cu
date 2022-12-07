@@ -593,7 +593,7 @@ int run(int argc, char* arg[]) {
   cudaEvent_t end;
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
-  if (true) {
+  if (false) {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());

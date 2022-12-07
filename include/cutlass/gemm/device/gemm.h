@@ -358,8 +358,8 @@ class Gemm {
       OverlapHandle overlap_handle_,
       GemmCoord problem_size1_,
       GemmCoord problem_size2_,
-      TensorRef<ElementA const, LayoutA> ref_A_,
-      TensorRef<ElementB const, LayoutB> ref_B_,
+      TensorRef<ElementA, LayoutA> ref_A_,
+      TensorRef<ElementB, LayoutB> ref_B_,
       TensorRef<ElementC, LayoutC> ref_C_,
       TensorRef<ElementC, LayoutC> ref_D_,
       TensorRef<ElementC, LayoutC> ref_E_,
@@ -495,6 +495,7 @@ public:
       args.ref_A.non_const_ref(),
       args.ref_B.non_const_ref(),
       args.ref_C.non_const_ref(),
+      args.ref_C,
       args.ref_D,
       args.ref_E.non_const_ref(),
       args.epilogue,
@@ -519,6 +520,7 @@ public:
     params_.ref_A.reset(args.ref_A.non_const_ref().data());
     params_.ref_B.reset(args.ref_B.non_const_ref().data());
     params_.ref_C.reset(args.ref_C.non_const_ref().data());
+    params_.ref_C2.reset(args.ref_C.non_const_ref().data());
     params_.ref_D.reset(args.ref_D.data());
     params_.ref_E.reset(args.ref_E.data());
     params_.output_op = args.epilogue;

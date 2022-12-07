@@ -83,8 +83,10 @@ struct Gemm {
     typename Mma::IteratorB::TensorRef ref_B;
     typename Epilogue::OutputTileIterator::Params params_C;
     typename Epilogue::OutputTileIterator::TensorRef ref_C;
-    typename Epilogue::OutputTileIterator::Params params_D;
-    typename Epilogue::OutputTileIterator::TensorRef ref_D;
+    typename Mma::IteratorA::Params params_C2;
+    typename Mma::IteratorA::TensorRef ref_C2;
+    typename Mma::IteratorB::Params params_D;
+    typename Mma::IteratorB::TensorRef ref_D;
     typename Epilogue::OutputTileIterator::Params params_E;
     typename Epilogue::OutputTileIterator::TensorRef ref_E;
     typename OutputOp::Params output_op;
@@ -111,7 +113,8 @@ struct Gemm {
       typename Mma::IteratorA::TensorRef ref_A,
       typename Mma::IteratorB::TensorRef ref_B,
       typename Epilogue::OutputTileIterator::TensorRef ref_C,
-      typename Epilogue::OutputTileIterator::TensorRef ref_D,
+      typename Mma::IteratorA::TensorRef ref_C2,
+      typename Mma::IteratorB::TensorRef ref_D,
       typename Epilogue::OutputTileIterator::TensorRef ref_E,
       typename OutputOp::Params output_op = typename OutputOp::Params(),
       int *workspace = nullptr,
@@ -130,6 +133,8 @@ struct Gemm {
       ref_B(ref_B),
       params_C(ref_C.layout()),
       ref_C(ref_C),
+      params_C2(ref_C2.layout()),
+      ref_C2(ref_C2),
       params_D(ref_D.layout()),
       ref_D(ref_D),
       params_E(ref_E.layout()),
@@ -388,14 +393,16 @@ struct Gemm {
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage) {
     //Convert 1-D thread block id to 2-D
-    
+
     //In column major, y-dim is M,
     //Using compile time constants to avoid expensive divide and mod
-    const uint grid_dim_x = true ? 78 : 78;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    const uint grid_dim_x = 1;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
     const uint start_block_idx_x = blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
 
+    for (uint problem = 0; problem < 1; problem++) {
+    auto problem_size = (problem == 0) ? params.problem_size1 : params.problem_size2;
     for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) {
     for (uint block_idx_x = start_block_idx_x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += grid_dim_x) {
 
@@ -434,7 +441,7 @@ struct Gemm {
 
     // Problem size is a function of threadblock index in the K dimension
     int problem_size_k = min(
-      params.problem_size1.k(), 
+      problem_size.k(), 
       (threadblock_tile_offset.k() + 1) * params.gemm_k_size);
 
     // Compute threadblock-scoped matrix multiply-add
@@ -445,17 +452,17 @@ struct Gemm {
 
     // Construct iterators to A and B operands
     typename Mma::IteratorA iterator_A(
-      params.params_A,
-      params.ref_A.data(),
-      {params.problem_size1.m(), problem_size_k},
+      (problem == 0) ? params.params_A : params.params_C2,
+      (problem == 0) ? params.ref_A.data() : params.ref_C2.data(),
+      {problem_size.m(), problem_size_k},
       thread_idx,
       tb_offset_A,
       params.gather_A_indices);
 
     typename Mma::IteratorB iterator_B(
-      params.params_B,
-      params.ref_B.data(),
-      {problem_size_k, params.problem_size1.n()},
+      (problem == 0) ? params.params_B : params.params_D,
+      (problem == 0) ? params.ref_B.data() : params.ref_D.data(),
+      {problem_size_k, problem_size.n()},
       thread_idx,
       tb_offset_B,
       params.gather_B_indices);
@@ -517,9 +524,9 @@ struct Gemm {
 
     // Tile iterator loading from source tensor.
     typename Epilogue::OutputTileIterator iterator_C(
-      params.params_C,
-      params.ref_C.data(),
-      params.problem_size1.mn(),
+      (problem == 0) ? params.params_C : params.params_E,
+      (problem == 0) ? params.ref_C.data() : params.ref_E.data(),
+      problem_size.mn(),
       thread_idx,
       threadblock_offset,
       params.scatter_D_indices
@@ -527,9 +534,9 @@ struct Gemm {
 
     // Tile iterator writing to destination tensor.
     typename Epilogue::OutputTileIterator iterator_D(
-      params.params_C,
-      params.ref_C.data(),
-      params.problem_size1.mn(),
+      (problem == 0) ? params.params_C : params.params_E,
+      (problem == 0) ? params.ref_C.data() : params.ref_E.data(),
+      problem_size.mn(),
       thread_idx,
       threadblock_offset,
       params.scatter_D_indices
@@ -581,6 +588,7 @@ struct Gemm {
     //   params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}
+  }
   }
 };
 

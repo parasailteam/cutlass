@@ -396,13 +396,22 @@ struct Gemm {
 
     //In column major, y-dim is M,
     //Using compile time constants to avoid expensive divide and mod
-    const uint grid_dim_x = 1;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    const uint grid_dim_x = 80;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
     const uint start_block_idx_x = blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
 
-    for (uint problem = 0; problem < 1; problem++) {
+    for (uint problem = 0; problem < 2; problem++) {
     auto problem_size = (problem == 0) ? params.problem_size1 : params.problem_size2;
+    auto params_A = (problem == 0) ? params.params_A : params.params_C2;
+    auto params_B = (problem == 0) ? params.params_B : params.params_D;
+    auto params_C = (problem == 0) ? params.params_C : params.params_E;
+    auto params_D = params_C;
+    auto ref_A = (problem == 0) ? params.ref_A.data() : params.ref_C2.data();
+    auto ref_B = (problem == 0) ? params.ref_B.data() : params.ref_D.data();
+    auto ref_C = (problem == 0) ? params.ref_C.data() : params.ref_E.data();
+    auto ref_D = ref_C;
+
     for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) {
     for (uint block_idx_x = start_block_idx_x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += grid_dim_x) {
 
@@ -416,16 +425,15 @@ struct Gemm {
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
       params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
-
       return;
     }
 
-    // if (isProducerOrConsumer == false) {
-    //   // Wait for tile of this thread block to be processed by other kernel
-    //   for (int col = 0; col < params.overlap_handle.ySize; col += 128)
-    //     //TODO: Can combine all into one
-    //     params.overlap_handle.waitOnTile(block_idx_x, col/128, block_idx_z, 1);
-    // }
+    if (problem == 1) {
+      // Wait for tile of this thread block to be processed by other kernel
+      for (int col = 0; col < params.overlap_handle.ySize; col += 128)
+        //TODO: Can combine all into one
+        params.overlap_handle.waitOnTile(block_idx_x, col/128, block_idx_z, 1);
+    }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
     // Compute initial location in logical coordinates
@@ -452,16 +460,16 @@ struct Gemm {
 
     // Construct iterators to A and B operands
     typename Mma::IteratorA iterator_A(
-      (problem == 0) ? params.params_A : params.params_C2,
-      (problem == 0) ? params.ref_A.data() : params.ref_C2.data(),
+      params_A,
+      ref_A,
       {problem_size.m(), problem_size_k},
       thread_idx,
       tb_offset_A,
       params.gather_A_indices);
 
     typename Mma::IteratorB iterator_B(
-      (problem == 0) ? params.params_B : params.params_D,
-      (problem == 0) ? params.ref_B.data() : params.ref_D.data(),
+      params_B,
+      ref_B,
       {problem_size_k, problem_size.n()},
       thread_idx,
       tb_offset_B,
@@ -524,8 +532,8 @@ struct Gemm {
 
     // Tile iterator loading from source tensor.
     typename Epilogue::OutputTileIterator iterator_C(
-      (problem == 0) ? params.params_C : params.params_E,
-      (problem == 0) ? params.ref_C.data() : params.ref_E.data(),
+      params_C,
+      ref_C,
       problem_size.mn(),
       thread_idx,
       threadblock_offset,
@@ -534,8 +542,8 @@ struct Gemm {
 
     // Tile iterator writing to destination tensor.
     typename Epilogue::OutputTileIterator iterator_D(
-      (problem == 0) ? params.params_C : params.params_E,
-      (problem == 0) ? params.ref_C.data() : params.ref_E.data(),
+      params_D,
+      ref_D,
       problem_size.mn(),
       thread_idx,
       threadblock_offset,
@@ -584,9 +592,8 @@ struct Gemm {
     }
 
     //Tile of this thread block is processed
-    // if (isProducerOrConsumer)
-    //   params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
-
+    if (problem == 0)
+      params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
   }}
   }
   }

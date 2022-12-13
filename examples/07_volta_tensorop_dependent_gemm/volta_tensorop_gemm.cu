@@ -367,7 +367,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
     int split_k_slices = 1;
     // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
     // instantiated CUTLASS kernel
-    handle.setGridDims(1, 1, 1);
+    handle.setGridDims(80, 1, 1);
 
     typename Gemm::Arguments args{handle,
                                   problem_size1,  // <- problem size of matrix multiplication
@@ -587,13 +587,13 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int warmup = 0;
+  int warmup = 2;
   float baselineTime = 0;
   cudaEvent_t start;
   cudaEvent_t end;
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
-  if (false) {
+  if (true) {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -646,7 +646,7 @@ int run(int argc, char* arg[]) {
   OverlapHandle overlapHandle(problem_size1.m(), problem_size1.n(), 1, 1);
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   overlapHandle.allocTileStatusMap(128, 128, 1);
-  double overlapTime = 0;
+  float overlapTime = 0;
   {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, 1);
 
@@ -662,11 +662,11 @@ int run(int argc, char* arg[]) {
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    double startTime = convertTimeValToDouble(getTimeOfDay());
+    CUDA_CHECK(cudaEventRecord(start, producer_stream));
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, epochs);
-    double endTime = convertTimeValToDouble(getTimeOfDay());
-    overlapTime = (endTime - startTime)/1e3;
-
+    CUDA_CHECK(cudaEventRecord(end, producer_stream));
+    CUDA_CHECK(cudaEventSynchronize(end));
+    CUDA_CHECK(cudaEventElapsedTime(&overlapTime, start, end));
     printf("overlapped elapsedtime %f milliseconds\n", overlapTime/(float)epochs);
   }
 

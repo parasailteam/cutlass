@@ -5,7 +5,7 @@ baselineTimes = {}
 overlappedTimes = {}
 speedup = {}
 
-for d in range(1, 160, 1):
+for d in range(1, 120, 1):
   m = 128 * d
   n = 128
   k = 128

@@ -378,18 +378,18 @@ struct Gemm {
 
   /// Executes one GEMM
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, int firstBlockIdxX, int lastBlockIdxX) {
     //Convert 1-D thread block id to 2-D
     
     //In column major, y-dim is M,
     //Using compile time constants to avoid expensive divide and mod
-    const uint grid_dim_x = isProducerOrConsumer ? 78 : 78;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    const uint grid_dim_x = min(80, lastBlockIdxX - firstBlockIdxX);//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
-    const uint start_block_idx_x = blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+    const uint start_block_idx_x = firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
 
     for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) {
-    for (uint block_idx_x = start_block_idx_x; block_idx_x < params.grid_tiled_shape.m(); block_idx_x += grid_dim_x) {
+    for (uint block_idx_x = start_block_idx_x; block_idx_x < min(params.grid_tiled_shape.m(), lastBlockIdxX); block_idx_x += grid_dim_x) {
 
     const uint block_idx_z = 0;
     ThreadblockSwizzle threadblock_swizzle;
@@ -407,6 +407,7 @@ struct Gemm {
 
     if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
+      if (block_idx_x > 80) 
       for (int col = 0; col < params.overlap_handle.xSize; col += 128)
         //TODO: Can combine all into one
         params.overlap_handle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
@@ -570,7 +571,8 @@ struct Gemm {
 
     //Tile of this thread block is processed
     if (isProducerOrConsumer)
-      params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
+      if (block_idx_x > 80) 
+        params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}}
 };

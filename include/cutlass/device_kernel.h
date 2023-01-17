@@ -59,7 +59,7 @@ void Kernel(typename Operator::Params params) {
 
 template <typename Operator, bool isProducerOrConsumer>
 __global__
-void KernelOverlap(typename Operator::Params params) {
+void KernelOverlap(typename Operator::Params params, int firstBlockIdxX, int lastBlockIdxX) {
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 
@@ -68,7 +68,7 @@ void KernelOverlap(typename Operator::Params params) {
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, isProducerOrConsumer);
+  op.run_overlap_gemm(params, *shared_storage, isProducerOrConsumer, firstBlockIdxX, lastBlockIdxX);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -504,9 +504,54 @@ public:
     
     if (overlap) {
       if (params_.overlap_handle.isProducer())
-        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_);
+        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, 0, grid.x);
       else
-        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_);
+        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m());
+    }
+    else
+      cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
+
+    result = cudaGetLastError();
+
+    return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
+  }
+
+  /// Runs the kernel using initialized state.
+  Status run(bool overlap, int firstBlockIdxX, int lastBlockIdxX, cudaStream_t stream = nullptr) {
+
+    ThreadblockSwizzle threadblock_swizzle;
+
+    dim3 grid;
+    if (overlap) {
+      if (firstBlockIdxX == 0) {
+        grid = {80, 1, 1};
+      } else {
+        grid = {40, 1, 1};
+      }
+    }
+    else
+      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+    dim3 block(GemmKernel::kThreadCount, 1, 1);
+
+    cudaError_t result;
+
+    int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
+
+    if (smem_size >= (48 << 10)) {
+      result = cudaFuncSetAttribute(Kernel<GemmKernel>,
+                                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                    smem_size);
+
+      if (result != cudaSuccess) {
+        return Status::kErrorInternal;
+      }
+    }
+    
+    if (overlap) {
+      if (params_.overlap_handle.isProducer())
+        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, firstBlockIdxX, lastBlockIdxX);
+      else
+        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m());
     }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
@@ -532,6 +577,24 @@ public:
     
     if (status == Status::kSuccess) {
       status = run(overlap, stream);
+    }
+
+    return status;
+  }
+
+
+   /// Runs the kernel using initialized state.
+  Status operator()(
+    Arguments const &args,
+    bool overlap,
+    int firstBlockIdxX, int lastBlockIdxX,
+    void *workspace = nullptr, 
+    cudaStream_t stream = nullptr) {
+    
+    Status status = initialize(args, workspace);
+    
+    if (status == Status::kSuccess) {
+      status = run(overlap, firstBlockIdxX, lastBlockIdxX, stream);
     }
 
     return status;

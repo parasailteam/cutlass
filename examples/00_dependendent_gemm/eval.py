@@ -15,6 +15,7 @@ for d in range(1, 160, 1):
   if s == -1:
     print("error " + o)
   else:
+    print(o)
     btime = re.findall(r'baseline elapsedtime ([\.\d]+) milliseconds', o)
     baselineTimes[m] = btime[0]
     otime = re.findall(r'overlapped elapsedtime ([\.\d]+) milliseconds', o)

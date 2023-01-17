@@ -352,9 +352,6 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
     for (int r = 0; r < iters; r++) {
       handle.iter += 1;
       
-        //producer for overlap
-        handle.setGridDims(78, 1, 1);
-
       typename Gemm::Arguments args1{handle,
         problem_size1,  // <- problem size of matrix multiplication
         tensor_a.device_ref(),  // <- reference to matrix A on device
@@ -374,7 +371,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
         split_k_slices};        // <- k-dimension split factor
       
       handle.producerOrConsumer_ = true;
-      status = gemm_op1(args1, handle.enable(), NULL, producer_stream);
+      status = gemm_op1(args1, false, NULL, producer_stream);
       CUTLASS_CHECK(status);
       
       if (status != cutlass::Status::kSuccess) {
@@ -382,20 +379,20 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
       }
 
       handle.producerOrConsumer_ = false;
-      status = gemm_op2(args2, handle.enable(), NULL, consumer_stream);
+      status = gemm_op2(args2, false, NULL, consumer_stream);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
         return cudaErrorUnknown;
       }
 
-      CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+      // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
     }
   } else {
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
       handle.iter += 1;
-
+      handle.producerOrConsumer_ = true;
       typename Gemm::Arguments args1{handle,
         problem_size1,  // <- problem size of matrix multiplication
         tensor_a.device_ref(),  // <- reference to matrix A on device
@@ -404,7 +401,8 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
         tensor_c.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
         split_k_slices};        // <- k-dimension split factor
-
+      
+      handle.producerOrConsumer_ = false;
       typename Gemm::Arguments args2{handle,
         problem_size2,  // <- problem size of matrix multiplication
         tensor_c.device_ref(),  // <- reference to matrix A on device
@@ -414,7 +412,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
         {alpha, beta},          // <- tuple of alpha and beta
         split_k_slices};        // <- k-dimension split factor
       
-      handle.producerOrConsumer_ = true;
+      
       dim3 grid = {problem_size1.m()/128, 1, 1};
       int lastBlockIdxX = (grid.x/80)*80;
       status = gemm_op1(args1, true, 0, lastBlockIdxX, NULL, producer_stream);
@@ -428,8 +426,8 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
       CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
       status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
+      // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
       
-      handle.producerOrConsumer_ = false;
       status = gemm_op2(args2, true, 0, grid.x, NULL, consumer_stream);
       CUTLASS_CHECK(status);
 
@@ -437,7 +435,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
         return cudaErrorUnknown;
       }
 
-      CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+      // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
     }
   }
 
@@ -587,13 +585,13 @@ int run(int argc, char* arg[]) {
   OverlapHandle baselineHandle;
   cudaError_t result;
   int epochs = 0;
-  int warmup = 0;
-  float baselineTime = 0;
+  int warmup = 10;
+  double baselineTime = 0;
   cudaEvent_t start;
   cudaEvent_t end;
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
-  if (false) {
+  if (true) {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -608,8 +606,7 @@ int run(int argc, char* arg[]) {
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    CUDA_CHECK(cudaEventRecord(start, producer_stream));
-
+    double startTime = convertTimeValToDouble(getTimeOfDay());    
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, epochs);
 
     if (result != cudaSuccess) {
@@ -617,10 +614,10 @@ int run(int argc, char* arg[]) {
         << cudaGetErrorString(result) << std::endl;
       return result;
     }
-    CUDA_CHECK(cudaEventRecord(end, producer_stream));
-    CUDA_CHECK(cudaEventSynchronize(end));
-    CUDA_CHECK(cudaEventElapsedTime(&baselineTime, start, end));
-    printf("baseline elapsedtime %f milliseconds\n", baselineTime/(float)epochs);
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+    double endTime = convertTimeValToDouble(getTimeOfDay());
+    baselineTime = endTime - startTime;
+    printf("baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
   }
 
   cutlass::reference::host::TensorFill(
@@ -655,9 +652,9 @@ int run(int argc, char* arg[]) {
     double startTime = convertTimeValToDouble(getTimeOfDay());
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, epochs);
     double endTime = convertTimeValToDouble(getTimeOfDay());
-    overlapTime = (endTime - startTime)/1e3;
+    overlapTime = endTime - startTime;
 
-    printf("overlapped elapsedtime %f milliseconds\n", overlapTime/(float)epochs);
+    printf("overlapped elapsedtime %lf microseconds\n", overlapTime/(float)epochs);
   }
 
   return 0;

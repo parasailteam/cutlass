@@ -407,10 +407,10 @@ struct Gemm {
 
     if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
-      if (block_idx_x > 80) 
-      for (int col = 0; col < params.overlap_handle.xSize; col += 128)
-        //TODO: Can combine all into one
-        params.overlap_handle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
+      // if (block_idx_x > 80) 
+      // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
+      //   //TODO: Can combine all into one
+      //   params.overlap_handle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
     }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
@@ -569,10 +569,10 @@ struct Gemm {
       semaphore.release(lock);
     }
 
-    //Tile of this thread block is processed
-    if (isProducerOrConsumer)
-      if (block_idx_x > 80) 
-        params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
+    // //Tile of this thread block is processed
+    // if (isProducerOrConsumer)
+    //   if (block_idx_x > 80) 
+    //     params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}}
 };

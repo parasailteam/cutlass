@@ -383,14 +383,16 @@ struct Gemm {
     
     //In column major, y-dim is M,
     //Using compile time constants to avoid expensive divide and mod
-    const uint grid_dim_x = min(80, lastBlockIdxX - firstBlockIdxX);//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    const uint grid_dim_x = lastBlockIdxX - firstBlockIdxX;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
     const uint start_block_idx_x = firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
-
-    for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) {
-    for (uint block_idx_x = start_block_idx_x; block_idx_x < min(params.grid_tiled_shape.m(), lastBlockIdxX); block_idx_x += grid_dim_x) {
-
+uint block_idx_y = start_block_idx_y;
+uint block_idx_x = start_block_idx_x;
+    // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
+    {
+    // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
+    {
     const uint block_idx_z = 0;
     ThreadblockSwizzle threadblock_swizzle;
     

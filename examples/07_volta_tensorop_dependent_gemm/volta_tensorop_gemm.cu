@@ -295,6 +295,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
                      OverlapHandle& handle,
                      cudaStream_t producer_stream, cudaStream_t consumer_stream,
+                      cudaEvent_t event,
                      int iters = 100) {
   
     int split_k_slices = 1;
@@ -423,7 +424,9 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
         return cudaErrorUnknown;
       }
 
-      CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+      // cudaEventRecord(event, producer_stream);
+      // cudaStreamWaitEvent(consumer_stream, event, 0);
+      // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
       status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
@@ -584,15 +587,17 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int epochs = 0;
+  int epochs = 100;
   int warmup = 10;
   double baselineTime = 0;
   cudaEvent_t start;
   cudaEvent_t end;
+  cudaEvent_t event;
+  CUDA_CHECK(cudaEventCreate(&event));
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
   if (true) {
-    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, 1);
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -602,12 +607,12 @@ int run(int argc, char* arg[]) {
     }
 
     //warmup
-    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, warmup);
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
     double startTime = convertTimeValToDouble(getTimeOfDay());    
-    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, epochs);
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, epochs);
 
     if (result != cudaSuccess) {
       std::cerr << "CUTLASS GEMM kernel failed: "
@@ -635,7 +640,7 @@ int run(int argc, char* arg[]) {
   double overlapTime = 0;
 
   {
-    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, 1);
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -645,12 +650,14 @@ int run(int argc, char* arg[]) {
     }
 
     //warmup
-    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, warmup);
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
     double startTime = convertTimeValToDouble(getTimeOfDay());
-    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, epochs);
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, epochs);
+    CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream));
     double endTime = convertTimeValToDouble(getTimeOfDay());
     overlapTime = endTime - startTime;
 

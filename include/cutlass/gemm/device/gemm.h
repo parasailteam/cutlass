@@ -525,7 +525,7 @@ public:
     if (overlap) {
       if (firstBlockIdxX == 0) {
         if (params_.overlap_handle.isProducer()) {
-          grid = {80, 1, 1};
+          grid = {240, 1, 1};
         } else {
           grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
         }

@@ -378,7 +378,7 @@ struct Gemm {
 
   /// Executes one GEMM
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, int firstBlockIdxX, int lastBlockIdxX) {
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, int firstBlockIdxX, int lastBlockIdxX, volatile int* kernelAllocated) {
     //Convert 1-D thread block id to 2-D
     
     //In column major, y-dim is M,
@@ -387,8 +387,15 @@ struct Gemm {
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
     const uint start_block_idx_x = firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
-uint block_idx_y = start_block_idx_y;
-uint block_idx_x = start_block_idx_x;
+    uint block_idx_y = start_block_idx_y;
+    uint block_idx_x = start_block_idx_x;
+    if (isProducerOrConsumer) {
+      if (block_idx_y == 0 && block_idx_x == 0 && threadIdx.x == 0) {
+        // printf("394: kernelAllocated %p\n", kernelAllocated);
+        *kernelAllocated = params.overlap_handle.iter;
+        // printf("396: kernelAllocated %d\n", *kernelAllocated);
+      }
+    }
     // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
     {
     // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
@@ -409,10 +416,11 @@ uint block_idx_x = start_block_idx_x;
 
     if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
-      // if (block_idx_x > 80) 
-      // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
-      //   //TODO: Can combine all into one
-      //   params.overlap_handle.waitOnTile(col/128, block_idx_y, block_idx_z, 1);
+      // if (block_idx_x >= 240) { 
+        // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
+          //TODO: Can combine all into one
+          params.overlap_handle.waitOnTiles(block_idx_x, block_idx_y, block_idx_z, 1, 1);
+      // }
     }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
@@ -572,9 +580,9 @@ uint block_idx_x = start_block_idx_x;
     }
 
     // //Tile of this thread block is processed
-    // if (isProducerOrConsumer)
-    //   if (block_idx_x > 80) 
-    //     params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
+    if (isProducerOrConsumer)
+      // if (block_idx_x >= 240) 
+        params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}}
 };

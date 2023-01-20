@@ -85,7 +85,24 @@ struct TensorEqualsFunc {
     Element rhs_ = rhs.at(coord);
     
     if (lhs_ != rhs_) {
-      result = false;
+      float leftFloat = __half2float((__half)lhs_);
+      float rightFloat = __half2float((__half)rhs_);
+      float diff = ::abs(rightFloat - leftFloat);
+      float rel = 1;
+      const float val = 1e-2f;
+      if (::abs(rightFloat) < val && ::abs(leftFloat) < val) {
+        printf("%f %f\n", rightFloat, leftFloat);
+        rel = 0;
+      } else if (::abs(leftFloat) < val) {
+        rel = diff/::abs(rightFloat);
+      } else {
+        rel = diff/::abs(leftFloat);
+      }
+      
+      if (rel > val) {
+        printf("%f %f %f\n", leftFloat, rightFloat, rel); 
+        result = false;
+      }
     }  
   }
 

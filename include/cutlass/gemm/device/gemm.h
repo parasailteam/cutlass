@@ -503,10 +503,10 @@ public:
     }
     
     if (overlap) {
-      if (params_.overlap_handle.isProducer())
-        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, 0, grid.x);
-      else
-        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m());
+      if (params_.overlap_handle.isProducer());
+        // cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, 0, grid.x);
+      else;
+        // cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m());
     }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
@@ -517,21 +517,21 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(bool overlap, int firstBlockIdxX, int lastBlockIdxX, cudaStream_t stream = nullptr) {
+  Status run(bool overlap, int firstBlockIdxX, int lastBlockIdxX, int* kernelExecuted, cudaStream_t stream = nullptr) {
 
     ThreadblockSwizzle threadblock_swizzle;
 
     dim3 grid;
     if (overlap) {
-      if (firstBlockIdxX == 0) {
-        if (params_.overlap_handle.isProducer()) {
-          grid = {240, 1, 1};
-        } else {
+      // if (firstBlockIdxX == 0) {
+      //   if (params_.overlap_handle.isProducer()) {
+      //     grid = {240, 1, 1};
+      //   } else {
           grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-        }
-      } else {
-        grid = {40, 1, 1};
-      }
+      //   }
+      // } else {
+      //   grid = {40, 1, 1};
+      // }
     }
     else
       grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
@@ -553,9 +553,9 @@ public:
     
     if (overlap) {
       if (params_.overlap_handle.isProducer())
-        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, firstBlockIdxX, lastBlockIdxX);
+        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, firstBlockIdxX, lastBlockIdxX, kernelExecuted);
       else
-        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m());
+        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m(), kernelExecuted);
     }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
@@ -592,13 +592,14 @@ public:
     Arguments const &args,
     bool overlap,
     int firstBlockIdxX, int lastBlockIdxX,
+    int* kernelExecuted,
     void *workspace = nullptr, 
     cudaStream_t stream = nullptr) {
     
     Status status = initialize(args, workspace);
     
     if (status == Status::kSuccess) {
-      status = run(overlap, firstBlockIdxX, lastBlockIdxX, stream);
+      status = run(overlap, firstBlockIdxX, lastBlockIdxX, kernelExecuted, stream);
     }
 
     return status;

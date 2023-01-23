@@ -389,6 +389,7 @@ struct Gemm {
     const uint start_block_idx_x = firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
     uint block_idx_y = start_block_idx_y;
     uint block_idx_x = start_block_idx_x;
+    const int remaining_block_idx = (gridDim.x/(3*80))*(3*80);
     if (isProducerOrConsumer) {
       if (block_idx_y == 0 && block_idx_x == 0 && threadIdx.x == 0) {
         // printf("394: kernelAllocated %p\n", kernelAllocated);
@@ -416,11 +417,11 @@ struct Gemm {
 
     if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
-      // if (block_idx_x >= 240) { 
+      if (block_idx_x >= remaining_block_idx) {
         // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
           //TODO: Can combine all into one
           params.overlap_handle.waitOnTiles(block_idx_x, block_idx_y, block_idx_z, 1, 1);
-      // }
+      }
     }
 
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
@@ -581,7 +582,7 @@ struct Gemm {
 
     // //Tile of this thread block is processed
     if (isProducerOrConsumer)
-      // if (block_idx_x >= 240) 
+      if (block_idx_x >= remaining_block_idx)
         params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}}

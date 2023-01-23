@@ -29,7 +29,7 @@ if False:
   print("M & N & K & L & TBs & Baseline(ms) & Overlapped(ms) & Speedup")
 
   for d in baselineTimes:
-    print(f"{d} & 128 & 128 & 128 & {d} & {baselineTimes[d]} & {overlappedTimes[d]} & {speedup[d]}")
+    print(f"{d} & 128 & 128 & 128 & {d//128} & {baselineTimes[d]} & {overlappedTimes[d]} & {speedup[d]}")
 
 else:
   for i in range(int(80*3.5), int(80*10.5), 80):

@@ -309,9 +309,20 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
   return cudaSuccess;
 }
 
-__global__ void waitKernel(volatile int* kernelExecuted, int expectedValue) {
-  if (threadIdx.x == 0)
-    while(*kernelExecuted < expectedValue);
+__device__ inline uint glLoad(volatile uint* addr) {
+  uint val;
+  asm ("ld.volatile.global.u32 {%0}, [%1];" : "=r"(val) : "l"(addr));
+  return val;
+}
+
+
+__global__ void waitKernel(volatile uint* kernelExecuted, uint expectedValue) {
+  if (threadIdx.x == 0) {
+    uint v = glLoad(kernelExecuted);
+    while(v < expectedValue) {
+      v = glLoad(kernelExecuted);
+    }
+  }
 }
                      
 cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
@@ -415,7 +426,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
       }
 
       handle.producerOrConsumer_ = false;
-      CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+      // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
 
       status = gemm_op2(args2, false, NULL, consumer_stream);
       CUTLASS_CHECK(status);
@@ -476,7 +487,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-      waitKernel<<<1,32,0,consumer_stream>>>(kernelExecuted, handle.iter);
+      // waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
       status = gemm_op2(args2, true, 0, grid.x,  (int*)kernelExecuted, NULL, consumer_stream);
       CUTLASS_CHECK(status);
 
@@ -663,13 +674,39 @@ int run(int argc, char* arg[]) {
     tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
 
   OverlapHandle overlapHandle(problem_size1.m(), problem_size1.n(), 1, 1);
-  CUDA_CHECK(cudaStreamCreate(&consumer_stream));
+  int highestPriority;
+  int lowestPriority;
+  CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&lowestPriority, &highestPriority));
+  CUDA_CHECK(cudaStreamCreateWithPriority(&consumer_stream, 0, lowestPriority));
   int* kernelExecuted;
   CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int)));
   CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(int)));
 
   overlapHandle.allocTileStatusMap(128, 128, 1);
   double overlapTime = 0;
+  dim3 gridDim = {problem_size1.m()/128, problem_size1.n()/128, 1};
+
+  int* dIsRemainingBlock;
+  int* hIsRemainingBlock = new int[gridDim.x*gridDim.y];
+  CUDA_CHECK(cudaMalloc(&dIsRemainingBlock, sizeof(int)*gridDim.x*gridDim.y));
+  int totalBlocks = 0;
+  const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
+  printf("startRemainingBlockId %d to %d\n", startRemainingBlockId, gridDim.x*gridDim.y);
+  for (int y = 0; y < gridDim.y; y++) {
+    for (int x = 0; x < gridDim.x; x++) {
+      if (totalBlocks >= startRemainingBlockId) {
+        hIsRemainingBlock[totalBlocks] = 1;
+      } else {
+        hIsRemainingBlock[totalBlocks] = 0;
+      }
+
+      totalBlocks++;
+    }
+  }
+
+  CUDA_CHECK(cudaMemcpy(dIsRemainingBlock, hIsRemainingBlock, sizeof(int) * gridDim.x * gridDim.y, cudaMemcpyHostToDevice));
+
+  overlapHandle.isBlockRemaining = dIsRemainingBlock;
 
   if (true) {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);

@@ -37,6 +37,8 @@ struct OverlapHandle {
   uint expectedInputStatusVal;
   uint iter;
   bool enable_;
+
+  int* isBlockRemaining;
   //True for producer and false for consumer
   bool producerOrConsumer_;
 

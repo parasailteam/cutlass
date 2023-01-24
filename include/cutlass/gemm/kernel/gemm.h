@@ -418,11 +418,14 @@ struct Gemm {
     if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
       // if (threadIdx.x == 0)
-        if (params.overlap_handle.isBlockRemaining[block_idx_y * gridDim.y + block_idx_x] == 1) {
+      // if (threadIdx.x == 0)
+        // printf("Waiting %d %d %d\n", block_idx_y, block_idx_x, params.overlap_handle.isBlockRemaining[block_idx_y * gridDim.y + block_idx_x]);
+        // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1) 
+        {
           // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
             //TODO: Can combine all into one
-          // printf("Waiting %d %d\n", block_idx_y, block_idx_x);
-          params.overlap_handle.waitOnTiles(block_idx_x, block_idx_y, block_idx_z, params.overlap_handle.ySize/128, 1);
+          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, params.overlap_handle.ySize/128, 1);
+          // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
         }
     }
 
@@ -585,7 +588,7 @@ struct Gemm {
     // //Tile of this thread block is processed
     if (isProducerOrConsumer)
       // if (threadIdx.x == 0)
-        if (params.overlap_handle.isBlockRemaining[block_idx_y * gridDim.y + block_idx_x] == 1)
+        // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1)
           params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
 
   }}}

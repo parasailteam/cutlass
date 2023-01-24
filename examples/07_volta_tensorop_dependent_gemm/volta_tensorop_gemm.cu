@@ -487,15 +487,17 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-      // waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
+      waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
+      
       status = gemm_op2(args2, true, 0, grid.x,  (int*)kernelExecuted, NULL, consumer_stream);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
         return cudaErrorUnknown;
       }
-      
-      CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+      CUDA_CHECK(cudaDeviceSynchronize());
+      // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+      // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
       double end = timeInMicroSeconds();
       execTime += end-start;
     }
@@ -575,24 +577,27 @@ int run(int argc, char* arg[]) {
                           // reference kernel
 
   // Fill input and output matrices on host using CUTLASS helper functions
-  cutlass::reference::host::TensorFillRandomUniform(
-      tensor_a.host_view(),
-      1,
-      ElementInputA(2),
-      ElementInputA(-2),
-      0);  // <- Fill matrix A on host with uniform-distribution random data
-  cutlass::reference::host::TensorFillRandomUniform(
-      tensor_b.host_view(),
-      1,
-      ElementInputB(2),
-      ElementInputB(-2),
-      0);  // <- Fill matrix B on host with uniform-distribution random data
-  cutlass::reference::host::TensorFillRandomUniform(
-      tensor_d.host_view(),
-      1,
-      ElementOutput(2),
-      ElementOutput(-2),
-      0);  // <- Fill matrix B on host with uniform-distribution random data
+  // cutlass::reference::host::TensorFillRandomUniform(
+  //     tensor_a.host_view(),
+  //     1,
+  //     ElementInputA(2),
+  //     ElementInputA(-2),
+  //     0);  // <- Fill matrix A on host with uniform-distribution random data
+  // cutlass::reference::host::TensorFillRandomUniform(
+  //     tensor_b.host_view(),
+  //     1,
+  //     ElementInputB(2),
+  //     ElementInputB(-2),
+  //     0);  // <- Fill matrix B on host with uniform-distribution random data
+  cutlass::reference::host::TensorFill(
+    tensor_a.host_view(),
+    ElementOutput(2));  // <- Fill matrix B on host with uniform-distribution random data
+  cutlass::reference::host::TensorFill(
+    tensor_b.host_view(),
+    ElementOutput(3));  // <- Fill matrix B on host with uniform-distribution random data
+  cutlass::reference::host::TensorFill(
+    tensor_d.host_view(),
+    ElementOutput(1));  // <- Fill matrix B on host with uniform-distribution random data
 
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view());
@@ -722,7 +727,7 @@ int run(int argc, char* arg[]) {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
-
+    printf("728:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     CUDA_CHECK(cudaStreamSynchronize(consumer_stream));

@@ -424,7 +424,7 @@ struct Gemm {
         {
           // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
             //TODO: Can combine all into one
-          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, params.overlap_handle.ySize/128, 1);
+          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
         }
     }
@@ -443,7 +443,7 @@ struct Gemm {
 
     // Problem size is a function of threadblock index in the K dimension
     int problem_size_k = min(
-      params.problem_size.k(), 
+      params.problem_size.k(),
       (threadblock_tile_offset.k() + 1) * params.gemm_k_size);
 
     // Compute threadblock-scoped matrix multiply-add
@@ -589,7 +589,7 @@ struct Gemm {
     if (isProducerOrConsumer)
       // if (threadIdx.x == 0)
         // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1)
-          params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, block_idx_z, 1);
+          params.overlap_handle.setTileStatus(block_idx_x, 0, 0, 1);
 
   }}}
 };

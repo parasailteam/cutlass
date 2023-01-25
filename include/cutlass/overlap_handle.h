@@ -127,7 +127,7 @@ struct OverlapHandle {
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
       uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
       // printf("tileStatusMap[linearTileIdx] %d\n", tileStatusMap[linearTileIdx]);
-      tileStatusMap[linearTileIdx] = iter * tileStatus;
+      atomicAdd(&tileStatusMap[linearTileIdx], 1);
     }
 
     __syncwarp();

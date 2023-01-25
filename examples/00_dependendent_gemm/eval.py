@@ -39,9 +39,9 @@ else:
     speedup[m] = {}
 
     for d in range(128, 128*9, 128):
-      n = 128
+      n = d
       k = d
-      l = 128
+      l = d
 
       (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d"%(m, n, k, l))
       if s == -1:
@@ -53,7 +53,7 @@ else:
         otime = re.findall(r'overlapped elapsedtime ([\.\d]+)', o)
         overlappedTimes[m][k] = otime[0]
         speedup[m][k] = float(btime[0])/float(otime[0])
-      print(f"{m} & 128 & {k} & 128 & {m//128} & {btime[0]} & {otime[0]}")
+      print(f"{m} & {k} & {k} & {k} & {m//128} & {btime[0]} & {otime[0]}")
 
   print(baselineTimes)
   print(overlappedTimes)
@@ -62,4 +62,4 @@ else:
 
   for m in baselineTimes:
     for k in baselineTimes[m]:
-      print(f"{m} & 128 & {k} & 128 & {m//128} & {baselineTimes[m][k]} & {overlappedTimes[m][k]} & {speedup[m][k]}")
+      print(f"{m} & {k} & {k} & {k} & {m//128} & {baselineTimes[m][k]} & {overlappedTimes[m][k]} & {speedup[m][k]}")

@@ -39,6 +39,9 @@ struct OverlapHandle {
   bool enable_;
 
   int* isBlockRemaining;
+  int* numProducerTBs;
+  int* numConsumerTBs;
+
   //True for producer and false for consumer
   bool producerOrConsumer_;
 

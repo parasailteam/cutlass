@@ -142,6 +142,7 @@ struct Gemm {
 
   /// Shared memory storage structure
   union SharedStorage {
+    int linear_id;
     typename Mma::SharedStorage main_loop;
     typename Epilogue::SharedStorage epilogue;
   };
@@ -385,18 +386,33 @@ struct Gemm {
     //Using compile time constants to avoid expensive divide and mod
     const uint grid_dim_x = lastBlockIdxX - firstBlockIdxX;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
-    const uint start_block_idx_y = blockIdx.y;//params.grid_tiled_shape.m();
-    const uint start_block_idx_x = firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+    uint start_block_idx_y = 0;
+    uint start_block_idx_x = 0;
+    int totalTBs = params.grid_tiled_shape.m()*params.grid_tiled_shape.n();
+    if (threadIdx.x == 0) {
+      if (isProducerOrConsumer) {
+        shared_storage.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*totalTBs;
+        if (shared_storage.linear_id == 0) {
+          *kernelAllocated = params.overlap_handle.iter;
+        } 
+      } else {
+        // atomicAdd(params.overlap_handle.numConsumerTBs, 1);// - (params.overlap_handle.iter-1)*totalTBs;
+      } 
+    }
+
+    if (isProducerOrConsumer) {
+      __syncthreads();
+      start_block_idx_y = shared_storage.linear_id/gridDim.x;//blockIdx.y;//params.grid_tiled_shape.m();
+      start_block_idx_x = shared_storage.linear_id%gridDim.x;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+    } else {
+      start_block_idx_y = blockIdx.y;
+      start_block_idx_x = blockIdx.x;
+    }
+
     uint block_idx_y = start_block_idx_y;
     uint block_idx_x = start_block_idx_x;
     const int remaining_block_idx = (gridDim.x/(3*80))*(3*80);
-    if (isProducerOrConsumer) {
-      if (block_idx_y == 0 && block_idx_x == 0 && threadIdx.x == 0) {
-        // printf("394: kernelAllocated %p\n", kernelAllocated);
-        *kernelAllocated = params.overlap_handle.iter;
-        // printf("396: kernelAllocated %d\n", *kernelAllocated);
-      }
-    }
+    
     // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
     {
     // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 

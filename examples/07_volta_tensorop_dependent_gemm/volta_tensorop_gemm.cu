@@ -686,6 +686,15 @@ int run(int argc, char* arg[]) {
   int* kernelExecuted;
   CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int)));
   CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(int)));
+  
+  int* numProducerTBs;
+  CUDA_CHECK(cudaMalloc(&numProducerTBs, sizeof(int)));
+  CUDA_CHECK(cudaMemset(numProducerTBs, 0, sizeof(int)));
+  overlapHandle.numProducerTBs = numProducerTBs;
+  int* numConsumerTBs;
+  CUDA_CHECK(cudaMalloc(&numConsumerTBs, sizeof(int)));
+  CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int)));
+  overlapHandle.numConsumerTBs = numConsumerTBs;
 
   overlapHandle.allocTileStatusMap(128, 128, 1);
   double overlapTime = 0;

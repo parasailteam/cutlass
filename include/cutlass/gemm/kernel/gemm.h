@@ -142,7 +142,11 @@ struct Gemm {
 
   /// Shared memory storage structure
   union SharedStorage {
-    int linear_id;
+    struct {
+      int linear_id;
+      int block_idx_x;
+      int block_idx_y;
+    } tbInfo;
     typename Mma::SharedStorage main_loop;
     typename Epilogue::SharedStorage epilogue;
   };
@@ -388,11 +392,15 @@ struct Gemm {
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     uint start_block_idx_y = 0;
     uint start_block_idx_x = 0;
+    
     int totalTBs = params.grid_tiled_shape.m()*params.grid_tiled_shape.n();
     if (threadIdx.x == 0) {
       if (isProducerOrConsumer) {
-        shared_storage.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*totalTBs;
-        if (shared_storage.linear_id == 0) {
+        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*totalTBs;
+        shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
+        shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+        // printf("400: %d %d %d\n", shared_storage.tbInfo.linear_id, shared_storage.tbInfo.block_idx_x, shared_storage.tbInfo.block_idx_y);
+        if (shared_storage.tbInfo.linear_id == 0) {
           *kernelAllocated = params.overlap_handle.iter;
         } 
       } else {
@@ -402,8 +410,9 @@ struct Gemm {
 
     if (isProducerOrConsumer) {
       __syncthreads();
-      start_block_idx_y = shared_storage.linear_id/gridDim.x;//blockIdx.y;//params.grid_tiled_shape.m();
-      start_block_idx_x = shared_storage.linear_id%gridDim.x;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+      // const uint mTbs = gridDim.x;//35584/128;
+      start_block_idx_x = shared_storage.tbInfo.block_idx_x; // shared_storage.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
+      start_block_idx_y = shared_storage.tbInfo.block_idx_y;// shared_storage.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.linear_id*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
     } else {
       start_block_idx_y = blockIdx.y;
       start_block_idx_x = blockIdx.x;
@@ -430,7 +439,9 @@ struct Gemm {
 
       return;
     }
-
+    // if (isProducerOrConsumer && threadIdx.x == 0) {
+    //   printf("%d %d\n", start_block_idx_x, start_block_idx_y);
+    // }
     if (isProducerOrConsumer == false) {
       // Wait for tile of this thread block to be processed by other kernel
       // if (threadIdx.x == 0)

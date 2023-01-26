@@ -695,10 +695,30 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaMalloc(&numConsumerTBs, sizeof(int)));
   CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int)));
   overlapHandle.numConsumerTBs = numConsumerTBs;
-
+  
+  
+  
   overlapHandle.allocTileStatusMap(128, 128, 1);
   double overlapTime = 0;
   dim3 gridDim = {problem_size1.m()/128, problem_size1.n()/128, 1};
+  
+  int* dBlockIndexOrder;
+  CUDA_CHECK(cudaMalloc(&dBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * 2));
+  CUDA_CHECK(cudaMemset(dBlockIndexOrder, 0, sizeof(int) * gridDim.x * gridDim.y * 2));
+
+  int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * 2];
+  int linearid = 0;
+  for (int y = 0; y < gridDim.y; y++) {
+    for (int x = 0; x < gridDim.x; x++) {
+      hBlockIndexOrder[linearid] = x;
+      hBlockIndexOrder[linearid + 1] = y;
+      // printf("linearid %d x %d y %d\n", linearid, x, y);
+      linearid += 2;
+    }
+  }
+
+  printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
+  CUDA_CHECK(cudaMemcpy(dBlockIndexOrder, hBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * 2, cudaMemcpyHostToDevice));
 
   int* dIsRemainingBlock;
   int* hIsRemainingBlock = new int[gridDim.x*gridDim.y];
@@ -721,6 +741,7 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaMemcpy(dIsRemainingBlock, hIsRemainingBlock, sizeof(int) * gridDim.x * gridDim.y, cudaMemcpyHostToDevice));
 
   overlapHandle.isBlockRemaining = dIsRemainingBlock;
+  overlapHandle.blockIndexOrder = dBlockIndexOrder;
 
   if (true) {
     result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);

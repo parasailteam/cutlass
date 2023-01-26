@@ -381,6 +381,16 @@ struct Gemm {
     }
   }
 
+  __device__ uint get_smid(void) {
+
+      uint ret;
+
+      asm("mov.u32 %0, %smid;" : "=r"(ret) );
+
+      return ret;
+
+  }
+
   /// Executes one GEMM
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, int firstBlockIdxX, int lastBlockIdxX, volatile int* kernelAllocated) {
@@ -396,9 +406,18 @@ struct Gemm {
     int totalTBs = params.grid_tiled_shape.m()*params.grid_tiled_shape.n();
     if (threadIdx.x == 0) {
       if (isProducerOrConsumer) {
-        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*totalTBs;
-        shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
-        shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y;
+        if (shared_storage.tbInfo.linear_id < totalTBs) {
+          shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
+          shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+        } else {
+          if (false) {
+
+          } else {
+            shared_storage.tbInfo.block_idx_x = params.grid_tiled_shape.m() + 1;
+            shared_storage.tbInfo.block_idx_y = params.grid_tiled_shape.n() + 1;
+          }
+        }
         // printf("400: %d %d %d\n", shared_storage.tbInfo.linear_id, shared_storage.tbInfo.block_idx_x, shared_storage.tbInfo.block_idx_y);
         if (shared_storage.tbInfo.linear_id == 0) {
           *kernelAllocated = params.overlap_handle.iter;

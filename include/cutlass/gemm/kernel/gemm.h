@@ -411,14 +411,25 @@ struct Gemm {
           shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
           shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
         } else {
-          if (false) {
-
+          //printf("linearid: %d smid: %d\n", shared_storage.tbInfo.linear_id, get_smid());
+          if (false && get_smid() < 23) {
+            int remainingTBsLinearId = atomicAdd(&params.overlap_handle.numConsumerTBs[get_smid()], 1) - (params.overlap_handle.iter-1)*3;
+            // printf("remainingTBsLinearId %d", remainingTBsLinearId);
+            remainingTBsLinearId = get_smid()*3 + remainingTBsLinearId;
+            if (remainingTBsLinearId + 2160 < 2224) {
+              shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[(2160 + remainingTBsLinearId)*2];//blockIdx.y;//params.grid_tiled_shape.m();
+              shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[(2160 + remainingTBsLinearId)*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+              printf("400: %d %d %d %d %d\n", get_smid(), shared_storage.tbInfo.linear_id, remainingTBsLinearId, shared_storage.tbInfo.block_idx_x, shared_storage.tbInfo.block_idx_y);
+            } else {
+              shared_storage.tbInfo.block_idx_x = params.grid_tiled_shape.m() + 1;
+              shared_storage.tbInfo.block_idx_y = params.grid_tiled_shape.n() + 1;  
+            }
           } else {
             shared_storage.tbInfo.block_idx_x = params.grid_tiled_shape.m() + 1;
             shared_storage.tbInfo.block_idx_y = params.grid_tiled_shape.n() + 1;
           }
         }
-        // printf("400: %d %d %d\n", shared_storage.tbInfo.linear_id, shared_storage.tbInfo.block_idx_x, shared_storage.tbInfo.block_idx_y);
+        
         if (shared_storage.tbInfo.linear_id == 0) {
           *kernelAllocated = params.overlap_handle.iter;
         } 

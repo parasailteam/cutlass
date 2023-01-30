@@ -526,7 +526,7 @@ public:
       if (params_.overlap_handle.isProducer())
       {
         grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-        grid = {2400, 1, 1};
+        grid = {grid.x*grid.y, 1, 1};
         // printf("grid.x %d\n", grid.x);
       } else {
       // if (firstBlockIdxX == 0) {

@@ -434,11 +434,15 @@ struct Gemm {
           *kernelAllocated = params.overlap_handle.iter;
         } 
       } else {
-        // atomicAdd(params.overlap_handle.numConsumerTBs, 1);// - (params.overlap_handle.iter-1)*totalTBs;
+        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numConsumerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y;
+        if (true) { //if (shared_storage.tbInfo.linear_id < totalTBs) {
+          shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
+          shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];
+        }
       } 
     }
 
-    if (isProducerOrConsumer) {
+    if (isProducerOrConsumer || true) {
       __syncthreads();
       // const uint mTbs = gridDim.x;//35584/128;
       start_block_idx_x = shared_storage.tbInfo.block_idx_x; // shared_storage.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
@@ -484,7 +488,7 @@ struct Gemm {
         {
           // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
             //TODO: Can combine all into one
-          params.overlap_handle.waitOnTiles(block_idx_y, 0, 0, 1, params.overlap_handle.ySize/128);
+          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
         }
     }

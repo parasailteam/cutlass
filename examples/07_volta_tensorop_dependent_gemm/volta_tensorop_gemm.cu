@@ -236,7 +236,7 @@ using OverlapGemm1 = cutlass::gemm::device::Gemm<ElementInputA,
                                          EpilogueOp,
                                          cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>>;
 
-using OverlapGemm2 = Gemm;
+using OverlapGemm2 = OverlapGemm1;
 
 cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
                     cutlass::gemm::GemmCoord problem_size2,
@@ -516,6 +516,8 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
       // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
       double end = timeInMicroSeconds();
+      if (iters == 20)
+        printf("%lf\n",end-start);
       execTime += end-start;
     }
   }
@@ -551,9 +553,18 @@ int run(int argc, char* arg[]) {
   // Scalars used for linear scaling the result of the matrix product.
   float scalars[2] = { 1, 0 };
 
-  for (int i = 5; i < argc && i < 7; ++i) {
-    std::stringstream ss(arg[i]);
-    ss >> scalars[i - 4];
+  // for (int i = 5; i < argc && i < 7; ++i) {
+  //   std::stringstream ss(arg[i]);
+  //   ss >> scalars[i - 4];
+  // }
+
+  if (strcmp(arg[5], "check=false") == 0) {
+    doChecking = false;
+  } else if (strcmp(arg[5], "check=true") == 0) {
+    doChecking = true;
+  } else {
+    printf("invalid arg[5] %s\n", arg[7]);
+    abort();
   }
 
   //
@@ -566,7 +577,7 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   
   printf("problem[0] %d problem[1] %d problem[2] %d problem[3] %d\n", problem[0], problem[1], problem[2], problem[3]);
-
+  printf("doChecking=%d\n", doChecking);
   // Create a tuple of problem size for matrix multiplication
   cutlass::gemm::GemmCoord problem_size1(problem[0], problem[1], problem[2]);
   cutlass::gemm::GemmCoord problem_size2(problem[0], problem[3], problem[1]);
@@ -648,7 +659,7 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int epochs = 100;
+  int epochs = 20;
   int warmup = 10;
   double baselineTime = 0;
   cudaEvent_t start;
@@ -688,11 +699,11 @@ int run(int argc, char* arg[]) {
   }
 
   double minimumTime = (1<<20);
-  if (false) {
+  if (true) {
     minimumTime = 0;
     cudaStream_t consumer_stream;
     CUDA_CHECK(cudaStreamCreate(&consumer_stream));
-    // result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
+    result = runhgemm<Gemm, Gemm>(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
 
     if (result != cudaSuccess) {
       std::cerr << "CUTLASS GEMM kernel failed: "
@@ -768,6 +779,10 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaMalloc(&dIsRemainingBlock, sizeof(int)*gridDim.x*gridDim.y));
   int totalBlocks = 0;
   const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
+  if ((gridDim.x*gridDim.y)%240 == 0) {
+    printf("Invalid\n");
+    return 0;
+  }
   printf("startRemainingBlockId %d to %d\n", startRemainingBlockId, gridDim.x*gridDim.y);
   for (int x = 0; x < gridDim.x; x++) {
     for (int y = 0; y < gridDim.y; y++) {

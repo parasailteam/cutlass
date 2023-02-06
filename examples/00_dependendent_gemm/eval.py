@@ -14,7 +14,7 @@ if False:
     k = 128
     l = 128
 
-    (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d"%(m, n, k, l))
+    (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d check=false"%(m, n, k, l))
     if s == -1:
       print("error " + o)
     else:
@@ -45,12 +45,19 @@ else:
     minimumTimes[m] = {}
     maxspeedup[m] = {}
 
-    for d in range(1, 32, 2):
+    for d in range(4, 32, 4):
       n = d*128
       k = d*128
       l = d*128
+      if ((m//128)*(n//128))%240 == 0:
+        baselineTimes[m][k] = 1
+        overlappedTimes[m][k] = 1
+        speedup[m][k] = 1
+        minimumTimes[m][k] = 1
+        maxspeedup[m][k] = 1
+        continue
 
-      (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d"%(m, n, k, l))
+      (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d check=false"%(m, n, k, l))
       if s == -1:
         print("error " + o)
       else:
@@ -72,4 +79,4 @@ else:
 
   for m in baselineTimes:
     for k in baselineTimes[m]:
-      print(f"{m} & {k} & {k} & {k} & {(m//128)*(n//128)} & {baselineTimes[m][k]} & {overlappedTimes[m][k]} & {minimumTimes[m][k]} & {speedup[m][k]} & {maxspeedup[m][k]}")
+      print(f"{m} & {k} & {k} & {k} & {(m//128)*(k//128)} & {baselineTimes[m][k]} & {overlappedTimes[m][k]} & {minimumTimes[m][k]} & {speedup[m][k]} & {maxspeedup[m][k]}")

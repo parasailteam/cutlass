@@ -195,10 +195,18 @@ struct GemmIdentityThreadblockSwizzle {
 
   //Overlap function:
   CUTLASS_DEVICE
-  GemmCoord get_tile_offset(int log_tile, int block_idx_x, int block_idx_y, int block_idx_z) const {
-    return GemmCoord{(block_idx_x >> log_tile),  //
-                     (block_idx_y << log_tile) + ((block_idx_x) & ((1 << (log_tile)) - 1)),
-                     block_idx_z};
+  GemmCoord get_tile_offset(int log_tile, int block_idx_x, int block_idx_y, int block_idx_z, bool isProducerOrConsumer) const {
+    if (true) {
+      //Producer
+      return GemmCoord{(block_idx_x >> log_tile),  //
+                      (block_idx_y << log_tile) + ((block_idx_x) & ((1 << (log_tile)) - 1)),
+                      block_idx_z};
+    } else {
+      //Consumer
+      return GemmCoord{(block_idx_y >> log_tile),  //
+                      (block_idx_x << log_tile) + ((block_idx_y) & ((1 << (log_tile)) - 1)),
+                      block_idx_z};
+    }
   }
 
   /// Obtains the threadblock offset (in units of threadblock-scoped tiles)
@@ -251,6 +259,34 @@ struct GemmHorizontalThreadblockSwizzle {
   CUTLASS_HOST_DEVICE
   int get_log_tile(GemmCoord tiled_shape) const {
     return 0;
+  }
+
+//Overlap function:
+  CUTLASS_DEVICE
+  GemmCoord get_tile_offset(int log_tile) const {
+    int block_idx_x = RematerializeBlockIdxX();
+    int block_idx_y = RematerializeBlockIdxY();
+    int block_idx_z = RematerializeBlockIdxZ();
+
+    return GemmCoord{(block_idx_y >> log_tile),  //
+                     (block_idx_x << log_tile) + ((block_idx_y) & ((1 << (log_tile)) - 1)),
+                     block_idx_z};
+  }
+
+  //Overlap function:
+  CUTLASS_DEVICE
+  GemmCoord get_tile_offset(int log_tile, int block_idx_x, int block_idx_y, int block_idx_z, bool isProducerOrConsumer) const {
+    if (isProducerOrConsumer) {
+      //Producer
+      return GemmCoord{(block_idx_x >> log_tile),  //
+                      (block_idx_y << log_tile) + ((block_idx_x) & ((1 << (log_tile)) - 1)),
+                      block_idx_z};
+    } else {
+      //Consumer
+      return GemmCoord{(block_idx_y >> log_tile),  //
+                      (block_idx_x << log_tile) + ((block_idx_y) & ((1 << (log_tile)) - 1)),
+                      block_idx_z};
+    }
   }
 
   /// Obtains the threadblock offset (in units of threadblock-scoped tiles)

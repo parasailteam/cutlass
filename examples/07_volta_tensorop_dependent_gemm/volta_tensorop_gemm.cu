@@ -190,7 +190,7 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
 
 // This code section describes how threadblocks are scheduled on GPU
-using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;  // <- ??
+using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>; //;  // <- ??
 
 // This code section describes ?
 using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
@@ -392,7 +392,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
   status = gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
   execTime = 0;
-  if (consumer_stream == producer_stream) {
+  if (!handle.enable()) {
     printf("385\n");
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
@@ -435,7 +435,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
         return cudaErrorUnknown;
       }
 
-      CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+      CUDA_CHECK(cudaDeviceSynchronize());
       double end = timeInMicroSeconds();
       execTime += end-start;
     }
@@ -486,7 +486,7 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
-      CUDA_CHECK(cudaDeviceSynchronize());
+      // CUDA_CHECK(cudaDeviceSynchronize());
       waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
       status = gemm_op2(args2, true, 0, grid.x,  (int*)kernelExecuted, NULL, consumer_stream);
       CUTLASS_CHECK(status);
@@ -590,13 +590,13 @@ int run(int argc, char* arg[]) {
   //     0);  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_a.host_view(),
-    ElementOutput(2));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_b.host_view(),
-    ElementOutput(3));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_d.host_view(),
-    ElementOutput(1));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
 
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view());
@@ -668,6 +668,24 @@ int run(int argc, char* arg[]) {
     printf("baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
   }
 
+  double minimumTime = (1<<20);
+  if (false) {
+    minimumTime = 0;
+    cudaStream_t consumer_stream;
+    CUDA_CHECK(cudaStreamCreate(&consumer_stream));
+    result = runhgemm(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
+
+    if (result != cudaSuccess) {
+      std::cerr << "CUTLASS GEMM kernel failed: "
+        << cudaGetErrorString(result) << std::endl;
+      return result;
+    }
+    // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+    // double endTime = convertTimeValToDouble(getTimeOfDay());
+    // baselineTime = endTime - startTime;
+  }
+  printf("minimum elapsedtime %lf microseconds\n", minimumTime/(float)epochs);
+
   cutlass::reference::host::TensorFill(
     tensor_c.host_view());  // <- Fill matrix C on host with zeros
   cutlass::reference::host::TensorFill(
@@ -676,6 +694,13 @@ int run(int argc, char* arg[]) {
     tensor_e.host_view());  // <- fill matrix E on host with zeros
   cutlass::reference::host::TensorFill(
     tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
+
+    
+  tensor_c.sync_device();
+  tensor_ref_c.sync_device();
+
+  tensor_e.sync_device();
+  tensor_ref_e.sync_device();
 
   OverlapHandle overlapHandle(problem_size1.m(), problem_size1.n(), 1, 1);
   int highestPriority;
@@ -707,13 +732,13 @@ int run(int argc, char* arg[]) {
 
   int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * 2];
   int linearid = 0;
+  for (int x = 0; x < gridDim.x; x++) {
   for (int y = 0; y < gridDim.y; y++) {
-    for (int x = 0; x < gridDim.x; x++) {
-      hBlockIndexOrder[linearid] = x;
-      hBlockIndexOrder[linearid + 1] = y;
-      // printf("linearid %d x %d y %d\n", linearid, x, y);
-      linearid += 2;
-    }
+    hBlockIndexOrder[linearid] = x;
+    hBlockIndexOrder[linearid + 1] = y;
+    // printf("linearid %d x %d y %d\n", linearid, x, y);
+    linearid += 2;
+  }
   }
 
   printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
@@ -725,8 +750,8 @@ int run(int argc, char* arg[]) {
   int totalBlocks = 0;
   const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
   printf("startRemainingBlockId %d to %d\n", startRemainingBlockId, gridDim.x*gridDim.y);
-  for (int y = 0; y < gridDim.y; y++) {
-    for (int x = 0; x < gridDim.x; x++) {
+  for (int x = 0; x < gridDim.x; x++) {
+    for (int y = 0; y < gridDim.y; y++) {
       if (totalBlocks >= startRemainingBlockId) {
         hIsRemainingBlock[totalBlocks] = 1;
       } else {

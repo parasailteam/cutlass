@@ -461,7 +461,7 @@ struct Gemm {
 
     // Compute threadblock location
     cutlass::gemm::GemmCoord threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, true);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
 
     // if (!isProducerOrConsumer && threadIdx.x == 0 && params.overlap_handle.iter == 1) {
     //   printf("grid_tiled_shape.m() %d grid_tiled_shape.n() %d tb.m() %d tb.n() %d blockIdx.x %d blockIdx.y %d\n", params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), threadblock_tile_offset.m(), threadblock_tile_offset.n(), blockIdx.x, blockIdx.y);
@@ -484,7 +484,7 @@ struct Gemm {
         {
           // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
             //TODO: Can combine all into one
-          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
+          params.overlap_handle.waitOnTiles(block_idx_y, 0, 0, 1, params.overlap_handle.ySize/128);
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
         }
     }
@@ -561,7 +561,7 @@ struct Gemm {
     //
 
     threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, true);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
 
     //assume identity swizzle
     MatrixCoord threadblock_offset(

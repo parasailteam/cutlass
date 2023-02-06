@@ -101,7 +101,7 @@ struct TensorEqualsFunc {
     }
     
     if (rel > val) {
-      // printf("%f %f %f %f\n", rightFloat, leftFloat, rel, val);
+      printf("%f %f %f %f\n", rightFloat, leftFloat, rel, val);
       result = false;
     }
   }

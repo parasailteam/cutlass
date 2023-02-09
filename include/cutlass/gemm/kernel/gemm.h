@@ -436,8 +436,8 @@ struct Gemm {
       } else {
         shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numConsumerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y;
         if (true) { //if (shared_storage.tbInfo.linear_id < totalTBs) {
-          shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
-          shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];
+          shared_storage.tbInfo.block_idx_x = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
+          shared_storage.tbInfo.block_idx_y = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];
         }
       } 
     }

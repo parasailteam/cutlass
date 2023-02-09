@@ -774,6 +774,40 @@ int run(int argc, char* arg[]) {
   printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
   CUDA_CHECK(cudaMemcpy(dBlockIndexOrder, hBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * 2, cudaMemcpyHostToDevice));
 
+  int* dConsumerBlockIndexOrder;
+  CUDA_CHECK(cudaMalloc(&dConsumerBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * 2));
+  CUDA_CHECK(cudaMemset(dConsumerBlockIndexOrder, 0, sizeof(int) * gridDim.x * gridDim.y * 2));
+
+  hBlockIndexOrder = new int[gridDim.x * gridDim.y * 2];
+  linearid = 0;
+  printf("N_X %s\n", arg[6]);
+  printf("N_Y %s\n", arg[7]);
+  const int N_X = atoi(arg[6]);
+  const int N_Y = atoi(arg[7]);
+
+  for (int x = 0; x < gridDim.x; x += N_X) {
+    for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
+      for (int y = 0; y < N_Y; y++) {
+        hBlockIndexOrder[linearid] = xx;
+        hBlockIndexOrder[linearid + 1] = y;
+        // printf("linearid %d x %d y %d\n", linearid, xx, 0);
+        linearid += 2;
+      }
+    }
+
+    for (int xx = 0; xx < min(N_X, gridDim.x - x); xx++) {
+      for (int y = N_Y; y < gridDim.y; y++) {
+        hBlockIndexOrder[linearid] = xx;
+        hBlockIndexOrder[linearid + 1] = y;
+        // printf("linearid %d x %d y %d\n", linearid, xx, y);
+        linearid += 2;
+      }
+    }
+  }
+
+  // printf("803:\n");
+  CUDA_CHECK(cudaMemcpy(dConsumerBlockIndexOrder, hBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * 2, cudaMemcpyHostToDevice));
+
   int* dIsRemainingBlock;
   int* hIsRemainingBlock = new int[gridDim.x*gridDim.y];
   CUDA_CHECK(cudaMalloc(&dIsRemainingBlock, sizeof(int)*gridDim.x*gridDim.y));
@@ -800,7 +834,7 @@ int run(int argc, char* arg[]) {
 
   overlapHandle.isBlockRemaining = dIsRemainingBlock;
   overlapHandle.blockIndexOrder = dBlockIndexOrder;
-
+  overlapHandle.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
   if (true) {
     result = runhgemm<OverlapGemm1, OverlapGemm2>(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
 

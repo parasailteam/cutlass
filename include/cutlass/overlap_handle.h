@@ -42,6 +42,7 @@ struct OverlapHandle {
   int* numProducerTBs;
   int* numConsumerTBs;
   int* blockIndexOrder;
+  int* consumerBlockIndexOrder;
   //True for producer and false for consumer
   bool producerOrConsumer_;
 

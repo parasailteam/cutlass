@@ -785,19 +785,19 @@ int run(int argc, char* arg[]) {
   const int N_X = atoi(arg[6]);
   const int N_Y = atoi(arg[7]);
 
-  for (int x = 0; x < gridDim.x; x += N_X) {
-    for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
-      for (int y = 0; y < N_Y; y++) {
-        hBlockIndexOrder[linearid] = xx;
-        hBlockIndexOrder[linearid + 1] = y;
-        // printf("linearid %d x %d y %d\n", linearid, xx, 0);
-        linearid += 2;
-      }
-    }
+  for (int x = 0; x < gridDim.x; x += 1) {
+    // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
+    //   for (int y = 0; y < N_Y; y++) {
+    //     hBlockIndexOrder[linearid] = xx;
+    //     hBlockIndexOrder[linearid + 1] = y;
+    //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
+    //     linearid += 2;
+    //   }
+    // }
 
-    for (int xx = 0; xx < min(N_X, gridDim.x - x); xx++) {
-      for (int y = N_Y; y < gridDim.y; y++) {
-        hBlockIndexOrder[linearid] = xx;
+    for (int xx = 0; xx < 1; xx++) {
+      for (int y = 0; y < gridDim.y; y++) {
+        hBlockIndexOrder[linearid] = x + xx;
         hBlockIndexOrder[linearid + 1] = y;
         // printf("linearid %d x %d y %d\n", linearid, xx, y);
         linearid += 2;

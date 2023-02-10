@@ -138,7 +138,7 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 
 #include<time.h>
 #include<sys/time.h>
-
+#include <cublas_v2.h>
 
 static double convertTimeValToDouble(struct timeval _time) {
   return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
@@ -160,6 +160,18 @@ static double timeInMicroSeconds() {
   return convertTimeValToDouble(getTimeOfDay());
 }
 
+static double getCurrentTime() {
+  return timeInMicroSeconds();
+}
+
+#define CUBLASCHECK(cmd) do {                       \
+  cublasStatus_t e = cmd;                           \
+  if (e != CUBLAS_STATUS_SUCCESS) {                 \
+    printf("Failed: CUBLAS error %s: %d '%d'\n",    \
+           __FILE__, __LINE__, cmd);                \
+    assert(false);                                  \
+  }                                                 \
+} while(0)                                        
 
 // The code section below describes datatype for input, output matrices and computation between
 // elements in input matrices.
@@ -525,6 +537,50 @@ cudaError_t runhgemm(cutlass::gemm::GemmCoord problem_size1,
   return cudaSuccess;
 }
 
+void cublasRowMajor(cublasHandle_t handle, const half *alpha, const half *beta, const half* a, const half* b, half* c, const half* d, half* e, 
+                    int M, int N, int K, int L, double& cublasTime, int epochs) {
+  cublasTime = 0;
+  
+  for (int i = 0; i < epochs; i++) {
+    double t1 = getCurrentTime();
+    CUBLASCHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+      N, M, K, 
+      (const void*)alpha,
+      (const void*)a, CUDA_R_16F, K,
+      (const void*)b, CUDA_R_16F, N,
+      (const void*)beta, 
+      (void*)c, CUDA_R_16F, N,
+      CUDA_R_16F, CUBLAS_GEMM_DFALT_TENSOR_OP));
+    
+    CUBLASCHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+      L, M, N, 
+      (const void*)alpha,
+      (const void*)c, CUDA_R_16F, N,
+      (const void*)d, CUDA_R_16F, L,
+      (const void*)beta, 
+      (void*)e, CUDA_R_16F, L,
+      CUDA_R_16F, CUBLAS_GEMM_DFALT_TENSOR_OP));
+    
+    CUDA_CHECK(cudaDeviceSynchronize());
+    double t2 = getCurrentTime();
+    cublasTime += t2 - t1;
+  }
+}
+
+template<class T>
+void memset_value(T*f, T v, size_t nelems) 
+{
+  T* h_buff = (T*)malloc(sizeof(T)*nelems);
+  assert(h_buff != nullptr);
+  for (uint64_t i = 0; i < nelems; i++) {
+    h_buff[i] = v;
+  }
+
+  CUDA_CHECK(cudaMemcpy(f, h_buff, sizeof(T)*nelems, cudaMemcpyHostToDevice));
+  free(h_buff);
+}
+
+
 int run(int argc, char* arg[]) {
   cudaDeviceProp props;
 
@@ -619,13 +675,13 @@ int run(int argc, char* arg[]) {
   //     0);  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_a.host_view(),
-    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_b.host_view(),
-    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_d.host_view(),
-    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
 
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view());
@@ -661,13 +717,58 @@ int run(int argc, char* arg[]) {
   cudaError_t result;
   int epochs = 20;
   int warmup = 10;
-  double baselineTime = 0;
+
+  double cublasTime = 0;
+  cublasHandle_t cublasHandle;
+  CUBLASCHECK(cublasCreate(&cublasHandle));
+  CUBLASCHECK(cublasSetStream(cublasHandle, producer_stream));
+  CUBLASCHECK(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
+  
+  if (false) {
+    half* dAlpha, *dBeta;
+    half halpha = __float2half(1.0);
+    CUDA_CHECK(cudaMalloc(&dAlpha, sizeof(half)));
+    CUDA_CHECK(cudaMemcpy(dAlpha, &halpha, sizeof(half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&dBeta, sizeof(half)));
+    half hbeta = __float2half(0);
+    CUDA_CHECK(cudaMemcpy(dBeta, &hbeta, sizeof(half), cudaMemcpyHostToDevice));
+    CUBLASCHECK(cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE));
+
+    int M = problem[0];
+    int N = problem[1];
+    int K = problem[2];
+    int L = problem[3];
+
+    half* a;
+    CUDA_CHECK(cudaMalloc(&a, M*K * sizeof(half)));
+      // cudaMemRandInt(m1, M*K);
+    memset_value(a, __float2half(1.0f), M*K);
+    half* b;
+    CUDA_CHECK(cudaMalloc(&b, K*N * sizeof(half)));
+    // cudaMemRandInt(m2, K*N);
+    memset_value(b, __float2half(1.0f), K*N);
+    half* c;
+    CUDA_CHECK(cudaMalloc(&c,  M*N* sizeof(half)));
+      
+    half* d;
+    CUDA_CHECK(cudaMalloc(&d,  L*N* sizeof(half)));
+
+    half* e;
+    CUDA_CHECK(cudaMalloc(&e,  M*L* sizeof(half)));
+
+    cublasRowMajor(cublasHandle, dAlpha, dBeta, a, b, c, d, e, M, N, K, L, cublasTime, 1);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+  }
+
   cudaEvent_t start;
   cudaEvent_t end;
   cudaEvent_t event;
   CUDA_CHECK(cudaEventCreate(&event));
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
+  double baselineTime = 0;
+
   if (true) {
     result = runhgemm<Gemm, Gemm>(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
 
@@ -695,7 +796,7 @@ int run(int argc, char* arg[]) {
     // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
     // double endTime = convertTimeValToDouble(getTimeOfDay());
     // baselineTime = endTime - startTime;
-    printf("baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
+    printf("cutlass-baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
   }
 
   double minimumTime = (1<<20);

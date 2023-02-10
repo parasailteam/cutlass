@@ -2,6 +2,7 @@ import subprocess
 import re
 
 baselineTimes = {}
+cublasTimes = {}
 overlappedTimes = {}
 minimumTimes = {}
 speedup = {}
@@ -36,16 +37,22 @@ if False:
   for d in baselineTimes:
     print(f"{d} & 128 & 128 & 128 & {d//128} & {baselineTimes[d]} & {overlappedTimes[d]} & {speedup[d]} & {maxspeedup[d]}")
 elif True:
-  for d in range(4, 16, 1):
+  for d in range(4, 20, 1):
     m = 128 * d
-    n = 12288
-    k = n
-    l = k
+    n = 6144
+    k = 12288
+    l = 12288
     
     if ((m//128)*(n//128))%240 == 0:
       continue
 
-    (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d check=false"%(m, n, k, l))
+    (s, o) = subprocess.getstatusoutput("python3 cublasBaseline.py %d %d %d %d"%(m, n, k, l))
+    if s == -1:
+      print("error " + o)
+    else:
+      ctime = o
+      cublasTimes[m] = ctime
+    (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d check=false 1 1"%(m, n, k, l))
     if s == -1:
       print("error " + o)
     else:
@@ -57,15 +64,17 @@ elif True:
       overlappedTimes[m] = otime[0]
       speedup[m] = float(btime[0])/float(otime[0])
       maxspeedup[m] = float(btime[0])/float(mtime[0])
-    print(f"{m} & {n} & {k} & {l} & {(m//128*n//128)} & {btime[0]} & {otime[0]} & {mtime[0]}")
 
-  print(baselineTimes)
-  print(overlappedTimes)
-  print(minimumTimes)
-  print("M & N & K & L & TBs & Baseline(ms) & Overlapped(ms) & Minimum(ms) & Speedup & MaxSpeedup")
+    print(f"{m} & {n} & {k} & {l} & {(m//128*n//128)} & {btime[0]} & {ctime} & {otime[0]} & {mtime[0]}")
+
+  # print(baselineTimes)
+  # print(cublasTimes)
+  # print(overlappedTimes)
+  # print(minimumTimes)
+  print("M & N & K & L & TBs & Baseline(us) & cuBLAS(us) & Overlapped(us) & Minimum(us) & Speedup & MaxSpeedup")
 
   for m in baselineTimes:
-    print(f"{m} & {n} & {k} & {l} & {m//128*n//128} & {baselineTimes[m]} & {overlappedTimes[m]} & {minimumTimes[m]} & {speedup[m]} & {maxspeedup[m]}")
+    print(f"{m} & {n} & {k} & {l} & {m//128*n//128} & {baselineTimes[m]} & {cublasTimes[m]} & {overlappedTimes[m]} & {minimumTimes[m]} & {speedup[m]} & {maxspeedup[m]}")
 else:
   for i in range(int(80*3.5), int(80*10.5), 80):
     m = 128*i

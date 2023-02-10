@@ -523,7 +523,7 @@ public:
 
     dim3 grid;
     if (overlap) {
-      if (params_.overlap_handle.isProducer())
+      if (params_.overlap_handle.isProducer() || true)
       {
         grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
         grid = {grid.x*grid.y, 1, 1};
@@ -560,9 +560,9 @@ public:
     
     if (overlap) {
       if (params_.overlap_handle.isProducer())
-        cutlass::KernelOverlap<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, firstBlockIdxX, lastBlockIdxX, kernelExecuted);
+        cutlass::KernelOverlapProducer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, firstBlockIdxX, lastBlockIdxX, kernelExecuted);
       else
-        cutlass::KernelOverlap<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m(), kernelExecuted);
+        cutlass::KernelOverlapConsumer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m(), kernelExecuted);
     }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);

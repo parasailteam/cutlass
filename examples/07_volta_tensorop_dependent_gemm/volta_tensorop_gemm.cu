@@ -542,24 +542,29 @@ void cublasRowMajor(cublasHandle_t handle, const half *alpha, const half *beta, 
   cublasTime = 0;
   
   for (int i = 0; i < epochs; i++) {
+    //bT = NxK
+    //aT = KxM
+    //cT = NxM
+    //dT = LxN
+    //eT = LxM
     double t1 = getCurrentTime();
     CUBLASCHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, 
       N, M, K, 
       (const void*)alpha,
-      (const void*)a, CUDA_R_16F, K,
       (const void*)b, CUDA_R_16F, N,
+      (const void*)a, CUDA_R_16F, K,
       (const void*)beta, 
       (void*)c, CUDA_R_16F, N,
       CUDA_R_16F, CUBLAS_GEMM_DFALT_TENSOR_OP));
-    
-    CUBLASCHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, 
-      L, M, N, 
-      (const void*)alpha,
-      (const void*)c, CUDA_R_16F, N,
-      (const void*)d, CUDA_R_16F, L,
-      (const void*)beta, 
-      (void*)e, CUDA_R_16F, L,
-      CUDA_R_16F, CUBLAS_GEMM_DFALT_TENSOR_OP));
+    // CUDA_CHECK(cudaDeviceSynchronize());
+    // CUBLASCHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+    //   L, M, N, 
+    //   (const void*)alpha,
+    //   (const void*)d, CUDA_R_16F, L,
+    //   (const void*)c, CUDA_R_16F, N,
+    //   (const void*)beta, 
+    //   (void*)e, CUDA_R_16F, L,
+    //   CUDA_R_16F, CUBLAS_GEMM_DFALT_TENSOR_OP));
     
     CUDA_CHECK(cudaDeviceSynchronize());
     double t2 = getCurrentTime();
@@ -738,7 +743,7 @@ int run(int argc, char* arg[]) {
     int N = problem[1];
     int K = problem[2];
     int L = problem[3];
-
+    printf("M %d N %d K %d L %d\n", M, N, K, L);
     half* a;
     CUDA_CHECK(cudaMalloc(&a, M*K * sizeof(half)));
       // cudaMemRandInt(m1, M*K);
@@ -752,6 +757,7 @@ int run(int argc, char* arg[]) {
       
     half* d;
     CUDA_CHECK(cudaMalloc(&d,  L*N* sizeof(half)));
+    memset_value(d, __float2half(1.0f), L*N);
 
     half* e;
     CUDA_CHECK(cudaMalloc(&e,  M*L* sizeof(half)));
@@ -759,6 +765,15 @@ int run(int argc, char* arg[]) {
     cublasRowMajor(cublasHandle, dAlpha, dBeta, a, b, c, d, e, M, N, K, L, cublasTime, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
+
+    cublasRowMajor(cublasHandle, dAlpha, dBeta, a, b, c, d, e, M, N, K, L, cublasTime, warmup);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    cublasTime = 0;
+    cublasRowMajor(cublasHandle, dAlpha, dBeta, a, b, c, d, e, M, N, K, L, cublasTime, epochs);
+
+    printf("cublas-baseline %lf microseconds\n", cublasTime/(float)epochs);
   }
 
   cudaEvent_t start;

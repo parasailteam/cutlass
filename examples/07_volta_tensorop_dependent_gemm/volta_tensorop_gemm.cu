@@ -850,7 +850,7 @@ int run(int argc, char* arg[]) {
     if (split_k_slices == 1) {
       result = runhgemm<Gemm, Gemm>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+      result = runhgemm<GemmSplitK, GemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     }
 
     if (result != cudaSuccess) {
@@ -986,6 +986,7 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaMalloc(&dIsRemainingBlock, sizeof(int)*gridDim.x*gridDim.y));
   int totalBlocks = 0;
   // const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
+  printf("Number of TBs: %d\n", gridDim.x*gridDim.y*gridDim.z);
   if ((gridDim.x*gridDim.y*gridDim.z)%240 == 0) {
     printf("Invalid\n");
     return 0;

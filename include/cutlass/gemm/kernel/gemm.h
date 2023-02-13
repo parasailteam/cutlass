@@ -146,6 +146,7 @@ struct Gemm {
       int linear_id;
       int block_idx_x;
       int block_idx_y;
+      int block_idx_z;
     } tbInfo;
     typename Mma::SharedStorage main_loop;
     typename Epilogue::SharedStorage epilogue;
@@ -402,14 +403,16 @@ struct Gemm {
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     uint start_block_idx_y = 0;
     uint start_block_idx_x = 0;
-    
-    int totalTBs = params.grid_tiled_shape.m()*params.grid_tiled_shape.n();
+    uint start_block_idx_z = 0;
+
+    int totalTBs = params.grid_tiled_shape.m()*params.grid_tiled_shape.n()*params.grid_tiled_shape.k();
     if (threadIdx.x == 0) {
       if (isProducerOrConsumer) {
-        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y;
+        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y*gridDim.z;
         if (true) { //if (shared_storage.tbInfo.linear_id < totalTBs) {
-          shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
-          shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+          shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
+          shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+          shared_storage.tbInfo.block_idx_z = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
         } else {
           //printf("linearid: %d smid: %d\n", shared_storage.tbInfo.linear_id, get_smid());
           if (false && get_smid() < 23) {
@@ -434,10 +437,11 @@ struct Gemm {
           *kernelAllocated = params.overlap_handle.iter;
         } 
       } else {
-        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numConsumerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y;
+        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numConsumerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y * gridDim.z;
         if (true) { //if (shared_storage.tbInfo.linear_id < totalTBs) {
-          shared_storage.tbInfo.block_idx_x = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
-          shared_storage.tbInfo.block_idx_y = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*2 + 1];
+          shared_storage.tbInfo.block_idx_x = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
+          shared_storage.tbInfo.block_idx_y = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];
+          shared_storage.tbInfo.block_idx_z = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];
         }
       } 
     }
@@ -445,8 +449,9 @@ struct Gemm {
     if (isProducerOrConsumer || true) {
       __syncthreads();
       // const uint mTbs = gridDim.x;//35584/128;
-      start_block_idx_x = shared_storage.tbInfo.block_idx_x; // shared_storage.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.linear_id*2];//blockIdx.y;//params.grid_tiled_shape.m();
-      start_block_idx_y = shared_storage.tbInfo.block_idx_y;// shared_storage.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.linear_id*2 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+      start_block_idx_x = shared_storage.tbInfo.block_idx_x;
+      start_block_idx_y = shared_storage.tbInfo.block_idx_y;
+      start_block_idx_z = shared_storage.tbInfo.block_idx_z;
     } else {
       start_block_idx_y = blockIdx.y;
       start_block_idx_x = blockIdx.x;
@@ -460,7 +465,7 @@ struct Gemm {
     {
     // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
     {
-    const uint block_idx_z = 0;
+    const uint block_idx_z = start_block_idx_z;
     ThreadblockSwizzle threadblock_swizzle;
 
     // Compute threadblock location
@@ -488,7 +493,10 @@ struct Gemm {
         {
           // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
             //TODO: Can combine all into one
-          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
+            if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
+              params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1*params.grid_tiled_shape.k(), params.overlap_handle.ySize/128);
+            else
+              params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
         }
     }
@@ -653,6 +661,9 @@ struct Gemm {
     if (isProducerOrConsumer)
       // if (threadIdx.x == 0)
         // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1)
+        if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
+          params.overlap_handle.setTileStatus(block_idx_x, 0, 0, 1);
+        else
           params.overlap_handle.setTileStatus(block_idx_x, 0, 0, 1);
 
   }}}

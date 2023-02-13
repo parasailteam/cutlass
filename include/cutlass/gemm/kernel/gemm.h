@@ -494,7 +494,7 @@ struct Gemm {
           // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
             //TODO: Can combine all into one
             if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-              params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1*params.grid_tiled_shape.k(), params.overlap_handle.ySize/128);
+              params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128 * params.grid_tiled_shape.k());
             else
               params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);

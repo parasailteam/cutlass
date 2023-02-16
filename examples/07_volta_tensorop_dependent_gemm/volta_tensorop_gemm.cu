@@ -387,7 +387,7 @@ __global__ void waitKernel(volatile uint* kernelExecuted, uint expectedValue) {
 }
 
 template<typename GemmTy1, typename GemmTy2>
-cudaError_t runhgemm(int split_k_slices, cutlass::gemm::GemmCoord problem_size1,
+cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
                      cutlass::gemm::GemmCoord problem_size2,
                      ElementComputeEpilogue alpha,
                      ElementComputeEpilogue beta,
@@ -411,7 +411,7 @@ cudaError_t runhgemm(int split_k_slices, cutlass::gemm::GemmCoord problem_size1,
                                      tensor_c.device_ref(),  // <- reference to matrix C on device
                                      tensor_c.device_ref(),  // <- reference to matrix C on device
                                      {alpha, beta},          // <- tuple of alpha and beta
-                                     split_k_slices};        // <- k-dimension split factor
+                                     split_k1};        // <- k-dimension split factor
   
   typename GemmTy2::Arguments args2{handle,
                                      problem_size2,  // <- problem size of matrix multiplication
@@ -420,7 +420,7 @@ cudaError_t runhgemm(int split_k_slices, cutlass::gemm::GemmCoord problem_size1,
                                      tensor_e.device_ref(),  // <- reference to matrix C on device
                                      tensor_e.device_ref(),  // <- reference to matrix C on device
                                      {alpha, beta},          // <- tuple of alpha and beta
-                                     split_k_slices};        // <- k-dimension split factor
+                                     split_k2};        // <- k-dimension split factor
   // Using the arguments, query for extra workspace required for matrix multiplication computation
   size_t workspace_size = GemmTy1::get_workspace_size(args1);
 
@@ -465,7 +465,7 @@ cudaError_t runhgemm(int split_k_slices, cutlass::gemm::GemmCoord problem_size1,
         tensor_c.device_ref(),  // <- reference to matrix C on device
         tensor_c.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
-        split_k_slices};        // <- k-dimension split factor
+        split_k1};        // <- k-dimension split factor
 
       typename GemmTy2::Arguments args2{handle,
         problem_size2,  // <- problem size of matrix multiplication
@@ -474,7 +474,7 @@ cudaError_t runhgemm(int split_k_slices, cutlass::gemm::GemmCoord problem_size1,
         tensor_e.device_ref(),  // <- reference to matrix C on device
         tensor_e.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
-        split_k_slices};        // <- k-dimension split factor
+        split_k2};        // <- k-dimension split factor
       
       handle.producerOrConsumer_ = true;
       double start = timeInMicroSeconds();
@@ -511,7 +511,7 @@ cudaError_t runhgemm(int split_k_slices, cutlass::gemm::GemmCoord problem_size1,
         tensor_c.device_ref(),  // <- reference to matrix C on device
         tensor_c.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
-        split_k_slices};        // <- k-dimension split factor
+        split_k1};        // <- k-dimension split factor
       
       handle.producerOrConsumer_ = false;
       typename GemmTy2::Arguments args2{handle,
@@ -521,7 +521,7 @@ cudaError_t runhgemm(int split_k_slices, cutlass::gemm::GemmCoord problem_size1,
         tensor_e.device_ref(),  // <- reference to matrix C on device
         tensor_e.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
-        split_k_slices};        // <- k-dimension split factor
+        split_k2};        // <- k-dimension split factor
       
       double start = timeInMicroSeconds();
       dim3 grid = {problem_size1.m()/128, 1, 1};
@@ -658,14 +658,21 @@ int run(int argc, char* arg[]) {
     abort();
   }
 
-  int split_k_slices = 1;
-  if (strstr(arg[6], "split_k_slices=") != NULL) {
-    split_k_slices = atoi(arg[6] + strlen("split_k_slices="));
+  int split_k1 = 1;
+  int split_k2 = 1;
+  if (strstr(arg[6], "split_k1_slices=") != NULL) {
+    split_k1 = atoi(arg[6] + strlen("split_k1_slices="));
   } else {
     printf("invalid arg[6] %s\n", arg[6]);
     abort();
   }
 
+  if (strstr(arg[7], "split_k2_slices=") != NULL) {
+    split_k2 = atoi(arg[7] + strlen("split_k2_slices="));
+  } else {
+    printf("invalid arg[7] %s\n", arg[7]);
+    abort();
+  }
   //
   // Run the CUTLASS GEMM test.
   //
@@ -676,7 +683,7 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
   
   printf("problem[0] %d problem[1] %d problem[2] %d problem[3] %d\n", problem[0], problem[1], problem[2], problem[3]);
-  printf("doChecking=%d split_k_slices=%d\n", doChecking, split_k_slices);
+  printf("doChecking=%d split_k1_slices=%d split_k2_slices=%d\n", doChecking, split_k1, split_k2);
   // Create a tuple of problem size for matrix multiplication
   cutlass::gemm::GemmCoord problem_size1(problem[0], problem[1], problem[2]);
   cutlass::gemm::GemmCoord problem_size2(problem[0], problem[3], problem[1]);
@@ -823,10 +830,14 @@ int run(int argc, char* arg[]) {
   double baselineTime = 0;
 
   if (true) {
-    if (split_k_slices == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+    if (split_k1 == 1 && split_k2 == 1) {
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+    } else if (split_k1 > 1 && split_k2 == 1) {
+      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+    } else if (split_k1 == 1 && split_k2 > 1) {
+      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+      result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -838,19 +849,27 @@ int run(int argc, char* arg[]) {
     }
 
     //warmup
-    if (split_k_slices == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+    if (split_k1 == 1 && split_k2 == 1) {
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+    } else if (split_k1 > 1 && split_k2 == 1) {
+      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+    } else if (split_k1 == 1 && split_k2 > 1) {
+      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+      result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
-    if (split_k_slices == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+    if (split_k1 == 1 && split_k2 == 1) {
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+    } else if (split_k1 > 1 && split_k2 == 1) {
+      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+    } else if (split_k1 == 1 && split_k2 > 1) {
+      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+      result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     }
 
     if (result != cudaSuccess) {
@@ -869,10 +888,14 @@ int run(int argc, char* arg[]) {
     minimumTime = 0;
     cudaStream_t consumer_stream;
     CUDA_CHECK(cudaStreamCreate(&consumer_stream));
-    if (split_k_slices == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
+    if (split_k1 == 1 && split_k2 == 1) {
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
+    } else if (split_k1 > 1 && split_k2 == 1) {
+      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, minimumTime, epochs);
+    } else if (split_k1 == 1 && split_k2 > 1) {
+      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, minimumTime, epochs);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
+      result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
     }
 
     if (result != cudaSuccess) {
@@ -920,11 +943,9 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int) * 80));
   overlapHandle.numConsumerTBs = numConsumerTBs;
   
-  
-  
   overlapHandle.allocTileStatusMap(128, 128, 1);
   double overlapTime = 0;
-  dim3 gridDim = {problem_size1.m()/128, problem_size1.n()/128, split_k_slices};
+  dim3 gridDim = {problem_size1.m()/128, problem_size1.n()/128, split_k1};
   
   int* dBlockIndexOrder;
   CUDA_CHECK(cudaMalloc(&dBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3));
@@ -933,8 +954,8 @@ int run(int argc, char* arg[]) {
   int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * gridDim.z * 3];
   int linearid = 0;
   for (int x = 0; x < gridDim.x; x++) {
-  for (int y = 0; y < gridDim.y; y++) {
   for (int z = 0; z < gridDim.z; z++) {
+  for (int y = 0; y < gridDim.y; y++) {
     hBlockIndexOrder[linearid] = x;
     hBlockIndexOrder[linearid + 1] = y;
     hBlockIndexOrder[linearid + 2] = z;
@@ -947,7 +968,7 @@ int run(int argc, char* arg[]) {
   printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
   CUDA_CHECK(cudaMemcpy(dBlockIndexOrder, hBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3, cudaMemcpyHostToDevice));
 
-  dim3 grid2Dim = {problem_size2.m()/128, problem_size2.n()/128, split_k_slices};
+  dim3 grid2Dim = {problem_size2.m()/128, problem_size2.n()/128, split_k2};
   int* dConsumerBlockIndexOrder;
   CUDA_CHECK(cudaMalloc(&dConsumerBlockIndexOrder, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));
   CUDA_CHECK(cudaMemset(dConsumerBlockIndexOrder, 0, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));
@@ -966,8 +987,8 @@ int run(int argc, char* arg[]) {
     // }
 
     for (int xx = 0; xx < 1; xx++) {
+      for (int z = 0; z < grid2Dim.z; z++) {
       for (int y = 0; y < grid2Dim.y; y++) {
-        for (int z = 0; z < grid2Dim.z; z++) {
         hBlockIndexOrder[linearid] = x + xx;
         hBlockIndexOrder[linearid + 1] = y;
         hBlockIndexOrder[linearid + 2] = z;
@@ -1010,10 +1031,14 @@ int run(int argc, char* arg[]) {
   overlapHandle.blockIndexOrder = dBlockIndexOrder;
   overlapHandle.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
   if (true) {
-    if (split_k_slices == 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+    if (split_k1 == 1 && split_k2 == 1) {
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+    } else if (split_k1 > 1 && split_k2 == 1) {
+      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+    } else if (split_k1 == 1 && split_k2 > 1) {
+      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1024,19 +1049,27 @@ int run(int argc, char* arg[]) {
       }
     }
     //warmup
-    if (split_k_slices == 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+    if (split_k1 == 1 && split_k2 == 1) {
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+    } else if (split_k1 > 1 && split_k2 == 1) {
+      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+    } else if (split_k1 == 1 && split_k2 > 1) {
+      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("728:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());
-    if (split_k_slices == 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+    if (split_k1 == 1 && split_k2 == 1) {
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+    } else if (split_k1 > 1 && split_k2 == 1) {
+      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+    } else if (split_k1 == 1 && split_k2 > 1) {
+      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k_slices, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     }
     CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
     CUDA_CHECK(cudaStreamSynchronize(producer_stream));

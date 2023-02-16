@@ -36,7 +36,8 @@ if False:
 
   for d in baselineTimes:
     print(f"{d} & 128 & 128 & 128 & {d//128} & {baselineTimes[d]} & {overlappedTimes[d]} & {speedup[d]} & {maxspeedup[d]}")
-elif True:
+elif False:
+  #MLP
   for d in range(4, 20, 1):
     m = 128 * d
     n = 6144
@@ -53,6 +54,46 @@ elif True:
       ctime = o
       cublasTimes[m] = ctime
     (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d check=false 1 1"%(m, n, k, l))
+    if s == -1:
+      print("error " + o)
+    else:
+      btime = re.findall(r'baseline elapsedtime ([\.\d]+)', o)
+      baselineTimes[m] = btime[0]
+      mtime = re.findall(r'minimum elapsedtime ([\.\d]+)', o)
+      minimumTimes[m] = mtime[0]
+      otime = re.findall(r'overlapped elapsedtime ([\.\d]+)', o)
+      overlappedTimes[m] = otime[0]
+      speedup[m] = float(btime[0])/float(otime[0])
+      maxspeedup[m] = float(btime[0])/float(mtime[0])
+
+    print(f"{m} & {n} & {k} & {l} & {(m//128*n//128)} & {btime[0]} & {ctime} & {otime[0]} & {mtime[0]}")
+
+  # print(baselineTimes)
+  # print(cublasTimes)
+  # print(overlappedTimes)
+  # print(minimumTimes)
+  print("M & N & K & L & TBs & Baseline(us) & cuBLAS(us) & Overlapped(us) & Minimum(us) & Speedup & MaxSpeedup")
+
+  for m in baselineTimes:
+    print(f"{m} & {n} & {k} & {l} & {m//128*n//128} & {baselineTimes[m]} & {cublasTimes[m]} & {overlappedTimes[m]} & {minimumTimes[m]} & {speedup[m]} & {maxspeedup[m]}")
+elif True:
+  #SelfAttenton. Overlap V and YB
+  for d in range(4, 20, 1):
+    m = 128 * d
+    n = 1536
+    k = 12288
+    l = 12288
+    
+    if ((m//128)*(n//128))%240 == 0:
+      continue
+
+    # (s, o) = subprocess.getstatusoutput("python3 cublasBaseline.py %d %d %d %d"%(m, n, k, l))
+    # if s == -1:
+    #   print("error " + o)
+    # else:
+    ctime = -1
+    cublasTimes[m] = ctime
+    (s, o) = subprocess.getstatusoutput("./a.out %d %d %d %d check=false split_k1_slices=2 split_k2_slices=1"%(m, n, k, l))
     if s == -1:
       print("error " + o)
     else:

@@ -17,7 +17,7 @@ c = a@b
 print(c.dtype)
 for i in range(10):
     c = a@b
-    # e = c@d
+    e = c@d
 torch.cuda.synchronize()
 
 epochs = 20
@@ -25,7 +25,7 @@ start = time.time_ns()
 
 for i in range(epochs):
     c = a@b
-    # e = c@d
+    e = c@d
 torch.cuda.synchronize()
 end = time.time_ns()
 

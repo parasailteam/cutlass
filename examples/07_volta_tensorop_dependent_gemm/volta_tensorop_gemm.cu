@@ -175,7 +175,7 @@ static double getCurrentTime() {
 
 // The code section below describes datatype for input, output matrices and computation between
 // elements in input matrices.
-using ElementAccumulator = cutlass::half_t;                   // <- data type of accumulator
+using ElementAccumulator = float;                   // <- data type of accumulator
 using ElementComputeEpilogue = cutlass::half_t;  // <- data type of epilogue operations
 using ElementInputA = cutlass::half_t;              // <- data type of elements in input matrix A
 using ElementInputB = cutlass::half_t;              // <- data type of elements in input matrix B
@@ -195,9 +195,9 @@ using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
 using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+    cutlass::gemm::GemmShape<256, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
 // This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
 
@@ -231,7 +231,7 @@ using Gemm = cutlass::gemm::device::Gemm<ElementInputA,
                                          ShapeMMAWarp,
                                          ShapeMMAOp,
                                          EpilogueOp,
-                                         SwizzleThreadBlock>;
+                                         SwizzleThreadBlock, 2, 8, 8>;
 
 using GemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
                                          LayoutInputA,
@@ -262,7 +262,7 @@ using OverlapGemm1 = cutlass::gemm::device::Gemm<ElementInputA,
                                          ShapeMMAWarp,
                                          ShapeMMAOp,
                                          EpilogueOp,
-                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>>;
+                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
 
 using OverlapGemm2 = OverlapGemm1;
 
@@ -524,9 +524,9 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
         split_k2};        // <- k-dimension split factor
       
       double start = timeInMicroSeconds();
-      dim3 grid = {problem_size1.m()/128, 1, 1};
-      int lastBlockIdxX = (grid.x/80)*80;
-      status = gemm_op1(args1, true, 0, grid.x, (int*)kernelExecuted, workspace1.get(), producer_stream);
+      // dim3 grid = {problem_size1.m()/128, 1, 1};
+      // int lastBlockIdxX = (grid.x/80)*80;
+      status = gemm_op1(args1, true, 0, 10, (int*)kernelExecuted, workspace1.get(), producer_stream);
       CUTLASS_CHECK(status);
 
       
@@ -548,7 +548,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
       // CUDA_CHECK(cudaDeviceSynchronize());
       waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
-      status = gemm_op2(args2, true, 0, grid.x,  (int*)kernelExecuted, workspace2.get(), consumer_stream);
+      status = gemm_op2(args2, true, 0, 100,  (int*)kernelExecuted, workspace2.get(), consumer_stream);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
@@ -943,9 +943,9 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int) * 80));
   overlapHandle.numConsumerTBs = numConsumerTBs;
   
-  overlapHandle.allocTileStatusMap(128, 128, 1);
+  overlapHandle.allocTileStatusMap(ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1);
   double overlapTime = 0;
-  dim3 gridDim = {problem_size1.m()/128, problem_size1.n()/128, split_k1};
+  dim3 gridDim = {problem_size1.m()/ShapeMMAThreadBlock::kM, problem_size1.n()/ShapeMMAThreadBlock::kN, split_k1};
   
   int* dBlockIndexOrder;
   CUDA_CHECK(cudaMalloc(&dBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3));
@@ -968,7 +968,7 @@ int run(int argc, char* arg[]) {
   printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
   CUDA_CHECK(cudaMemcpy(dBlockIndexOrder, hBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3, cudaMemcpyHostToDevice));
 
-  dim3 grid2Dim = {problem_size2.m()/128, problem_size2.n()/128, split_k2};
+  dim3 grid2Dim = {problem_size2.m()/ShapeMMAThreadBlock::kM, problem_size2.n()/ShapeMMAThreadBlock::kN, split_k2};
   int* dConsumerBlockIndexOrder;
   CUDA_CHECK(cudaMalloc(&dConsumerBlockIndexOrder, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));
   CUDA_CHECK(cudaMemset(dConsumerBlockIndexOrder, 0, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));
@@ -1008,7 +1008,7 @@ int run(int argc, char* arg[]) {
   int totalBlocks = 0;
   // const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
   printf("Number of TBs: %d\n", gridDim.x*gridDim.y*gridDim.z);
-  if ((gridDim.x*gridDim.y*gridDim.z)%240 == 0) {
+  if ((gridDim.x*gridDim.y*gridDim.z)%80 == 0) {
     printf("Invalid\n");
     return 0;
   }

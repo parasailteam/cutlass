@@ -176,10 +176,12 @@ static double getCurrentTime() {
 // The code section below describes datatype for input, output matrices and computation between
 // elements in input matrices.
 using ElementAccumulator = float;                   // <- data type of accumulator
-using ElementComputeEpilogue = cutlass::half_t;  // <- data type of epilogue operations
 using ElementInputA = cutlass::half_t;              // <- data type of elements in input matrix A
-using ElementInputB = cutlass::half_t;              // <- data type of elements in input matrix B
-using ElementOutput = cutlass::half_t;                        // <- data type of elements in output matrix D
+using ElementInputB = ElementInputA;              // <- data type of elements in input matrix B
+using ElementOutput = cutlass::half_t;
+using ElementComputeEpilogue = ElementOutput;  // <- data type of epilogue operations
+
+                        // <- data type of elements in output matrix D
 
 // The code section below describes matrix layout of input and output matrices. Column Major for
 // Matrix A, Row Major for Matrix B and Row Major for Matrix C
@@ -725,13 +727,13 @@ int run(int argc, char* arg[]) {
   //     0);  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_a.host_view(),
-    ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_b.host_view(),
     ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
   cutlass::reference::host::TensorFill(
     tensor_d.host_view(),
-    ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
+    ElementOutput(0.01));  // <- Fill matrix B on host with uniform-distribution random data
 
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view());

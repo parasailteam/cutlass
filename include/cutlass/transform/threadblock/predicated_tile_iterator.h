@@ -387,6 +387,9 @@ class PredicatedTileIterator<Shape_, Element_, layout::PitchLinear, AdvanceRank,
   /// Store a fragment to memory
   CUTLASS_DEVICE
   void store(Fragment const &frag) { store_with_byte_offset(frag, 0); }
+  
+  CUTLASS_DEVICE
+  void sync() {}
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -600,7 +603,9 @@ public:
   void store(Fragment const &frag) {
     store_with_pointer_offset(frag, 0);
   }
-};
+
+  void sync() {}
+ };
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -811,6 +816,10 @@ public:
   void store(Fragment const &frag) {
     store_with_pointer_offset(frag, 0);
   }
+
+  CUTLASS_DEVICE
+  void sync() {iterator_.sync();}
+
 };
 
 ////////////////////////////////////////////////////////////////////////////////

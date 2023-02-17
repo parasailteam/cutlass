@@ -833,11 +833,11 @@ int run(int argc, char* arg[]) {
 
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     } else if (split_k1 > 1 && split_k2 == 1) {
-      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+      // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     } else if (split_k1 == 1 && split_k2 > 1) {
-      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+      // result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     }
@@ -852,11 +852,11 @@ int run(int argc, char* arg[]) {
 
     //warmup
     if (split_k1 == 1 && split_k2 == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     } else if (split_k1 > 1 && split_k2 == 1) {
-      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+      // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     } else if (split_k1 == 1 && split_k2 > 1) {
-      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+      // result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     }
@@ -865,11 +865,11 @@ int run(int argc, char* arg[]) {
 
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
     if (split_k1 == 1 && split_k2 == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else if (split_k1 > 1 && split_k2 == 1) {
-      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+      // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else if (split_k1 == 1 && split_k2 > 1) {
-      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+      // result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     }
@@ -891,11 +891,11 @@ int run(int argc, char* arg[]) {
     cudaStream_t consumer_stream;
     CUDA_CHECK(cudaStreamCreate(&consumer_stream));
     if (split_k1 == 1 && split_k2 == 1) {
-      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
+      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
     } else if (split_k1 > 1 && split_k2 == 1) {
-      result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, minimumTime, epochs);
+      // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, minimumTime, epochs);
     } else if (split_k1 == 1 && split_k2 > 1) {
-      result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, minimumTime, epochs);
+      // result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, minimumTime, epochs);
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
     }
@@ -1034,11 +1034,11 @@ int run(int argc, char* arg[]) {
   overlapHandle.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+      // result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     } else if (split_k1 > 1 && split_k2 == 1) {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+      // result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     } else if (split_k1 == 1 && split_k2 > 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+      // result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     } else {
       result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     }
@@ -1052,11 +1052,11 @@ int run(int argc, char* arg[]) {
     }
     //warmup
     if (split_k1 == 1 && split_k2 == 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+      // result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     } else if (split_k1 > 1 && split_k2 == 1) {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+      // result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     } else if (split_k1 == 1 && split_k2 > 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+      // result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     } else {
       result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     }
@@ -1065,11 +1065,11 @@ int run(int argc, char* arg[]) {
     printf("728:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());
     if (split_k1 == 1 && split_k2 == 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+      // result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     } else if (split_k1 > 1 && split_k2 == 1) {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+      // result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     } else if (split_k1 == 1 && split_k2 > 1) {
-      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+      // result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     } else {
       result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     }

@@ -197,9 +197,9 @@ using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
 using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<256, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+    cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
 // This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
+using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
 
@@ -886,7 +886,7 @@ int run(int argc, char* arg[]) {
   }
 
   double minimumTime = (1<<20);
-  if (true) {
+  if (false) {
     minimumTime = 0;
     cudaStream_t consumer_stream;
     CUDA_CHECK(cudaStreamCreate(&consumer_stream));
@@ -955,16 +955,27 @@ int run(int argc, char* arg[]) {
 
   int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * gridDim.z * 3];
   int linearid = 0;
-  for (int x = 0; x < gridDim.x; x++) {
-  for (int z = 0; z < gridDim.z; z++) {
-  for (int y = 0; y < gridDim.y; y++) {
-    hBlockIndexOrder[linearid] = x;
-    hBlockIndexOrder[linearid + 1] = y;
-    hBlockIndexOrder[linearid + 2] = z;
-    // printf("linearid %d x %d y %d\n", linearid, x, y);
-    linearid += 3;
-  }
-  }
+  int Ny = 2;
+  for (int x = 0; x < gridDim.x; x += 1) {
+    // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
+    //   for (int y = 0; y < N_Y; y++) {
+    //     hBlockIndexOrder[linearid] = xx;
+    //     hBlockIndexOrder[linearid + 1] = y;
+    //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
+    //     linearid += 2;
+    //   }
+    // }
+    for (int y = 0; y < gridDim.y; y += Ny) {
+      for (int z = 0; z < gridDim.z; z++) {
+        for (int yy = 0; yy < Ny && yy + y < gridDim.y; yy++) {
+          hBlockIndexOrder[linearid] = x;
+          hBlockIndexOrder[linearid + 1] = y + yy;
+          hBlockIndexOrder[linearid + 2] = z;
+          // printf("linearid %d x %d y %d\n", linearid, xx, y);
+          linearid += 3;
+        }
+      }
+    }
   }
 
   printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
@@ -987,15 +998,14 @@ int run(int argc, char* arg[]) {
     //     linearid += 2;
     //   }
     // }
-
-    for (int xx = 0; xx < 1; xx++) {
+    for (int y = 0; y < grid2Dim.y; y += Ny) {
       for (int z = 0; z < grid2Dim.z; z++) {
-      for (int y = 0; y < grid2Dim.y; y++) {
-        hBlockIndexOrder[linearid] = x + xx;
-        hBlockIndexOrder[linearid + 1] = y;
-        hBlockIndexOrder[linearid + 2] = z;
-        // printf("linearid %d x %d y %d\n", linearid, xx, y);
-        linearid += 3;
+        for (int yy = 0; yy < Ny && yy + y < grid2Dim.y; yy++) {
+          hBlockIndexOrder[linearid] = x;
+          hBlockIndexOrder[linearid + 1] = y + yy;
+          hBlockIndexOrder[linearid + 2] = z;
+          // printf("linearid %d x %d y %d z %d\n", linearid, x, y + yy, z);
+          linearid += 3;
         }
       }
     }

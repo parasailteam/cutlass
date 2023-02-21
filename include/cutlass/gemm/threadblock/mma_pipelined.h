@@ -349,9 +349,13 @@ public:
     // if (threadIdx.x == 0) {
     //   printf("m %d Shape::kK %d Base::kWarpGemmIterations %d gemm_k_iterations %d\n", tb_offset_A.row(), Shape::kK, Base::kWarpGemmIterations, gemm_k_iterations);
     // }
-    iterator_A.load(tb_frag_A);
     iterator_B.load(tb_frag_B);
-
+    {
+      int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+      if (startK%Shape::kN == 0)
+        overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, 1);
+    }
+    iterator_A.load(tb_frag_A);
     ++iterator_A;
     ++iterator_B;
 
@@ -397,10 +401,7 @@ public:
       //
       // Loop over GEMM K dimension
       //
-      {
-        int startK = (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-        overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, 1);
-      }
+      
       CUTLASS_PRAGMA_UNROLL
       for (int warp_mma_k = 0; warp_mma_k < Base::kWarpGemmIterations; ++warp_mma_k) {
 
@@ -445,10 +446,11 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
-
-          iterator_A.load(tb_frag_A);
           iterator_B.load(tb_frag_B);
-
+          int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+          if (startK%Shape::kN == 0)
+            overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, 1);
+          iterator_A.load(tb_frag_A);
           ++iterator_A;
           ++iterator_B;
 

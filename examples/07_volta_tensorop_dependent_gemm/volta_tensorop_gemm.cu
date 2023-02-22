@@ -307,7 +307,6 @@ void matmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* res)
 {
   uint32_t i, j, k;
     for (i = 0; i < M; i++) {
-      printf("i %u\n", i);
       #pragma omp parallel for
       for (j = 0; j < N; j++) {
           AT accum = 0;
@@ -793,9 +792,9 @@ int run(int argc, char* arg[]) {
   //     ElementInputB(2),
   //     ElementInputB(-2),
   //     0);  // <- Fill matrix B on host with uniform-distribution random data
-  memset_random2(tensor_a.host_data(), ElementOutput(0.1), ElementOutput(0.1), tensor_a.size());
-  memset_random2(tensor_b.host_data(), ElementOutput(0.1), ElementOutput(0.1), tensor_b.size());
-  memset_random2(tensor_d.host_data(), ElementOutput(0.1), ElementOutput(0.1), tensor_d.size());
+  memset_random2(tensor_a.host_data(), ElementOutput(0.05), ElementOutput(0.2), tensor_a.size());
+  memset_random2(tensor_b.host_data(), ElementOutput(0.01), ElementOutput(0.2), tensor_b.size());
+  memset_random2(tensor_d.host_data(), ElementOutput(0.01), ElementOutput(0.05), tensor_d.size());
 
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view(),
@@ -993,19 +992,11 @@ int run(int argc, char* arg[]) {
   cutlass::reference::host::TensorFill(
     tensor_c.host_view());  // <- Fill matrix C on host with zeros
   cutlass::reference::host::TensorFill(
-    tensor_ref_c.host_view());  // <- Fill matrix C on host with zeros
-  cutlass::reference::host::TensorFill(
     tensor_e.host_view());  // <- fill matrix E on host with zeros
-  cutlass::reference::host::TensorFill(
-    tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
-
-    
+  
   tensor_c.sync_device();
-  tensor_ref_c.sync_device();
-
   tensor_e.sync_device();
-  tensor_ref_e.sync_device();
-
+  
   OverlapHandle overlapHandle(problem_size1.m(), problem_size1.n(), 1, 1);
   int highestPriority;
   int lowestPriority;

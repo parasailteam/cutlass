@@ -272,34 +272,6 @@ public:
   }
 
   /// Store a fragment to memory
-  CUTLASS_DEVICE
-  void store_overlap(Fragment const &frag) {
-    int pointer_offset = 0;
-    AccessType const *frag_ptr = reinterpret_cast<AccessType const *>(&frag);
-
-    Index vec_pointer_offset = pointer_offset / ThreadMap::kElementsPerAccess;
-
-    CUTLASS_PRAGMA_UNROLL
-    for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-
-      AccessType *access_ptr = pointer_[s & 1];
-      int stride_idx = (s & ~1);
-
-      CUTLASS_PRAGMA_UNROLL
-      for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-
-        int access_offset = stride_idx * ThreadMap::Delta::kStrided * stride_ +
-          c * ThreadMap::Delta::kContiguous / ThreadMap::kElementsPerAccess +
-          vec_pointer_offset;
-
-        int access_idx = c + s * ThreadMap::Iterations::kContiguous;
-
-        char *access_byte_ptr = reinterpret_cast<char *>(access_ptr + access_offset);
-
-        *reinterpret_cast<AccessType *>(access_byte_ptr + byte_offset_) = frag_ptr[access_idx];
-      }
-    }
-  }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -558,12 +530,6 @@ public:
   CUTLASS_DEVICE
   void store(Fragment const &frag) {
     store_with_pointer_offset(frag, 0);
-  }
-
-  /// Store a fragment to memory
-  CUTLASS_DEVICE
-  void store_overlap(Fragment const &frag) {
-    iterator_.store_overlap(frag);
   }
 };
 /// Tile iterator specialized for congruous arrangements for TensorOps
@@ -1038,11 +1004,6 @@ public:
   void store(Fragment const &frag) {
     store_with_pointer_offset(frag, 0);
   }
-
-  CUTLASS_DEVICE
-  void store_overlap(Fragment const &frag) {
-    iterator_.store_overlap(frag);
-  }
 };
 
 
@@ -1266,39 +1227,6 @@ class RegularTileIterator<
   /// Store a fragment to memory
   CUTLASS_DEVICE
   void store(Fragment const &frag) { store_with_pointer_offset(frag, 0); }
-
-  CUTLASS_DEVICE
-  void store_overlap(Fragment const &frag) {
-    AccessType const *frag_ptr = reinterpret_cast<AccessType const *>(&frag);
-    Index pointer_offset = 0;
-    Index vec_pointer_offset = pointer_offset / Layout::kElementsPerAccess;
-
-    CUTLASS_PRAGMA_UNROLL
-    for (int s = 0; s < ThreadMap::Iterations::kStrided; ++s) {
-
-      AccessType *access_ptr = pointer_[(s & 1) ^ ((s >> 1) & 1)];
-
-      access_ptr += 16 * (s / 2) + vec_pointer_offset;
-
-      CUTLASS_PRAGMA_UNROLL
-      for (int c = 0; c < ThreadMap::Iterations::kContiguous; ++c) {
-        CUTLASS_PRAGMA_UNROLL
-        for(int i = 0; i < Detail::kIterarionsPerAccess; ++i) {
-
-          int access_offset = 
-            c * ThreadMap::Delta::kContiguous / Detail::kContiguousElementsPerLine * line_size + i * line_size;
-
-          int access_idx = (c + s * ThreadMap::Iterations::kContiguous) *
-            Detail::kIterarionsPerAccess + i;
-
-          char *access_byte_ptr = reinterpret_cast<char *>(access_ptr + access_offset);
-
-          *reinterpret_cast<AccessType *>(access_byte_ptr + byte_offset_) =
-              frag_ptr[access_idx];
-        }
-      }
-    }
-  }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1524,11 +1452,6 @@ class RegularTileIterator<Shape_, Element_,
   /// Store a fragment to memory
   CUTLASS_DEVICE
   void store(Fragment const &frag) { store_with_pointer_offset(frag, 0); }
-
-  CUTLASS_DEVICE
-  void store_overlap(Fragment const &frag) {
-    iterator_.store_overlap(frag);
-  }
 };
 
 

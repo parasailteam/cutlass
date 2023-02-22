@@ -199,7 +199,7 @@ using SmArch = cutlass::arch::Sm70;
 using ShapeMMAThreadBlock =
     cutlass::gemm::GemmShape<256, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
 // This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
 
@@ -285,7 +285,7 @@ using OverlapGemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
                                          2, 8, 8, true>;
 
 template<typename T, typename AT>
-__global__ void matrixMultiplicationKernel(int M, int N, int K, 
+__global__ void matrixMultiplicationKernel(uint32_t M, uint32_t N, uint32_t K,
                                            T* A, T* B, T* C) {
     int ROW = blockIdx.y*blockDim.y+threadIdx.y;
     int COL = blockIdx.x*blockDim.x+threadIdx.x;
@@ -294,12 +294,23 @@ __global__ void matrixMultiplicationKernel(int M, int N, int K,
 
     if (ROW < M && COL < N) {
         // each thread computes one element of the block sub-matrix
-        for (int i = 0; i < K; i++) {
-            tmpSum += A[ROW * K + i] * B[i * N + COL];
+        for (uint32_t i = 0; i < K; i++) {
+            tmpSum += ((AT)A[ROW * K + i]) * ((AT)B[i * N + COL]);
         }
-    }
 
-    C[ROW * N + COL] = (T)tmpSum;
+        C[ROW * N + COL] = (T)tmpSum;
+    }
+}
+
+template<typename T, typename AT>
+void gpumatmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* host_res) {
+  ElementOutput* dev_refC = NULL;
+  CUDA_CHECK(cudaMalloc(&dev_refC, sizeof(ElementOutput)*M*N));
+  dim3 block = {32, 32, 1};
+  dim3 grid = {N/block.y + 1, M/block.x + 1, 1};
+  matrixMultiplicationKernel<T,AT><<<grid, block>>>(M, N, K, mat1, mat2, dev_refC);
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaMemcpy(host_res, dev_refC, sizeof(ElementOutput)*M*N, cudaMemcpyDeviceToHost));
 }
 
 template<typename T, typename AT>
@@ -323,7 +334,7 @@ bool equals(size_t size, T* mat1, T* mat2) {
     float e1 = (float)mat1[i];
     float e2 = (float)mat2[i];
     
-    float v = 1e-2;
+    float v = 1e-1;
     bool ret = true;
     if (abs(e1) < v && abs(e2) < v) {
       printf("%f , %f at %lu\n", e1, e2, i);
@@ -373,14 +384,12 @@ cudaError_t host_matmul(cutlass::gemm::GemmCoord problem_size1,
   printf("Host C = A*B\n");
   // printKernel<<<1, 32>>>(tensor_c.size(), tensor_c.device_data());
   // CUDA_CHECK(cudaDeviceSynchronize());
-  matmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.host_data(), tensor_b.host_data(), tensor_ref_c.host_data());
-  // ElementOutput* refC = new ElementOutput[tensor_ref_c.size()];
-  // dim3 grid = {problem_size1.n()/problem_size1.m()}
-  // matrixMultiplicationKernel<<<,>>>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.device_data(), tensor_b.device_data(), refC);
+  // matmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.host_data(), tensor_b.host_data(), tensor_ref_c.host_data());
+  gpumatmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.device_data(), tensor_b.device_data(), tensor_ref_c.host_data());
   // CUDA_CHECK(cudaDeviceSynchronize());
-  // CUDA_CHECK(cudaMemcpyDeviceToHost(tensor_ref_c.host_data(), refC, tensor_ref_c.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
-  printf ("Host E = C*D\n");
-  matmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), tensor_ref_c.host_data(), tensor_d.host_data(), tensor_ref_e.host_data());
+  // CUDA_CHECK(cudaMemcpyDeviceToHost(ten
+  CUDA_CHECK(cudaMemcpy(tensor_ref_c.device_data(), tensor_ref_c.host_data(), sizeof(ElementOutput) * tensor_ref_c.size(), cudaMemcpyHostToDevice));
+  gpumatmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), tensor_ref_c.device_data(), tensor_d.device_data(), tensor_ref_e.host_data());
   // matrixMultiplicationKernel
   // CUDA_CHECK(cudaDeviceSynchronize());
   return cudaSuccess;

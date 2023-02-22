@@ -197,7 +197,7 @@ using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
 using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+    cutlass::gemm::GemmShape<128, 256, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
 // This code section describes tile size a warp will compute
 using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
@@ -284,6 +284,109 @@ using OverlapGemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
                                          cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
                                          2, 8, 8, true>;
 
+// template<typename T, typename AT>
+// __global__ void matrixMultiplicationKernel(int M, int N, int K, 
+//                                            T* A, T* B, T* C) {
+//     int ROW = blockIdx.y*blockDim.y+threadIdx.y;
+//     int COL = blockIdx.x*blockDim.x+threadIdx.x;
+
+//     AT tmpSum = 0;
+
+//     if (ROW < M && COL < N) {
+//         // each thread computes one element of the block sub-matrix
+//         for (int i = 0; i < K; i++) {
+//             tmpSum += A[ROW * K + i] * B[i * N + COL];
+//         }
+//     }
+
+//     C[ROW * N + COL] = (T)tmpSum;
+// }
+
+template<typename T, typename AT>
+void matmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* res)
+{
+  uint32_t i, j, k;
+    for (i = 0; i < M; i++) {
+      printf("i %u\n", i);
+      #pragma omp parallel for
+      for (j = 0; j < N; j++) {
+          AT accum = 0;
+          for (k = 0; k < K; k++)
+              accum += ((float)mat1[i*K + k]) * ((float)mat2[k*N + j]);
+          res[i*N + j] = T(accum);
+      }
+    }
+}
+
+template<typename T>
+bool equals(size_t size, T* mat1, T* mat2) {
+  for (size_t i = 0; i < size; i++) {
+    float e1 = (float)mat1[i];
+    float e2 = (float)mat2[i];
+    
+    float v = 1e-2;
+    bool ret = true;
+    if (abs(e1) < v && abs(e2) < v) {
+      printf("%f , %f at %lu\n", e1, e2, i);
+      ret = true;
+    } else if (abs(e1) < v) {
+      ret = false;
+    } else if (abs(e2) < v) {
+      ret = false;
+    } else {
+      float err = abs((e1 - e2)/e2);
+      if (err <= v) {
+        ret = true;
+      } else {
+        ret = false;
+      }
+    }
+
+    if (ret == false) {
+      printf("%f != %f at %lu\n", e1, e2, i);
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template<typename T>
+__global__ void printKernel(size_t sz, T* data) {
+  if (threadIdx.x == 0) {
+    for (size_t i = 65536; i < sz; i++) {
+      printf("%f at %lu \n", (float)data[i], i);
+    }
+  }
+}
+
+cudaError_t host_matmul(cutlass::gemm::GemmCoord problem_size1,
+  cutlass::gemm::GemmCoord problem_size2,
+  ElementComputeEpilogue alpha,
+  ElementComputeEpilogue beta,
+  cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_a,
+  cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_b,
+  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_c,
+  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
+  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_e,
+  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
+  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e) {
+  printf("Host C = A*B\n");
+  // printKernel<<<1, 32>>>(tensor_c.size(), tensor_c.device_data());
+  // CUDA_CHECK(cudaDeviceSynchronize());
+  matmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.host_data(), tensor_b.host_data(), tensor_ref_c.host_data());
+  // ElementOutput* refC = new ElementOutput[tensor_ref_c.size()];
+  // dim3 grid = {problem_size1.n()/problem_size1.m()}
+  // matrixMultiplicationKernel<<<,>>>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.device_data(), tensor_b.device_data(), refC);
+  // CUDA_CHECK(cudaDeviceSynchronize());
+  // CUDA_CHECK(cudaMemcpyDeviceToHost(tensor_ref_c.host_data(), refC, tensor_ref_c.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
+  printf ("Host E = C*D\n");
+  matmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), tensor_ref_c.host_data(), tensor_d.host_data(), tensor_ref_e.host_data());
+  // matrixMultiplicationKernel
+  // CUDA_CHECK(cudaDeviceSynchronize());
+  return cudaSuccess;
+}
+
 cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
                     cutlass::gemm::GemmCoord problem_size2,
                     ElementComputeEpilogue alpha,
@@ -295,80 +398,30 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_e,
                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e) {
-  // Create instantiation for device reference gemm kernel
-  cutlass::reference::device::Gemm<ElementInputA,
-  LayoutInputA,
-  ElementInputB,
-  LayoutInputB,
-  ElementOutput,
-  LayoutOutput,
-  ElementComputeEpilogue,
-  ElementComputeEpilogue>
-  gemm_device1;
-  cutlass::reference::device::Gemm<ElementInputA,
-  LayoutInputA,
-  ElementInputB,
-  LayoutInputB,
-  ElementOutput,
-  LayoutOutput,
-  ElementComputeEpilogue,
-  ElementComputeEpilogue>
-  gemm_device2;
-  // Launch device reference gemm kernel
-  gemm_device1(problem_size1,
-              alpha,
-              tensor_a.device_ref(),
-              tensor_b.device_ref(),
-              beta,
-              tensor_ref_c.device_ref(),
-              tensor_ref_c.device_ref());
-
-  // Wait for kernels to finish
-  cudaDeviceSynchronize();
-
-  // Copy output data from CUTLASS and reference kernel to host for comparison
-  tensor_c.sync_host();
-  tensor_ref_c.sync_host();
-  bool passed;
-  // Check if output from CUTLASS kernel and reference kernel are equal or not
-  passed = cutlass::reference::host::TensorEquals(
-    tensor_c.host_view(),
-    tensor_ref_c.host_view());
-
-  if (!passed) {
-    std::cout << "Wrong results for C = A * B" << std::endl;
+  // printKernel<<<1, 32>>>(tensor_c.size(), tensor_c.device_data());
+  // CUDA_CHECK(cudaDeviceSynchronize());
+  ElementOutput* hostC = new ElementOutput[tensor_ref_c.size()];
+  CUDA_CHECK(cudaMemcpy(hostC, tensor_c.device_data(), tensor_c.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
+  printf("checking C tensor_c.size() %lu %lu\n", tensor_c.size(), tensor_ref_c.size());
+  bool eqC = equals(tensor_ref_c.size(), tensor_ref_c.host_data(), hostC);
+  if (eqC == false) {
+    printf("C not correct\n");
+    delete[] hostC;
     return cudaErrorUnknown;
   }
-  tensor_ref_c.sync_device();
-  cudaDeviceSynchronize();
 
-  // Launch device reference gemm kernel
-  std::cout << "283: " << problem_size2.m() << " " << problem_size2.n() << " " << problem_size2.k() << std::endl;
-  gemm_device2(problem_size2,
-    alpha,
-    tensor_ref_c.device_ref(),
-    tensor_d.device_ref(),
-    beta,
-    tensor_ref_e.device_ref(),
-    tensor_ref_e.device_ref());
-
-  // Wait for kernels to finish
-  cudaDeviceSynchronize();
-
-  // Copy output data from CUTLASS and reference kernel to host for comparison
-  tensor_e.sync_host();
-  tensor_ref_e.sync_host();
-
-  // Check if output from CUTLASS kernel and reference kernel are equal or not
-  passed = cutlass::reference::host::TensorEquals(
-  tensor_e.host_view(),
-  tensor_ref_e.host_view());
-
-  if (!passed) {
-  std::cout << "Wrong results for E = C * D" << std::endl;
-  return cudaErrorUnknown;
+  delete[] hostC;
+  ElementOutput* hostE = new ElementOutput[tensor_ref_e.size()];
+  CUDA_CHECK(cudaMemcpy(hostE, tensor_e.device_data(), tensor_e.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
+  printf("checking E tensor_e.size() %lu %lu\n", tensor_e.size(), tensor_ref_e.size());
+  bool eqE = equals(tensor_ref_e.size(), tensor_ref_e.host_data(), hostE);
+  if (eqE == false) {
+    printf("E not correct\n");
+    delete[] hostE;
+    return cudaErrorUnknown;
   }
-  std::cout << "passed" << std::endl;
+
+  delete[] hostE;
   return cudaSuccess;
 }
 
@@ -617,6 +670,21 @@ void memset_value(T*f, T v, size_t nelems)
   free(h_buff);
 }
 
+template<class T>
+void memset_random2(T*f, T v1, T v2, size_t nelems)
+{
+  // T* h_buff = (T*)malloc(sizeof(T)*nelems);
+  assert(f != nullptr);
+  for (uint64_t i = 0; i < nelems; i++) {
+    if (rand()%2 == 0)
+      f[i] = v1;
+    else
+      f[i] = v2;
+  }
+
+  // CUDA_CHECK(cudaMemcpy(f, h_buff, sizeof(T)*nelems, cudaMemcpyHostToDevice));
+  // free(h_buff);
+}
 
 int run(int argc, char* arg[]) {
   cudaDeviceProp props;
@@ -725,15 +793,19 @@ int run(int argc, char* arg[]) {
   //     ElementInputB(2),
   //     ElementInputB(-2),
   //     0);  // <- Fill matrix B on host with uniform-distribution random data
-  cutlass::reference::host::TensorFill(
-    tensor_a.host_view(),
-    ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
-  cutlass::reference::host::TensorFill(
-    tensor_b.host_view(),
-    ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
-  cutlass::reference::host::TensorFill(
-    tensor_d.host_view(),
-    ElementOutput(0.01));  // <- Fill matrix B on host with uniform-distribution random data
+  memset_random2(tensor_a.host_data(), ElementOutput(0.1), ElementOutput(0.1), tensor_a.size());
+  memset_random2(tensor_b.host_data(), ElementOutput(0.1), ElementOutput(0.1), tensor_b.size());
+  memset_random2(tensor_d.host_data(), ElementOutput(0.1), ElementOutput(0.1), tensor_d.size());
+
+  // cutlass::reference::host::TensorFill(
+  //   tensor_a.host_view(),
+  //   ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
+  // cutlass::reference::host::TensorFill(
+  //   tensor_b.host_view(),
+  //   ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
+  // cutlass::reference::host::TensorFill(
+  //   tensor_d.host_view(),
+  //   ElementOutput(0.01));  // <- Fill matrix B on host with uniform-distribution random data
 
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view());
@@ -821,6 +893,13 @@ int run(int argc, char* arg[]) {
     cublasRowMajor(cublasHandle, dAlpha, dBeta, a, b, c, d, e, M, N, K, L, cublasTime, epochs);
 
     printf("cublas-baseline %lf microseconds\n", cublasTime/(float)epochs);
+  }
+
+  if (doChecking) {
+    result = host_matmul(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_ref_c, tensor_d, tensor_ref_e, tensor_c, tensor_e);
+    if (result != cudaSuccess) {
+      return 1;
+    }
   }
 
   cudaEvent_t start;
@@ -955,7 +1034,7 @@ int run(int argc, char* arg[]) {
 
   int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * gridDim.z * 3];
   int linearid = 0;
-  int Ny = 2;
+  int Ny = 1;
   for (int x = 0; x < gridDim.x; x += 1) {
     // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
     //   for (int y = 0; y < N_Y; y++) {

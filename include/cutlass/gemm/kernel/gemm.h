@@ -452,6 +452,9 @@ struct Gemm {
       start_block_idx_x = shared_storage.tbInfo.block_idx_x;
       start_block_idx_y = shared_storage.tbInfo.block_idx_y;
       start_block_idx_z = shared_storage.tbInfo.block_idx_z;
+      // if (isProducerOrConsumer && params.overlap_handle.iter == 1 && threadIdx.x == 0) {
+      //   printf("%d %d %d\n", start_block_idx_x, start_block_idx_y, start_block_idx_z);
+      // }
     } else {
       start_block_idx_y = blockIdx.y;
       start_block_idx_x = blockIdx.x;

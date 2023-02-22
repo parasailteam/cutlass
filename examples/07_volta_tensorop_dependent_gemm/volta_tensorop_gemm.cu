@@ -848,8 +848,8 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int epochs = 20;
-  int warmup = 10;
+  int epochs = 0;
+  int warmup = 0;
 
   double cublasTime = 0;
   cublasHandle_t cublasHandle;
@@ -927,7 +927,7 @@ int run(int argc, char* arg[]) {
     } else if (split_k1 == 1 && split_k2 > 1) {
       // result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+      // result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -946,7 +946,7 @@ int run(int argc, char* arg[]) {
     } else if (split_k1 == 1 && split_k2 > 1) {
       // result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+      // result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -959,7 +959,7 @@ int run(int argc, char* arg[]) {
     } else if (split_k1 == 1 && split_k2 > 1) {
       // result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else {
-      result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+      // result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     }
 
     if (result != cudaSuccess) {
@@ -1032,7 +1032,7 @@ int run(int argc, char* arg[]) {
   int* dBlockIndexOrder;
   CUDA_CHECK(cudaMalloc(&dBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3));
   CUDA_CHECK(cudaMemset(dBlockIndexOrder, 0, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3));
-
+  printf("gridDim.x %d gridDim.y %d\n", gridDim.x, gridDim.y);
   int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * gridDim.z * 3];
   int linearid = 0;
   int Ny = 1;
@@ -1155,7 +1155,7 @@ int run(int argc, char* arg[]) {
     } else if (split_k1 == 1 && split_k2 > 1) {
       // result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+      // result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1173,7 +1173,7 @@ int run(int argc, char* arg[]) {
     } else if (split_k1 == 1 && split_k2 > 1) {
       // result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+      // result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1186,7 +1186,7 @@ int run(int argc, char* arg[]) {
     } else if (split_k1 == 1 && split_k2 > 1) {
       // result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+      // result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     }
     CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
     CUDA_CHECK(cudaStreamSynchronize(producer_stream));

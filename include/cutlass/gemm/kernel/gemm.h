@@ -559,9 +559,9 @@ struct Gemm {
 
     if (!kSplitKSerial || gemm_k_iterations > 0) {
       // Compute threadblock-scoped matrix multiply-add
-      if (!isProducerOrConsumer && kSplitKSerial)
-        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, tb_offset_A);
-      else
+      // if (!isProducerOrConsumer && kSplitKSerial)
+      //   mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, tb_offset_A);
+      // else
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
     }
 
@@ -667,7 +667,7 @@ struct Gemm {
         if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
           ;// params.overlap_handle.setTileStatus(block_idx_x, 0, 0, 1);
         else
-          params.overlap_handle.setTileStatus(block_idx_x, 0, 0, 1);
+          params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1);
 
   }}}
 };

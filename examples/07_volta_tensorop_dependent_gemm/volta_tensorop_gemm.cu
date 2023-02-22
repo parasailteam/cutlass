@@ -197,7 +197,7 @@ using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
 using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<128, 256, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+    cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
 // This code section describes tile size a warp will compute
 using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
@@ -284,23 +284,23 @@ using OverlapGemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
                                          cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
                                          2, 8, 8, true>;
 
-// template<typename T, typename AT>
-// __global__ void matrixMultiplicationKernel(int M, int N, int K, 
-//                                            T* A, T* B, T* C) {
-//     int ROW = blockIdx.y*blockDim.y+threadIdx.y;
-//     int COL = blockIdx.x*blockDim.x+threadIdx.x;
+template<typename T, typename AT>
+__global__ void matrixMultiplicationKernel(int M, int N, int K, 
+                                           T* A, T* B, T* C) {
+    int ROW = blockIdx.y*blockDim.y+threadIdx.y;
+    int COL = blockIdx.x*blockDim.x+threadIdx.x;
 
-//     AT tmpSum = 0;
+    AT tmpSum = 0;
 
-//     if (ROW < M && COL < N) {
-//         // each thread computes one element of the block sub-matrix
-//         for (int i = 0; i < K; i++) {
-//             tmpSum += A[ROW * K + i] * B[i * N + COL];
-//         }
-//     }
+    if (ROW < M && COL < N) {
+        // each thread computes one element of the block sub-matrix
+        for (int i = 0; i < K; i++) {
+            tmpSum += A[ROW * K + i] * B[i * N + COL];
+        }
+    }
 
-//     C[ROW * N + COL] = (T)tmpSum;
-// }
+    C[ROW * N + COL] = (T)tmpSum;
+}
 
 template<typename T, typename AT>
 void matmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* res)
@@ -679,6 +679,7 @@ void memset_random2(T*f, T v1, T v2, size_t nelems)
       f[i] = v1;
     else
       f[i] = v2;
+    // printf("%f\n", (float)f[i]);
   }
 
   // CUDA_CHECK(cudaMemcpy(f, h_buff, sizeof(T)*nelems, cudaMemcpyHostToDevice));
@@ -911,7 +912,7 @@ int run(int argc, char* arg[]) {
 
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {
-      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     } else if (split_k1 > 1 && split_k2 == 1) {
       // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, 1);
     } else if (split_k1 == 1 && split_k2 > 1) {
@@ -930,7 +931,7 @@ int run(int argc, char* arg[]) {
 
     //warmup
     if (split_k1 == 1 && split_k2 == 1) {
-      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     } else if (split_k1 > 1 && split_k2 == 1) {
       // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, warmup);
     } else if (split_k1 == 1 && split_k2 > 1) {
@@ -943,7 +944,7 @@ int run(int argc, char* arg[]) {
 
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
     if (split_k1 == 1 && split_k2 == 1) {
-      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else if (split_k1 > 1 && split_k2 == 1) {
       // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, baselineTime, epochs);
     } else if (split_k1 == 1 && split_k2 > 1) {
@@ -1114,7 +1115,7 @@ int run(int argc, char* arg[]) {
   overlapHandle.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {
-      // result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     } else if (split_k1 > 1 && split_k2 == 1) {
       // result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, overlapTime, 1);
     } else if (split_k1 == 1 && split_k2 > 1) {
@@ -1132,7 +1133,7 @@ int run(int argc, char* arg[]) {
     }
     //warmup
     if (split_k1 == 1 && split_k2 == 1) {
-      // result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     } else if (split_k1 > 1 && split_k2 == 1) {
       // result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, warmup);
     } else if (split_k1 == 1 && split_k2 > 1) {
@@ -1145,7 +1146,7 @@ int run(int argc, char* arg[]) {
     printf("728:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());
     if (split_k1 == 1 && split_k2 == 1) {
-      // result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     } else if (split_k1 > 1 && split_k2 == 1) {
       // result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, overlapTime, epochs);
     } else if (split_k1 == 1 && split_k2 > 1) {

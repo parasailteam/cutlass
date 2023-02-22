@@ -974,12 +974,12 @@ int run(int argc, char* arg[]) {
   }
 
   double minimumTime = (1<<20);
-  if (false) {
+  if (true) {
     minimumTime = 0;
     cudaStream_t consumer_stream;
     CUDA_CHECK(cudaStreamCreate(&consumer_stream));
     if (split_k1 == 1 && split_k2 == 1) {
-      // result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
+      result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, minimumTime, epochs);
     } else if (split_k1 > 1 && split_k2 == 1) {
       // result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, minimumTime, epochs);
     } else if (split_k1 == 1 && split_k2 > 1) {

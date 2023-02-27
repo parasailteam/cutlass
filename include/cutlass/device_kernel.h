@@ -57,9 +57,9 @@ void Kernel(typename Operator::Params params) {
   op(params, *shared_storage);
 }
 
-template <typename Operator>
+template <typename Operator, bool rowOrTileSync>
 __global__
-void KernelOverlapProducer(typename Operator::Params params, int firstBlockIdxX, int lastBlockIdxX, int* kernelExecuted) {
+void KernelOverlapProducer(typename Operator::Params params, int* kernelExecuted) {
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 
@@ -68,12 +68,12 @@ void KernelOverlapProducer(typename Operator::Params params, int firstBlockIdxX,
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, true, firstBlockIdxX, lastBlockIdxX, kernelExecuted);
+  op.run_overlap_gemm(params, *shared_storage, true, rowOrTileSync, kernelExecuted);
 }
 
-template <typename Operator>
+template <typename Operator, bool rowOrTileSync>
 __global__
-void KernelOverlapConsumer(typename Operator::Params params, int firstBlockIdxX, int lastBlockIdxX, int* kernelExecuted) {
+void KernelOverlapConsumer(typename Operator::Params params, int* kernelExecuted) {
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 
@@ -82,7 +82,7 @@ void KernelOverlapConsumer(typename Operator::Params params, int firstBlockIdxX,
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, false, firstBlockIdxX, lastBlockIdxX, kernelExecuted);
+  op.run_overlap_gemm(params, *shared_storage, false, rowOrTileSync, kernelExecuted);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -517,7 +517,7 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(bool overlap, int firstBlockIdxX, int lastBlockIdxX, int* kernelExecuted, cudaStream_t stream = nullptr) {
+  Status run(bool overlap, bool isRowSyncOrTileSync, int* kernelExecuted, cudaStream_t stream = nullptr) {
 
     ThreadblockSwizzle threadblock_swizzle;
 
@@ -560,9 +560,17 @@ public:
     
     if (overlap) {
       if (params_.overlap_handle.isProducer())
-        cutlass::KernelOverlapProducer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, firstBlockIdxX, lastBlockIdxX, kernelExecuted);
+        if (isRowSyncOrTileSync) {
+          cutlass::KernelOverlapProducer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        } else {
+          cutlass::KernelOverlapProducer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        }
       else
-        cutlass::KernelOverlapConsumer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, 0, params_.grid_tiled_shape.m(), kernelExecuted);
+        if (isRowSyncOrTileSync) {
+          cutlass::KernelOverlapConsumer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        } else {
+          cutlass::KernelOverlapConsumer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        }
     }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
@@ -598,7 +606,7 @@ public:
   Status operator()(
     Arguments const &args,
     bool overlap,
-    int firstBlockIdxX, int lastBlockIdxX,
+    bool rowSyncOrTileSync,
     int* kernelExecuted,
     void *workspace = nullptr, 
     cudaStream_t stream = nullptr) {
@@ -606,7 +614,7 @@ public:
     Status status = initialize(args, workspace);
     
     if (status == Status::kSuccess) {
-      status = run(overlap, firstBlockIdxX, lastBlockIdxX, kernelExecuted, stream);
+      status = run(overlap, rowSyncOrTileSync, kernelExecuted, stream);
     }
 
     return status;

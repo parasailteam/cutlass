@@ -394,12 +394,13 @@ struct Gemm {
 
   /// Executes one GEMM
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, int firstBlockIdxX, int lastBlockIdxX, volatile int* kernelAllocated) {
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
+                        bool rowSyncOrTileSync, volatile int* kernelAllocated) {
     //Convert 1-D thread block id to 2-D
     
     //In column major, y-dim is M,
     //Using compile time constants to avoid expensive divide and mod
-    const uint grid_dim_x = lastBlockIdxX - firstBlockIdxX;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
+    // const uint grid_dim_x = lastBlockIdxX - firstBlockIdxX;//(gridDim.x >= params.grid_tiled_shape.m()) ? params.grid_tiled_shape.m() : gridDim.x;
     const uint grid_dim_y = 1;//(grid_dim_x >= gridDim.x) ? 1 : gridDim.x / grid_dim_x;
     uint start_block_idx_y = 0;
     uint start_block_idx_x = 0;
@@ -496,10 +497,13 @@ struct Gemm {
         {
           // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
             //TODO: Can combine all into one
-            if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-              params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
-            else
-              params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
+            if (rowSyncOrTileSync) {
+              //Row Sync
+              if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
+                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
+              else
+                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
+            }
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
         }
     }
@@ -565,7 +569,10 @@ struct Gemm {
       // if (!isProducerOrConsumer && kSplitKSerial)
       //   mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, tb_offset_A);
       // else
+      if (rowSyncOrTileSync || isProducerOrConsumer) //Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
+      else if (!isProducerOrConsumer)
+        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, rowSyncOrTileSync, tb_offset_A);
     }
 
     //
@@ -651,8 +658,16 @@ struct Gemm {
       
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
-        if (isProducerOrConsumer)
-          params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1);
+        // if (threadIdx.x == 0 && isProducerOrConsumer) {
+        //   printf("662\n");
+        // }
+        if (isProducerOrConsumer) {
+          if (rowSyncOrTileSync) //Row sync
+            params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1);
+          else {//Tile sync
+            params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, 1);
+          }
+        }
         // The final threadblock resets the semaphore for subsequent grids.
         lock = 0;
       }
@@ -665,14 +680,16 @@ struct Gemm {
     }
 
     // //Tile of this thread block is processed
-    if (isProducerOrConsumer)
+    if (isProducerOrConsumer && !kSplitKSerial)
       // if (threadIdx.x == 0)
         // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1)
-        if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-          ;// params.overlap_handle.setTileStatus(block_idx_x, 0, 0, 1);
-        else
+        if (rowSyncOrTileSync) {
+          //Row sync
           params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1);
-
+        } else {
+          //Tile sync
+          params.overlap_handle.setTileStatus(block_idx_x, 0, 0, 1);
+        }
   }}}
 };
 

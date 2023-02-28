@@ -918,14 +918,21 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
   double baselineTime = 0;
+  // #define ENABLE_NORMAL_GEMM
 
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, 1);
+      #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, 1);
+      #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, 1);
+      #endif
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, 1);
     }
@@ -940,11 +947,17 @@ int run(int argc, char* arg[]) {
 
     //warmup
     if (split_k1 == 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, warmup);
+      #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, warmup);
+      #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, warmup);
+      #endif
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, warmup);
     }
@@ -953,11 +966,17 @@ int run(int argc, char* arg[]) {
 
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
     if (split_k1 == 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, epochs);
+      #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, epochs);
+      #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, epochs);
+      #endif
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, baselineTime, epochs);
     }
@@ -979,11 +998,17 @@ int run(int argc, char* arg[]) {
     cudaStream_t consumer_stream;
     CUDA_CHECK(cudaStreamCreate(&consumer_stream));
     if (split_k1 == 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, false, minimumTime, epochs);
+      #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<GemmSplitK, Gemm>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, minimumTime, epochs);
+      #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<Gemm, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, minimumTime, epochs);
+      #endif
     } else {
       result = runhgemm<GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, consumer_stream, event, NULL, false, minimumTime, epochs);
     }
@@ -1036,38 +1061,53 @@ int run(int argc, char* arg[]) {
   int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * gridDim.z * 3];
   int linearid = 0;
   int Ny = 1;
-  // for (int x = 0; x < gridDim.x; x += 1) {
-  //   // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
-  //   //   for (int y = 0; y < N_Y; y++) {
-  //   //     hBlockIndexOrder[linearid] = xx;
-  //   //     hBlockIndexOrder[linearid + 1] = y;
-  //   //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
-  //   //     linearid += 2;
-  //   //   }
-  //   // }
-  //   for (int y = 0; y < gridDim.y; y += Ny) {
-  //     for (int z = 0; z < gridDim.z; z++) {
-  //       for (int yy = 0; yy < Ny && yy + y < gridDim.y; yy++) {
-  //         hBlockIndexOrder[linearid] = x;
-  //         hBlockIndexOrder[linearid + 1] = y + yy;
-  //         hBlockIndexOrder[linearid + 2] = z;
-  //         // printf("linearid %d x %d y %d\n", linearid, xx, y);
-  //         linearid += 3;
-  //       }
-  //     }
-  //   }
-  // }
 
-  for (int x = 0; x < gridDim.x; x++) {
-  for (int z = 0; z < gridDim.z; z++) {
-  for (int y = 0; y < gridDim.y; y++) {
+  if (split_k1 > 1 && split_k2 > 1) {
+    for (int x = 0; x < gridDim.x; x++) {
+    for (int z = 0; z < gridDim.z; z++) {
+    for (int y = 0; y < gridDim.y; y++) {
       hBlockIndexOrder[linearid] = x;
       hBlockIndexOrder[linearid + 1] = y;
       hBlockIndexOrder[linearid + 2] = z;
       // printf("linearid %d x %d y %d\n", linearid, x, y);
       linearid += 3;
-  }
-  }
+    }
+    }
+    }
+  } else {
+    // for (int x = 0; x < gridDim.x; x += 1) {
+    //   // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
+    //   //   for (int y = 0; y < N_Y; y++) {
+    //   //     hBlockIndexOrder[linearid] = xx;
+    //   //     hBlockIndexOrder[linearid + 1] = y;
+    //   //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
+    //   //     linearid += 2;
+    //   //   }
+    //   // }
+    //   for (int y = 0; y < gridDim.y; y += Ny) {
+    //     for (int z = 0; z < gridDim.z; z++) {
+    //       for (int yy = 0; yy < Ny && yy + y < gridDim.y; yy++) {
+    //         hBlockIndexOrder[linearid] = x;
+    //         hBlockIndexOrder[linearid + 1] = y + yy;
+    //         hBlockIndexOrder[linearid + 2] = z;
+    //         // printf("linearid %d x %d y %d\n", linearid, xx, y);
+    //         linearid += 3;
+    //       }
+    //     }
+    //   }
+    // }
+
+    for (int x = 0; x < gridDim.x; x++) {
+    for (int z = 0; z < gridDim.z; z++) {
+    for (int y = 0; y < gridDim.y; y++) {
+        hBlockIndexOrder[linearid] = x;
+        hBlockIndexOrder[linearid + 1] = y;
+        hBlockIndexOrder[linearid + 2] = z;
+        // printf("linearid %d x %d y %d\n", linearid, x, y);
+        linearid += 3;
+    }
+    }
+    }
   }
     
 
@@ -1082,38 +1122,52 @@ int run(int argc, char* arg[]) {
   hBlockIndexOrder = new int[grid2Dim.x * grid2Dim.y * grid2Dim.z * 3];
   linearid = 0;
 
-  // for (int x = 0; x < grid2Dim.x; x += 1) {
-  //   // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
-  //   //   for (int y = 0; y < N_Y; y++) {
-  //   //     hBlockIndexOrder[linearid] = xx;
-  //   //     hBlockIndexOrder[linearid + 1] = y;
-  //   //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
-  //   //     linearid += 2;
-  //   //   }
-  //   // }
-  //   for (int y = 0; y < grid2Dim.y; y += Ny) {
-  //     for (int z = 0; z < grid2Dim.z; z++) {
-  //       for (int yy = 0; yy < Ny && yy + y < grid2Dim.y; yy++) {
-  //         hBlockIndexOrder[linearid] = x;
-  //         hBlockIndexOrder[linearid + 1] = y + yy;
-  //         hBlockIndexOrder[linearid + 2] = z;
-  //         // printf("linearid %d x %d y %d z %d\n", linearid, x, y + yy, z);
-  //         linearid += 3;
-  //       }
-  //     }
-  //   }
-  // }
+  if (split_k1 > 1 && split_k2 > 1) {
+    for (int x = 0; x < grid2Dim.x; x++) {
+    for (int z = 0; z < grid2Dim.z; z++) {
+    for (int y = 0; y < grid2Dim.y; y++) {
+      hBlockIndexOrder[linearid] = x;
+      hBlockIndexOrder[linearid + 1] = y;
+      hBlockIndexOrder[linearid + 2] = z;
+      // printf("linearid %d x %d y %d\n", linearid, x, y);
+      linearid += 3;
+    }
+    }
+    }
+  } else {
+    // for (int x = 0; x < grid2Dim.x; x += 1) {
+    //   // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
+    //   //   for (int y = 0; y < N_Y; y++) {
+    //   //     hBlockIndexOrder[linearid] = xx;
+    //   //     hBlockIndexOrder[linearid + 1] = y;
+    //   //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
+    //   //     linearid += 2;
+    //   //   }
+    //   // }
+    //   for (int y = 0; y < grid2Dim.y; y += Ny) {
+    //     for (int z = 0; z < grid2Dim.z; z++) {
+    //       for (int yy = 0; yy < Ny && yy + y < grid2Dim.y; yy++) {
+    //         hBlockIndexOrder[linearid] = x;
+    //         hBlockIndexOrder[linearid + 1] = y + yy;
+    //         hBlockIndexOrder[linearid + 2] = z;
+    //         // printf("linearid %d x %d y %d z %d\n", linearid, x, y + yy, z);
+    //         linearid += 3;
+    //       }
+    //     }
+    //   }
+    // }
 
-  for (int x = 0; x < grid2Dim.x; x++) {
-  for (int z = 0; z < grid2Dim.z; z++) {
-  for (int y = 0; y < grid2Dim.y; y++) {
-    hBlockIndexOrder[linearid] = x;
-    hBlockIndexOrder[linearid + 1] = y;
-    hBlockIndexOrder[linearid + 2] = z;
-    // printf("linearid %d x %d y %d\n", linearid, x, y);
-    linearid += 3;
-  }
-  }
+    for (int x = 0; x < grid2Dim.x; x++) {
+    for (int z = 0; z < grid2Dim.z; z++) {
+    for (int y = 0; y < grid2Dim.y; y++) {
+      hBlockIndexOrder[linearid] = x;
+      hBlockIndexOrder[linearid + 1] = y;
+      hBlockIndexOrder[linearid + 2] = z;
+      // printf("linearid %d x %d y %d\n", linearid, x, y);
+      linearid += 3;
+    }
+    }
+    }
   }
 
   // printf("803:\n");
@@ -1149,11 +1203,17 @@ int run(int argc, char* arg[]) {
   overlapHandle.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, true, overlapTime, 1);
+      #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, true, overlapTime, 1);
+      #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, true, overlapTime, 1);
+      #endif
     } else {
       result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, false, overlapTime, 1);
     }
@@ -1167,11 +1227,17 @@ int run(int argc, char* arg[]) {
     }
     //warmup
     if (split_k1 == 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, warmup);
+      #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, warmup);
+      #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, warmup);
+      #endif
     } else {
       result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, false, overlapTime, warmup);
     }
@@ -1180,11 +1246,17 @@ int run(int argc, char* arg[]) {
     printf("728:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());
     if (split_k1 == 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, epochs);
+      #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, epochs);
+      #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
+      #ifdef ENABLE_NORMAL_GEMM
       result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, epochs);
+      #endif
     } else {
       result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, false, overlapTime, epochs);
     }

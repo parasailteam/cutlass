@@ -572,7 +572,7 @@ struct Gemm {
       if (rowSyncOrTileSync || isProducerOrConsumer) //Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       else if (!isProducerOrConsumer)
-        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, rowSyncOrTileSync, tb_offset_A);
+        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, rowSyncOrTileSync, tb_offset_A, tb_offset_B);
     }
 
     //

@@ -140,6 +140,8 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 #include<sys/time.h>
 #include <cublas_v2.h>
 
+#define DIVUP(x, y) (((x) + (y) - 1)/(y))
+
 static double convertTimeValToDouble(struct timeval _time) {
   return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
 }
@@ -768,6 +770,16 @@ int run(int argc, char* arg[]) {
     printf("invalid arg[7] %s\n", arg[7]);
     abort();
   }
+
+  bool rowSyncOrTileSync;
+  if (strstr(arg[8], "rowSyncOrTileSync=") != NULL) {
+    int val = atoi(arg[8] + strlen("rowSyncOrTileSync="));
+    if (val == 0) rowSyncOrTileSync = false; else rowSyncOrTileSync = true;
+  } else {
+    printf("invalid arg[8] %s\n", arg[8]);
+    abort();
+  }
+  printf("rowSyncOrTileSync %d\n", rowSyncOrTileSync);
   //
   // Run the CUTLASS GEMM test.
   //
@@ -1069,7 +1081,7 @@ int run(int argc, char* arg[]) {
   
   overlapHandle.allocTileStatusMap(ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1);
   double overlapTime = 0;
-  dim3 gridDim = {problem_size1.m()/ShapeMMAThreadBlock::kM, problem_size1.n()/ShapeMMAThreadBlock::kN, split_k1};
+  dim3 gridDim = {DIVUP(problem_size1.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size1.n(), ShapeMMAThreadBlock::kN), split_k1};
   
   int* dBlockIndexOrder;
   CUDA_CHECK(cudaMalloc(&dBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3));
@@ -1221,18 +1233,18 @@ int run(int argc, char* arg[]) {
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, true, overlapTime, 1);
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, rowSyncOrTileSync, overlapTime, 1);
       #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, true, overlapTime, 1);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, rowSyncOrTileSync, overlapTime, 1);
       #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, true, overlapTime, 1);
+      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, rowSyncOrTileSync, overlapTime, 1);
       #endif
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, false, overlapTime, 1);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream,  event, kernelExecuted, rowSyncOrTileSync, overlapTime, 1);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1245,18 +1257,18 @@ int run(int argc, char* arg[]) {
     //warmup
     if (split_k1 == 1 && split_k2 == 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, warmup);
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, warmup);
       #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, warmup);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, warmup);
       #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, warmup);
+      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, warmup);
       #endif
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, false, overlapTime, warmup);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, warmup);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1264,18 +1276,18 @@ int run(int argc, char* arg[]) {
     // double startTime = convertTimeValToDouble(getTimeOfDay());
     if (split_k1 == 1 && split_k2 == 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, epochs);
+      result = runhgemm<OverlapGemm1, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, epochs);
       #endif
     } else if (split_k1 > 1 && split_k2 == 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, epochs);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemm2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, epochs);
       #endif
     } else if (split_k1 == 1 && split_k2 > 1) {
       #ifdef ENABLE_NORMAL_GEMM
-      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, true, overlapTime, epochs);
+      result = runhgemm<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, epochs);
       #endif
     } else {
-      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, false, overlapTime, epochs);
+      result = runhgemm<OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, overlapHandle, producer_stream, consumer_stream, event, kernelExecuted, rowSyncOrTileSync, overlapTime, epochs);
     }
     CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
     CUDA_CHECK(cudaStreamSynchronize(producer_stream));

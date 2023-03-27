@@ -132,7 +132,7 @@ struct OverlapHandle {
       // uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
       uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
       // printf("tileStatusMap[%d] %d xTileIdx %d yTileIdx %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx);
-      atomicAdd(&tileStatusMap[linearTileIdx], 1);
+      atomicAdd(&tileStatusMap[linearTileIdx], tileStatus);
       // tileStatusMap[linearTileIdx] = iter;
     }
 

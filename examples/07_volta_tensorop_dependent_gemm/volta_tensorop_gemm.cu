@@ -195,11 +195,26 @@ using MMAOp = cutlass::arch::OpClassTensorOp;
 // This code section describes CUDA SM architecture number
 using SmArch = cutlass::arch::Sm70;
 
+/*
+For inference:
+using ShapeMMAThreadBlock =
+    cutlass::gemm::GemmShape<128, 64, 32>;
+// This code section describes tile size a warp will compute
+using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 32, 32>;
+
+For training:
+using ShapeMMAThreadBlock =
+    cutlass::gemm::GemmShape<256, 128, 32>;
+// This code section describes tile size a warp will compute
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+*/
+
+
 // This code section describes the tile size a thread block will compute
 using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<256, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+    cutlass::gemm::GemmShape<128, 64, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
 // This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
+using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 32, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
 
@@ -425,6 +440,8 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
     printf("E not correct\n");
     return cudaErrorUnknown;
   }
+
+  printf("passed\n");
 
   return cudaSuccess;
 }
@@ -918,7 +935,7 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaEventCreate(&start));
   CUDA_CHECK(cudaEventCreate(&end));
   double baselineTime = 0;
-  // #define ENABLE_NORMAL_GEMM
+  #define ENABLE_NORMAL_GEMM
 
   if (true) {
     if (split_k1 == 1 && split_k2 == 1) {

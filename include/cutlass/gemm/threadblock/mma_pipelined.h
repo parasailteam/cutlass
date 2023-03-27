@@ -350,6 +350,8 @@ public:
     // if (threadIdx.x == 0) {
     //   printf("m %d Shape::kK %d Base::kWarpGemmIterations %d gemm_k_iterations %d\n", tb_offset_A.row(), Shape::kK, Base::kWarpGemmIterations, gemm_k_iterations);
     // }
+    // if (threadIdx.x == 0) printf("startK %p Shape::kN %p tb_offset_B.column() %d isRowSyncOrTileSync %d\n", tb_offset_A.column(), Shape::kN, tb_offset_B.column(), isRowSyncOrTileSync);
+      
     if (!isRowSyncOrTileSync) {
       int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
       if (startK%Shape::kN == 0 && tb_offset_B.column() == 0)

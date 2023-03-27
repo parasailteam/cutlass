@@ -1143,7 +1143,7 @@ int run(int argc, char* arg[]) {
   printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
   CUDA_CHECK(cudaMemcpy(dBlockIndexOrder, hBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3, cudaMemcpyHostToDevice));
 
-  dim3 grid2Dim = {problem_size2.m()/ShapeMMAThreadBlock::kM, problem_size2.n()/ShapeMMAThreadBlock::kN, split_k2};
+  dim3 grid2Dim = {DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), split_k2};
   int* dConsumerBlockIndexOrder;
   CUDA_CHECK(cudaMalloc(&dConsumerBlockIndexOrder, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));
   CUDA_CHECK(cudaMemset(dConsumerBlockIndexOrder, 0, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));

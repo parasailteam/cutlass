@@ -438,13 +438,17 @@ struct Gemm {
           *kernelAllocated = params.overlap_handle.iter;
         } 
       } else {
+        // printf("441: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
         shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numConsumerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y * gridDim.z;
         if (true) { //if (shared_storage.tbInfo.linear_id < totalTBs) {
+          // printf("shared_storage.tbInfo.linear_id %d totalTBs %d\n", shared_storage.tbInfo.linear_id, totalTBs);
           shared_storage.tbInfo.block_idx_x = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
           shared_storage.tbInfo.block_idx_y = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];
           shared_storage.tbInfo.block_idx_z = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];
         }
-      } 
+      }
+
+      // printf("449: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
     }
 
     if (isProducerOrConsumer || true) {
@@ -471,6 +475,7 @@ struct Gemm {
     {
     const uint block_idx_z = start_block_idx_z;
     ThreadblockSwizzle threadblock_swizzle;
+    // if (threadIdx.x == 0 && !isProducerOrConsumer) printf("476: rowSyncOrTileSync\n");
 
     // Compute threadblock location
     cutlass::gemm::GemmCoord threadblock_tile_offset =
@@ -500,14 +505,14 @@ struct Gemm {
             if (rowSyncOrTileSync) {
               //Row Sync
               if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
+                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN);
               else
-                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/128);
+                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN);
             }
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
         }
     }
-
+  // if (threadIdx.x == 0 && !isProducerOrConsumer) printf("512: rowSyncOrTileSync\n");
     // if (threadIdx.x == 0) printf("Mma::Shape::kM %d Mma::Shape::kN %d\n", Mma::Shape::kM, Mma::Shape::kN);
     // Compute initial location in logical coordinates
     cutlass::MatrixCoord tb_offset_A{
@@ -569,10 +574,12 @@ struct Gemm {
       // if (!isProducerOrConsumer && kSplitKSerial)
       //   mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, tb_offset_A);
       // else
-      if (rowSyncOrTileSync || isProducerOrConsumer) //Row sync or a producer
+      if (rowSyncOrTileSync || isProducerOrConsumer) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
-      else if (!isProducerOrConsumer)
+      }
+      else if (!isProducerOrConsumer) {
         mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, rowSyncOrTileSync, tb_offset_A, tb_offset_B);
+      }
     }
 
     //

@@ -167,21 +167,41 @@ cudaError_t host_attention(cutlass::gemm::GemmCoord problem_size1,
   cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_x,
   cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_qkv,
   cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_xqkv,
-  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_,
-  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_e,
+  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_dropout,
   cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_xqkv,
-  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e) {
+  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_dropout) {
   printf("Host C = A*B\n");
-  // printKernel<<<1, 32>>>(tensor_c.size(), tensor_c.device_data());
-  // CUDA_CHECK(cudaDeviceSynchronize());
-  // matmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.host_data(), tensor_b.host_data(), tensor_ref_c.host_data());
-  gpumatmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.device_data(), tensor_b.device_data(), tensor_ref_c.host_data());
-  // CUDA_CHECK(cudaDeviceSynchronize());
-  // CUDA_CHECK(cudaMemcpyDeviceToHost(ten
-  CUDA_CHECK(cudaMemcpy(tensor_ref_c.device_data(), tensor_ref_c.host_data(), sizeof(ElementOutput) * tensor_ref_c.size(), cudaMemcpyHostToDevice));
-  gpumatmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), tensor_ref_c.device_data(), tensor_d.device_data(), tensor_ref_e.host_data());
-  // matrixMultiplicationKernel
-  // CUDA_CHECK(cudaDeviceSynchronize());
+  gpumatmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.device_data(), tensor_b.device_data(), tensor_ref_xqkv.host_data());
+  // CUDA_CHECK(cudaMemcpy(tensor_ref_xqkv.device_data(), tensor_ref_xqkv.host_data(), sizeof(ElementOutput) * tensor_ref_xqkv.size(), cudaMemcpyHostToDevice));
+  printf("Host Dropout(Softmax(XQ . XK))");
+  size_t xq_size = tensor_ref_dropout.size();
+  assert(tensor_ref_dropout.size() == problem_size1.m() * problem_size1.n());
+  ElementOutput* host_xq = tensor_ref_xqkv.host_data();
+  ElementOutput* host_xk = tensor_ref_xqkv.host_data() + sizeof(ElementOutput) * xq_size;
+  ElementOutput* host_xv = tensor_ref_xqkv.host_data() + sizeof(ElementOutput) * xq_size * 2;
+  ElementOutput* host_dropout = tensor_ref_dropout.host_data();
+
+  for (size_t i = 0; i < xq_size; i++) {
+    xqk = host_xq[i] * host_xk[i];
+    host_dropout[i] = xqk;
+  }
+
+  for (size_t ROW = 0; ROW < problem_size1.m(); ROW++) {
+    ElementOutput sum = 0;
+    for (size_t COL = 0; COL < problem_size1.n(); COL++) {
+      sum += hexp(host_dropout[ROW*problem_size1.n() + COL]);
+    }
+    
+    for (size_t COL = 0; COL < problem_size1.n(); COL++) {
+      host_dropout[ROW*problem_size1.n() + COL] = hexp(host_dropout[ROW*problem_size1.n() + COL])/sum;
+    }
+
+    for (size_t COL = 0; COL < problem_size1.n(); COL++) {
+      //Assume dropout probability is 1.0
+      host_dropout[ROW*problem_size1.n() + COL] = host_dropout[ROW*problem_size1.n() + COL] * host_xv[ROW*problem_size1.n() + COL];
+    }
+  }
+
   return cudaSuccess;
 }
 

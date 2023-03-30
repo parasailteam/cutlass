@@ -301,46 +301,6 @@ using OverlapGemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
                                          EpilogueOp,
                                          cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
                                          2, 8, 8, true>;
-                                         
-
-template<typename T>
-__global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
-                                              T* XQ, T* XK, T* XV, T* out, float p) {
-  __shared__ T xqkRows[12*1024];
-  int ROW = blockIdx.x;
-  __shared__ T sum;
-  int linearThreadId = blockIdx.x * blockDim.x + threadIdx.x;
-  curandState state;
-  curand_init(1234, linearThreadId, 0, &state);
-
-  if (threadIdx.x == 0) {
-    sum = 0;
-  }
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-      T xqk = XQ[ROW * N + COL] * XK[ROW * N + COL];
-      xqkRows[COL] = xqk;
-  }
-  
-  __syncthreads();
-  T threadSum = 0;
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    threadSum += hexp(xqkRows[COL]);
-  }
-  atomicAdd(&sum, threadSum);
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    xqkRows[COL] = xqkRows[COL]/sum;
-  }
-  __syncthreads();
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    xqkRows[COL] = xqkRows[COL] * p;
-  }
-  __syncthreads();
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    float rand = curand_uniform(&state);
-    T v = (rand < p) ? xqkRows[COL] : 0;
-    out[ROW * N + COL] = v * XV[ROW*N + COL];
-  }
-}
 
 template<typename T, typename AT>
 __global__ void matrixMultiplicationKernel(uint32_t M, uint32_t N, uint32_t K,

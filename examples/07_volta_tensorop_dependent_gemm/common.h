@@ -328,6 +328,7 @@ void gpumatmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* host_res
   dim3 grid = {N/block.y + 1, M/block.x + 1, 1};
   matrixMultiplicationKernel<T,AT><<<grid, block>>>(M, N, K, mat1, mat2, dev_refC);
   CUDA_CHECK(cudaDeviceSynchronize());
+  printf("M*N %ld\n", M*N);
   CUDA_CHECK(cudaMemcpy(host_res, dev_refC, sizeof(ElementOutput)*M*N, cudaMemcpyDeviceToHost));
 }
 

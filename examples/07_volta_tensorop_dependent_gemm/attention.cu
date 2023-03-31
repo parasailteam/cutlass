@@ -170,35 +170,35 @@ cudaError_t host_attention(cutlass::gemm::GemmCoord problem_size1,
   cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_dropout,
   cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_xqkv,
   cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_dropout) {
-  printf("Host C = A*B\n");
-  gpumatmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_a.device_data(), tensor_b.device_data(), tensor_ref_xqkv.host_data());
+  printf("Host C = A*B tensor_ref_xqkv.size() %d\n", tensor_ref_xqkv.size());
+  gpumatmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_x.device_data(), tensor_qkv.device_data(), tensor_ref_xqkv.host_data());
   // CUDA_CHECK(cudaMemcpy(tensor_ref_xqkv.device_data(), tensor_ref_xqkv.host_data(), sizeof(ElementOutput) * tensor_ref_xqkv.size(), cudaMemcpyHostToDevice));
-  printf("Host Dropout(Softmax(XQ . XK))");
+  printf("Host Dropout(Softmax(XQ . XK))\n");
   size_t xq_size = tensor_ref_dropout.size();
-  assert(tensor_ref_dropout.size() == problem_size1.m() * problem_size1.n());
+  assert(tensor_ref_dropout.size() == problem_size1.m() * problem_size1.n()/3);
   ElementOutput* host_xq = tensor_ref_xqkv.host_data();
-  ElementOutput* host_xk = tensor_ref_xqkv.host_data() + sizeof(ElementOutput) * xq_size;
-  ElementOutput* host_xv = tensor_ref_xqkv.host_data() + sizeof(ElementOutput) * xq_size * 2;
+  ElementOutput* host_xk = tensor_ref_xqkv.host_data() + xq_size;
+  ElementOutput* host_xv = tensor_ref_xqkv.host_data() + xq_size * 2;
   ElementOutput* host_dropout = tensor_ref_dropout.host_data();
 
   for (size_t i = 0; i < xq_size; i++) {
-    xqk = host_xq[i] * host_xk[i];
+    ElementOutput xqk = host_xq[i] * host_xk[i];
     host_dropout[i] = xqk;
   }
 
   for (size_t ROW = 0; ROW < problem_size1.m(); ROW++) {
-    ElementOutput sum = 0;
-    for (size_t COL = 0; COL < problem_size1.n(); COL++) {
-      sum += hexp(host_dropout[ROW*problem_size1.n() + COL]);
+    ElementOutput sum = (ElementOutput)0;
+    for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
+      sum += (ElementOutput)exp((float)host_dropout[ROW*problem_size1.n()/3 + COL]);
     }
     
-    for (size_t COL = 0; COL < problem_size1.n(); COL++) {
-      host_dropout[ROW*problem_size1.n() + COL] = hexp(host_dropout[ROW*problem_size1.n() + COL])/sum;
+    for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
+      host_dropout[ROW*problem_size1.n()/3 + COL] = (ElementOutput)exp((float)host_dropout[ROW*problem_size1.n()/3 + COL])/sum;
     }
 
-    for (size_t COL = 0; COL < problem_size1.n(); COL++) {
+    for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
       //Assume dropout probability is 1.0
-      host_dropout[ROW*problem_size1.n() + COL] = host_dropout[ROW*problem_size1.n() + COL] * host_xv[ROW*problem_size1.n() + COL];
+      host_dropout[ROW*problem_size1.n()/3 + COL] = host_dropout[ROW*problem_size1.n()/3 + COL] * host_xv[ROW*problem_size1.n()/3 + COL];
     }
   }
 
@@ -542,31 +542,32 @@ int run(int argc, char* arg[]) {
   printf("problem[0] %d problem[1] %d problem[2] %d problem[3] %d\n", problem[0], problem[1], problem[2], problem[3]);
   printf("doChecking=%d split_k1_slices=%d split_k2_slices=%d\n", doChecking, split_k1, split_k2);
   // Create a tuple of problem size for matrix multiplication
-  cutlass::gemm::GemmCoord problem_size1(problem[0], problem[1], problem[2]);
+  cutlass::gemm::GemmCoord problem_size1(problem[0], problem[1] * 3, problem[2]);
   cutlass::gemm::GemmCoord problem_size2(problem[0], problem[3], problem[1]);
 
   // Initialize tensors using CUTLASS helper functions
-  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_a(
+  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_x(
       problem_size1.mk());  // <- Create matrix A with dimensions M x K
-  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_b(
+  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_qkv(
       problem_size1.kn());  // <- Create matrix B with dimensions K x N
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_c(
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_xqkv(
       problem_size1.mn());  // <- Create matrix C with dimensions M x N
   
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_d(
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_dropout(
       problem_size2.kn());  // <- Create matrix D with dimensions M x N used to store output from
                            // CUTLASS kernel
   cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_e(
       problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
                         // CUTLASS kernel
   
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_c(
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_xqkv(
     problem_size1.mn());  // <- Create matrix D with dimensions M x N used to store output from
                            // reference kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_e(
-    problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_dropout(
+    {problem_size1.m(), problem_size1.n()/3});  // <- Create matrix D with dimensions M x N used to store output from
                           // reference kernel
-
+  printf("%ld\n", tensor_ref_dropout.size());
+  
   // Fill input and output matrices on host using CUTLASS helper functions
   // cutlass::reference::host::TensorFillRandomUniform(
   //     tensor_a.host_view(),
@@ -581,19 +582,19 @@ int run(int argc, char* arg[]) {
   //     ElementInputB(-2),
   //     0);  // <- Fill matrix B on host with uniform-distribution random data
   if (doChecking) {
-    memset_random2(tensor_a.host_data(), ElementOutput(0.05), ElementOutput(0.2), tensor_a.size());
-    memset_random2(tensor_b.host_data(), ElementOutput(0.01), ElementOutput(0.2), tensor_b.size());
-    memset_random2(tensor_d.host_data(), ElementOutput(0.01), ElementOutput(0.05), tensor_d.size());
+    memset_random2(tensor_x.host_data(), ElementOutput(0.05), ElementOutput(0.2), tensor_x.size());
+    memset_random2(tensor_qkv.host_data(), ElementOutput(0.01), ElementOutput(0.2), tensor_qkv.size());
+    // memset_random2(tensor_d.host_data(), ElementOutput(0.01), ElementOutput(0.05), tensor_d.size());
   } else {
     cutlass::reference::host::TensorFill(
-      tensor_a.host_view(),
+      tensor_x.host_view(),
       ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
     cutlass::reference::host::TensorFill(
-      tensor_b.host_view(),
+      tensor_qkv.host_view(),
       ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
-    cutlass::reference::host::TensorFill(
-      tensor_d.host_view(),
-      ElementOutput(0.01));  // <- Fill matrix B on host with uniform-distribution random data
+    // cutlass::reference::host::TensorFill(
+    //   tensor_d.host_view(),
+    //   ElementOutput(0.01));  // <- Fill matrix B on host with uniform-distribution random data
   }
   // cutlass::reference::host::TensorFill(
   //   tensor_a.host_view());
@@ -602,24 +603,24 @@ int run(int argc, char* arg[]) {
   // cutlass::reference::host::TensorFill(
   //   tensor_d.host_view());
   cutlass::reference::host::TensorFill(
-      tensor_c.host_view());  // <- Fill matrix C on host with zeros
+    tensor_xqkv.host_view());  // <- Fill matrix C on host with zeros
   cutlass::reference::host::TensorFill(
-      tensor_ref_c.host_view());  // <- Fill matrix C on host with zeros
+    tensor_ref_xqkv.host_view());  // <- Fill matrix C on host with zeros
   cutlass::reference::host::TensorFill(
-      tensor_e.host_view());  // <- fill matrix E on host with zeros
-  cutlass::reference::host::TensorFill(
-    tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
+    tensor_ref_dropout.host_view());  // <- fill matrix E on host with zeros
+  // cutlass::reference::host::TensorFill(
+  //   tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
 
   // Copy data from host to GPU
-  tensor_a.sync_device();
-  tensor_b.sync_device();
-  tensor_d.sync_device();
+  tensor_x.sync_device();
+  tensor_qkv.sync_device();
+  // tensor_d.sync_device();
 
-  tensor_c.sync_device();
-  tensor_ref_c.sync_device();
+  tensor_xqkv.sync_device();
+  tensor_ref_xqkv.sync_device();
 
-  tensor_e.sync_device();
-  tensor_ref_e.sync_device();
+  // tensor_e.sync_device();
+  tensor_ref_dropout.sync_device();
 
   // Initialize alpha and beta for dot product computation
   ElementComputeEpilogue alpha = ElementComputeEpilogue(1);
@@ -630,19 +631,15 @@ int run(int argc, char* arg[]) {
   int epochs = 40;
   int warmup = 10;
 
-  double cublasTime = 0;
-  cublasHandle_t cublasHandle;
-  CUBLASCHECK(cublasCreate(&cublasHandle));
-  CUBLASCHECK(cublasSetStream(cublasHandle, producer_stream));
-  CUBLASCHECK(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
-
   if (doChecking) {
-    result = host_matmul(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_ref_c, tensor_d, tensor_ref_e, tensor_c, tensor_e);
+    result = host_attention(problem_size1, problem_size2, alpha, beta, tensor_x, tensor_qkv, tensor_ref_xqkv, tensor_ref_dropout, tensor_xqkv, tensor_dropout);
     if (result != cudaSuccess) {
       return 1;
     }
   }
 
+  return 0;
+  #if 0
   cudaEvent_t start;
   cudaEvent_t end;
   cudaEvent_t event;
@@ -919,6 +916,7 @@ int run(int argc, char* arg[]) {
 
     printf("overlapped elapsedtime %lf microseconds\n", overlapTime/(float)epochs);
   }
+  #endif
 
   return 0;
 }

@@ -138,16 +138,14 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   if (threadIdx.x == 0) {
     sum = 0;
   }
+  AT threadSum = (AT)0.0f;
   for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
       T xqk = XQ[ROW * N + COL] * XK[ROW * N + COL];
+      threadSum += (AT)exp((AT)xqk);
       xqkRows[COL] = xqk;
   }
   
   __syncthreads();
-  AT threadSum = (AT)0.0f;
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    threadSum += (AT)exp((AT)xqkRows[COL]);
-  }
   atomicAdd(&sum, (AT)threadSum);
   __syncthreads();
   // if (threadIdx.x == 0) printf("sum %f\n", sum);
@@ -325,7 +323,9 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       // }
       // CUDA_CHECK(cudaDeviceSynchronize());
       selfAttnDotProdSoftmaxDropout<half, float><<<problem_size1.m(), 256>>>(problem_size1.m(), problem_size1.n()/3, 
-                                                                 (half*)device_xq, (half*)device_xk, (half*)device_xv, (half*)tensor_dropout.device_data(), 1.0f);
+                                                                 (half*)device_xq, (half*)device_xk, (half*)device_xv, 
+                                                                 (half*)tensor_dropout.device_data(), 
+                                                                 1.0f);
       CUDA_CHECK(cudaDeviceSynchronize());
       double end = timeInMicroSeconds();
       if (iters > 10 && producer_stream == consumer_stream)

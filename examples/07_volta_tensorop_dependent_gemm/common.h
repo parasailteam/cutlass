@@ -348,22 +348,22 @@ void matmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* res)
 }
 
 template<typename T>
-bool equals(size_t size, T* mat1, T* mat2) {
+bool equals(size_t size, T* mat1, T* mat2, float err) {
   for (size_t i = 0; i < size; i++) {
     float e1 = (float)mat1[i];
     float e2 = (float)mat2[i];
     
-    float v = 1e-1;
+    float v = err;
     bool ret = true;
     if (abs(e1) < v && abs(e2) < v) {
-      printf("%f , %f at %lu\n", e1, e2, i);
+      // printf("%f , %f at %lu\n", e1, e2, i);
       ret = true;
     } else if (abs(e1) < v) {
       ret = false;
     } else if (abs(e2) < v) {
       ret = false;
     } else {
-      float err = abs((e1 - e2)/e2);
+      float err = abs(e1 - e2);
       if (err <= v) {
         ret = true;
       } else {

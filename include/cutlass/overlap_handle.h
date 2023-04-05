@@ -103,14 +103,15 @@ struct OverlapHandle {
   }
 
   DEVICE_FUNC void waitOnTile(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint expectedInputStatusVal) {
+    volatile uint* waitBuffer = tileStatusMap;
+    int yMaxTiles = ySize/yTile;
+    uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;//getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
+      
     if (threadIdx.x == 0) {
-      volatile uint* waitBuffer = tileStatusMap;
-      int yMaxTiles = ySize/yTile;
-      uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;//getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
-      // printf("waitBuffer[%d] %d xTileIdx %d yTileIdx %p iter %d expectedInputStatusVal %d\n", linearTileIdx, xTileIdx, yTileIdx, waitBuffer, iter, expectedInputStatusVal);
+      // printf("waitBuffer[%d] = %d ; %d xTileIdx %d yTileIdx %p iter %d expectedInputStatusVal %d\n", linearTileIdx, waitBuffer[linearTileIdx], xTileIdx, yTileIdx, waitBuffer, iter, expectedInputStatusVal);
       while(waitBuffer[linearTileIdx] < iter * expectedInputStatusVal);
     }
-
+    // if (expectedInputStatusVal == 2) printf("114: threadIdx.x %d %d\n", threadIdx.x, waitBuffer[linearTileIdx]);
     __syncthreads();
   }
 

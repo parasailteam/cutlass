@@ -141,10 +141,13 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   }
   AT threadSum = (AT)0.0f;
   for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    T xq = XQ[ROW * N + COL];
     int tileM = blockIdx.x/TileM;
     if (enableOverlap) {
-        handle.waitOnTile(tileM, COL/TileN, 0, 1);
+      handle.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+    }
+    T xq = XQ[ROW * N + COL];
+    if (enableOverlap) {
+      handle.waitOnTile(tileM, N/TileN + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
     }
     T xk = XK[ROW * N + COL];
     // if (enableOverlap) {
@@ -332,7 +335,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       //   return cudaErrorUnknown;
       // }
       // CUDA_CHECK(cudaDeviceSynchronize());
-      selfAttnDotProdSoftmaxDropout<256, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, false><<<problem_size1.m(), 256>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, false><<<problem_size1.m(), 512>>>(problem_size1.m(), problem_size1.n()/3, 
                                                                  (half*)device_xq, (half*)device_xk, (half*)device_xv, 
                                                                  (half*)tensor_dropout.device_data(), 
                                                                  1.0f, handle);
@@ -389,10 +392,10 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
       // CUDA_CHECK(cudaDeviceSynchronize());
-      waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
+      // waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
       handle.producerOrConsumer_ = false;
       // CUDA_CHECK(cudaDeviceSynchronize());
-      selfAttnDotProdSoftmaxDropout<ShapeMMAThreadBlock::kN, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, true><<<problem_size1.m(), ShapeMMAThreadBlock::kN>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, true><<<problem_size1.m(), 512>>>(problem_size1.m(), problem_size1.n()/3, 
                                                                  (half*)device_xq, (half*)device_xk, (half*)device_xv, 
                                                                  (half*)tensor_dropout.device_data(), 
                                                                  1.0f, handle);

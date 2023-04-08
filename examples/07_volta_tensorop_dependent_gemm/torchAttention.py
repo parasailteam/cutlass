@@ -9,6 +9,7 @@ L = int(sys.argv[4])
 
 X = torch.ones((M, K), dtype=torch.half).cuda()
 QKV = torch.ones((K, N*3), dtype=torch.half).cuda()
+W2 = torch.ones((N, L), dtype=torch.half).cuda()
 
 for i in range(10):
     XQKV = X@QKV
@@ -20,6 +21,7 @@ for i in range(10):
     softmax = torch.softmax(XQDotXK, dim = 0)
     softmaxDotXV = softmax*XV
     dropout = torch.dropout(softmaxDotXV, 1.0, False)
+    out = dropout@W2
 torch.cuda.synchronize()
 
 epochs = 20
@@ -35,6 +37,7 @@ for i in range(epochs):
     softmax = torch.softmax(XQDotXK, dim = 0)
     softmaxDotXV = softmax*XV
     dropout = torch.dropout(softmaxDotXV, 1.0, False)
+    out = dropout@W2
 torch.cuda.synchronize()
 end = time.time_ns()
 

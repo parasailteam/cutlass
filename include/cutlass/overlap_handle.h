@@ -115,7 +115,7 @@ struct OverlapHandle {
     __syncthreads();
   }
 
-  DEVICE_FUNC void waitOnTiles(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint numTiles, uint expectedInputStatusVal) {
+  DEVICE_FUNC void waitOnTiles(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint numTiles, uint expectedInputStatusVal, int threadId = 0) {
     if (threadIdx.x < numTiles) {
       volatile uint* waitBuffer = tileStatusMap;
 

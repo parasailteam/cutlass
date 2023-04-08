@@ -204,6 +204,9 @@ using ShapeMMAThreadBlock =
     cutlass::gemm::GemmShape<128, 64, 32>;
 // This code section describes tile size a warp will compute
 using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 32, 32>;
+Attention-inference-first matmul = 
+  cutlass::gemm::GemmShape<64, 128, 32>;
+  using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
 
 For training:
 using ShapeMMAThreadBlock =
@@ -215,9 +218,9 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
 
 // This code section describes the tile size a thread block will compute
 using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<128, 64, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+    cutlass::gemm::GemmShape<256, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
 // This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 32, 32>;  // <- warp tile M = 64, N = 64, K = 32 
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
 
@@ -433,6 +436,13 @@ void memset_random2(T*f, T v1, T v2, size_t nelems)
 
   // CUDA_CHECK(cudaMemcpy(f, h_buff, sizeof(T)*nelems, cudaMemcpyHostToDevice));
   // free(h_buff);
+}
+
+__global__ void init_curand_states(curandState* states, size_t num_states)
+{
+  int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
+  if (thread_id < num_states)
+    curand_init(thread_id, threadIdx.x, 0, &states[thread_id]);
 }
 
 int run(int argc, char* arg[]);

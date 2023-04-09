@@ -128,9 +128,12 @@ template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, bool enab
 __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
                                               T* XQ, T* XK, T* XV, T* out, float p,
                                               curandState* randStates,
-                                              OverlapHandle handle, bool rowSyncOrTileSync) {
+                                              OverlapHandle handle1, OverlapHandle handle2, bool rowSyncOrTileSync, int* kernelExecuted) {
   __shared__ half xqkRows[1536];
   int ROW = blockIdx.x;
+  if (enableOverlap && blockIdx.x == 0 && threadIdx.x == 0) {
+    *kernelExecuted = handle2.iter;
+  }
   if (ROW >= M) return;
   __shared__ AT sum;
   int linearThreadId = blockIdx.x * blockDim.x + threadIdx.x;
@@ -142,14 +145,14 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   }
   int tileM = blockIdx.x/TileM;
   if (enableOverlap && rowSyncOrTileSync) {
-    handle.waitOnTiles(tileM, 0, 0, 1, N*3/TileN);
+    handle1.waitOnTiles(tileM, 0, 0, 1, N*3/TileN);
   }
   AT threadSum = (AT)0.0f;
   
   for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
     if (enableOverlap) {
       if (!rowSyncOrTileSync) {
-        handle.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+        handle1.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
       }
     }
     T xq = XQ[ROW * N + COL];
@@ -157,7 +160,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       if (rowSyncOrTileSync) {
 
       } else {
-        handle.waitOnTile(tileM, N/TileN + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+        handle1.waitOnTile(tileM, N/TileN + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
       }
     }
     T xk = XK[ROW * N + COL];
@@ -183,11 +186,19 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       if (rowSyncOrTileSync) {
 
       } else {
-        handle.waitOnTile(tileM, N/TileN*2 + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+        handle1.waitOnTile(tileM, N/TileN*2 + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
       }
     }
     __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * (float)XV[ROW*N + COL]))/sum) : (__half)0.0f;
     out[ROW * N + COL] = v;
+  }
+
+  if (enableOverlap) {
+    if (rowSyncOrTileSync) {
+      handle2.setRowStatus(tileM, 0, 0, 1);
+    } else {
+      
+    }
   }
 }
 
@@ -297,8 +308,9 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_dropout,
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_w2,
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_out,
-                     OverlapHandle& handle,
-                     cudaStream_t producer_stream, cudaStream_t consumer_stream,
+                     OverlapHandle& handle1,
+                     OverlapHandle& handle2,
+                     cudaStream_t streams[],
                      cudaEvent_t event,
                      curandState* randStates,
                      volatile int* kernelExecuted,
@@ -313,7 +325,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
   ElementOutput* device_xv = device_xqkv + xq_size * 2;
   // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
   // instantiated CUTLASS kernel
-  typename GemmTy1::Arguments args1{handle,
+  typename GemmTy1::Arguments args1{handle1,
                                      problem_size1,  // <- problem size of matrix multiplication
                                      tensor_x.device_ref(),  // <- reference to matrix A on device
                                      tensor_qkv.device_ref(),  // <- reference to matrix B on device
@@ -327,7 +339,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
   // Allocate workspace memory
   cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
 
-  typename GemmTy2::Arguments args2{handle,
+  typename GemmTy2::Arguments args2{handle2,
                                      problem_size2,  // <- problem size of matrix multiplication
                                      tensor_dropout.device_ref(),  // <- reference to matrix A on device
                                      tensor_w2.device_ref(),  // <- reference to matrix B on device
@@ -365,11 +377,11 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
   }
 
   execTime = 0;
-  if (!handle.enable()) {
+  if (!handle1.enable()) {
     printf("440\n");
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
-      handle.iter += 1;
+      handle1.iter += 1;
 
       // typename GemmTy2::Arguments args2{handle,
       //   problem_size2,  // <- problem size of matrix multiplication
@@ -380,22 +392,23 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       //   {alpha, beta},          // <- tuple of alpha and beta
       //   split_k2};        // <- k-dimension split factor
       
-      handle.producerOrConsumer_ = true;
+      handle1.producerOrConsumer_ = true;
       double start = timeInMicroSeconds();
-      status = gemm_op1(args1, false, workspace1.get(), producer_stream);
+      status = gemm_op1(args1, false, workspace1.get(), streams[0]);
       CUTLASS_CHECK(status);
       
       if (status != cutlass::Status::kSuccess) {
         return cudaErrorUnknown;
       }
 
-      handle.producerOrConsumer_ = false;
+      handle1.producerOrConsumer_ = false;
       
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, false><<<problem_size1.m(), 512>>>(problem_size1.m(), problem_size1.n()/3, 
-                                                                 (half*)device_xq, (half*)device_xk, (half*)device_xv, 
-                                                                 (half*)tensor_dropout.device_data(), 
-                                                                 1.0f, randStates, handle, false);
-      status = gemm_op2(args2, false, workspace2.get(), consumer_stream);
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, false>
+        <<<problem_size1.m(), 512, 0, streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
+                                                    (half*)device_xq, (half*)device_xk, (half*)device_xv, 
+                                                    (half*)tensor_dropout.device_data(), 
+                                                    1.0f, randStates, handle1, handle1, false, NULL);
+      status = gemm_op2(args2, false, workspace2.get(), streams[0]);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
@@ -403,16 +416,17 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       }
       CUDA_CHECK(cudaDeviceSynchronize());
       double end = timeInMicroSeconds();
-      if (iters > 10 && producer_stream == consumer_stream)
+      if (iters > 10)
         printf("%lf\n",end-start);
       execTime += end-start;
     }
   } else {
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
-      handle.iter += 1;
-      handle.producerOrConsumer_ = true;
-      typename GemmTy1::Arguments args1{handle,
+      handle1.iter += 1;
+      handle2.iter += 1;
+      handle1.producerOrConsumer_ = true;
+      typename GemmTy1::Arguments args1{handle1,
                                      problem_size1,  // <- problem size of matrix multiplication
                                      tensor_x.device_ref(),  // <- reference to matrix A on device
                                      tensor_qkv.device_ref(),  // <- reference to matrix B on device
@@ -420,20 +434,11 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                                      tensor_xqkv.device_ref(),  // <- reference to matrix C on device
                                      {alpha, beta},          // <- tuple of alpha and beta
                                      split_k1};        // <- k-dimension split factor
-
-      // typename GemmTy2::Arguments args2{handle,
-      //   problem_size2,  // <- problem size of matrix multiplication
-      //   tensor_c.device_ref(),  // <- reference to matrix A on device
-      //   tensor_d.device_ref(),  // <- reference to matrix B on device
-      //   tensor_e.device_ref(),  // <- reference to matrix C on device
-      //   tensor_e.device_ref(),  // <- reference to matrix C on device
-      //   {alpha, beta},          // <- tuple of alpha and beta
-      //   split_k2};        // <- k-dimension split factor
       
       double start = timeInMicroSeconds();
       // dim3 grid = {problem_size1.m()/128, 1, 1};
       // int lastBlockIdxX = (grid.x/80)*80;
-      status = gemm_op1(args1, true, rowSyncOrTileSync, (int*)kernelExecuted, workspace1.get(), producer_stream);
+      status = gemm_op1(args1, true, rowSyncOrTileSync, (int*)&kernelExecuted[0], workspace1.get(), streams[0]);
       CUTLASS_CHECK(status);
 
       
@@ -454,16 +459,31 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
       // CUDA_CHECK(cudaDeviceSynchronize());
-      waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
-      handle.producerOrConsumer_ = false;
+      waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], handle1.iter);
+      handle1.producerOrConsumer_ = false;
+      handle2.producerOrConsumer_ = true;
       // CUDA_CHECK(cudaDeviceSynchronize());
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, true><<<problem_size1.m(), 512>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, true><<<problem_size1.m(), 512, 0, streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                                  (half*)device_xq, (half*)device_xk, (half*)device_xv, 
                                                                  (half*)tensor_dropout.device_data(),
                                                                  1.0f,
                                                                  randStates, 
-                                                                 handle,
-                                                                 rowSyncOrTileSync);
+                                                                 handle1, handle2,
+                                                                 rowSyncOrTileSync, (int*)&kernelExecuted[1]);
+      CUDA_CHECK(cudaDeviceSynchronize());
+      handle2.producerOrConsumer_ = false;
+      typename GemmTy2::Arguments args2{handle2,
+        problem_size2,  // <- problem size of matrix multiplication
+        tensor_dropout.device_ref(),  // <- reference to matrix A on device
+        tensor_w2.device_ref(),  // <- reference to matrix B on device
+        tensor_out.device_ref(),  // <- reference to matrix C on device
+        tensor_out.device_ref(),  // <- reference to matrix C on device
+        {alpha, beta},          // <- tuple of alpha and beta
+        split_k2};        // <- k-dimension split factor
+      CUDA_CHECK(cudaDeviceSynchronize());
+
+      waitKernel<<<1,1,0,streams[2]>>>((uint*)&kernelExecuted[1], handle2.iter);
+      status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)&kernelExecuted[1], workspace2.get(), streams[2]);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
@@ -493,8 +513,9 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                         cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_dropout,
                         cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_w2,
                         cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_out,
-                        OverlapHandle& handle,
-                        cudaStream_t producer_stream, cudaStream_t consumer_stream,
+                        OverlapHandle& handle1,
+                        OverlapHandle& handle2,
+                        cudaStream_t streams[],
                         cudaEvent_t event,
                         curandState* randStates,
                         volatile int* kernelExecuted,
@@ -505,10 +526,10 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
   cudaError_t result;
   if (split_k1 == 1) {
     result = runAttention<GemmTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle, producer_stream, consumer_stream, event, randStates, kernelExecuted, rowSyncOrTileSync, execTime, iters);
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, kernelExecuted, rowSyncOrTileSync, execTime, iters);
   } else {
     result = runAttention<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle, producer_stream, consumer_stream, event, randStates, kernelExecuted, rowSyncOrTileSync, execTime, iters);
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, kernelExecuted, rowSyncOrTileSync, execTime, iters);
   }
 
   return result;
@@ -585,11 +606,17 @@ int run(int argc, char* arg[]) {
   // Run the CUTLASS GEMM test.
   //
 
-  cudaStream_t producer_stream;
-  cudaStream_t consumer_stream;
-  CUDA_CHECK(cudaStreamCreate(&producer_stream));
-  CUDA_CHECK(cudaStreamCreate(&consumer_stream));
+  int highestPriority;
+  int lowestPriority;
   
+  CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&lowestPriority, &highestPriority));
+  if (highestPriority >= lowestPriority) {
+    printf("Wrong priorites: Lowest %d highest %d\n", lowestPriority, highestPriority);
+  }
+  cudaStream_t streams[(lowestPriority - highestPriority + 1)];
+  for (int i = highestPriority; i <= lowestPriority; i++) {
+    CUDA_CHECK(cudaStreamCreateWithPriority(&streams[i - highestPriority], 0, i));
+  }
   printf("problem[0] %d problem[1] %d problem[2] %d problem[3] %d\n", problem[0], problem[1], problem[2], problem[3]);
   printf("doChecking=%d split_k1_slices=%d split_k2_slices=%d\n", doChecking, split_k1, split_k2);
   // Create a tuple of problem size for matrix multiplication
@@ -715,7 +742,7 @@ int run(int argc, char* arg[]) {
 
   if (true) {
     result = runAttention<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, producer_stream, producer_stream, event, randStates, NULL, false, baselineTime, 1);
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, baselineHandle, streams, event, randStates, NULL, false, baselineTime, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     if (doChecking) {
@@ -727,20 +754,20 @@ int run(int argc, char* arg[]) {
     }
 
     result = runAttention<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, producer_stream, producer_stream, event, randStates, NULL, false, baselineTime, warmup);
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, baselineHandle, streams, event, randStates, NULL, false, baselineTime, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
     result = runAttention<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, producer_stream, producer_stream, event, randStates, NULL, false, baselineTime, epochs);
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, baselineHandle, streams, event, randStates, NULL, false, baselineTime, epochs);
 
     if (result != cudaSuccess) {
       std::cerr << "CUTLASS GEMM kernel failed: "
         << cudaGetErrorString(result) << std::endl;
       return result;
     }
-    CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+    // CUDA_CHECK(cudaStreamSynchronize(streams));
     // double endTime = convertTimeValToDouble(getTimeOfDay());
     // baselineTime = endTime - startTime;
     printf("cutlass-baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
@@ -750,7 +777,6 @@ int run(int argc, char* arg[]) {
   double minimumTime = (1<<20);
   if (true) {
     minimumTime = 0;
-    cudaStream_t consumer_stream;
     CUDA_CHECK(cudaStreamCreate(&consumer_stream));
     result = runhgemm<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, minimumTime, epochs);
 
@@ -766,34 +792,38 @@ int run(int argc, char* arg[]) {
 
   printf("minimum elapsedtime %lf microseconds\n", minimumTime/(float)epochs);
   #endif 
-  #if 0
+
   cutlass::reference::host::TensorFill(
     tensor_xqkv.host_view());  // <- Fill matrix C on host with zeros
   cutlass::reference::host::TensorFill(
     tensor_dropout.host_view());  // <- fill matrix E on host with zeros
-  
+  cutlass::reference::host::TensorFill(
+    tensor_out.host_view());  // <- fill matrix E on host with zeros
+    
   tensor_xqkv.sync_device();
   tensor_dropout.sync_device();
-  
-  OverlapHandle overlapHandle(problem_size1.m(), problem_size1.n(), 1, 1);
-  int highestPriority;
-  int lowestPriority;
-  CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&lowestPriority, &highestPriority));
-  CUDA_CHECK(cudaStreamCreateWithPriority(&consumer_stream, 0, lowestPriority));
+  tensor_out.sync_device();
+
+  OverlapHandle overlapHandle1(problem_size1.m(), problem_size1.n(), 1, 1);
+  OverlapHandle overlapHandle2(problem_size2.m(), problem_size2.n(), 1, 1);
+
   int* kernelExecuted;
-  CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int)));
-  CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(int)));
+  CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int) * 128));
+  CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(int) * 128));
   
   int* numProducerTBs;
-  CUDA_CHECK(cudaMalloc(&numProducerTBs, sizeof(int)));
-  CUDA_CHECK(cudaMemset(numProducerTBs, 0, sizeof(int)));
-  overlapHandle.numProducerTBs = numProducerTBs;
+  CUDA_CHECK(cudaMalloc(&numProducerTBs, sizeof(int)*2));
+  CUDA_CHECK(cudaMemset(numProducerTBs, 0, sizeof(int)*2));
+  overlapHandle1.numProducerTBs = numProducerTBs;
+  overlapHandle2.numProducerTBs = numProducerTBs + 1;
   int* numConsumerTBs;
   CUDA_CHECK(cudaMalloc(&numConsumerTBs, sizeof(int) * 80));
   CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int) * 80));
-  overlapHandle.numConsumerTBs = numConsumerTBs;
-  
-  overlapHandle.allocTileStatusMap(ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1);
+  overlapHandle1.numConsumerTBs = numConsumerTBs;
+  overlapHandle2.numConsumerTBs = numConsumerTBs + 1;
+
+  overlapHandle1.allocTileStatusMap(ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1);
+  overlapHandle2.allocTileStatusMap(ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1);
   double overlapTime = 0;
   dim3 gridDim = {DIVUP(problem_size1.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size1.n(), ShapeMMAThreadBlock::kN), split_k1};
   
@@ -941,31 +971,34 @@ int run(int argc, char* arg[]) {
 
   CUDA_CHECK(cudaMemcpy(dIsRemainingBlock, hIsRemainingBlock, sizeof(int) * gridDim.x * gridDim.y, cudaMemcpyHostToDevice));
 
-  overlapHandle.isBlockRemaining = dIsRemainingBlock;
-  overlapHandle.blockIndexOrder = dBlockIndexOrder;
-  overlapHandle.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
+  overlapHandle1.isBlockRemaining = dIsRemainingBlock;
+  overlapHandle1.blockIndexOrder = dBlockIndexOrder;
+  overlapHandle1.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
+  overlapHandle2.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
   if (true) {
-    result = runAttention<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, overlapHandle, producer_stream, consumer_stream, event, randStates, kernelExecuted, rowSyncOrTileSync, overlapTime, 1);
+    result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, overlapHandle1, overlapHandle2, streams, event, randStates, kernelExecuted, rowSyncOrTileSync, overlapTime, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     if (doChecking) {
-      result = check_results(problem_size1, problem_size2, alpha, beta, tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_ref_xqkv, tensor_ref_dropout);
+      result = check_results(problem_size1, problem_size2, alpha, beta, 
+        tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, tensor_ref_xqkv, tensor_ref_dropout, tensor_ref_out);
       if (result != cudaSuccess) {
         return 1;
       }
     }
   //   //warmup
-  result = runAttention<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, overlapHandle, producer_stream, consumer_stream, event, randStates,kernelExecuted, rowSyncOrTileSync, overlapTime, warmup);
+  result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, overlapHandle1, overlapHandle2, streams, event, randStates,kernelExecuted, rowSyncOrTileSync, overlapTime, warmup);
 
   CUDA_CHECK(cudaDeviceSynchronize());
   
   printf("728:\n");
-  result = runAttention<OverlapGemm1, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, overlapHandle, producer_stream, consumer_stream, event, randStates, kernelExecuted, rowSyncOrTileSync, overlapTime, epochs);
-  CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
-  CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+  result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, overlapHandle1, overlapHandle2, streams, event, randStates, kernelExecuted, rowSyncOrTileSync, overlapTime, epochs);
   
   printf("overlapped elapsedtime %lf microseconds\n", overlapTime/(float)epochs);
   }
-  #endif
+
   return 0;
 }

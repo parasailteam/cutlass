@@ -126,10 +126,10 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 
 template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, bool enableOverlap>
 __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
-                                              T* XQ, T* XK, T* XV, T* out, float p,
+                                              T* XQKV, T* out, float p,
                                               curandState* randStates,
                                               OverlapHandle handle1, OverlapHandle handle2, bool rowSyncOrTileSync, int* kernelExecuted) {
-  __shared__ half xqkRows[1536];
+  __shared__ half xqkRows[2048];
   int ROW = blockIdx.x;
   if (enableOverlap && blockIdx.x == 0 && threadIdx.x == 0) {
     *kernelExecuted = handle2.iter;
@@ -145,17 +145,19 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   }
   int tileM = blockIdx.x/TileM;
   if (enableOverlap && rowSyncOrTileSync) {
-    handle1.waitOnTiles(tileM, 0, 0, 1, N*3/TileN);
+    // if (threadIdx.x == 0) printf("TileM %d TileN %d\n", TileM, TileN);
+    handle1.waitOnTile(tileM, 0, 0, (N*3)/TileN);
   }
+
   AT threadSum = (AT)0.0f;
-  
+
   for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
     if (enableOverlap) {
       if (!rowSyncOrTileSync) {
         handle1.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
       }
     }
-    T xq = XQ[ROW * N + COL];
+    T xq = XQKV[ROW * 3 * N + COL];
     if (enableOverlap) {
       if (rowSyncOrTileSync) {
 
@@ -163,7 +165,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
         handle1.waitOnTile(tileM, N/TileN + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
       }
     }
-    T xk = XK[ROW * N + COL];
+    T xk = XQKV[ROW * 3 * N + (COL + N)];
     // if (enableOverlap) {
     //   handle.waitOnTiles();
     // }
@@ -180,6 +182,9 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   //   xqkRows[COL] = xqkRows[COL]/(__half)sum;
   // }
   // __syncthreads();
+  // if (threadIdx.x == 0 && blockIdx.x == 0) {
+  //   printf("185: %p\n", out);
+  // }
   for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
     float r = curand_uniform(localRandState);
     if (enableOverlap) {
@@ -189,7 +194,10 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
         handle1.waitOnTile(tileM, N/TileN*2 + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
       }
     }
-    __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * (float)XV[ROW*N + COL]))/sum) : (__half)0.0f;
+    __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * (float)XQKV[ROW* 3 * N + (COL + 2 * N)]))/sum) : (__half)0.0f;
+    // if (COL == 0 && blockIdx.x < 8) {
+    //   printf("199: %f %f %f %f %f\n", r, p, (float)v, (float)xqkRows[COL], (float)XQKV[ROW*N + COL]);
+    // }
     out[ROW * N + COL] = v;
   }
 
@@ -218,21 +226,22 @@ cudaError_t host_attention(cutlass::gemm::GemmCoord problem_size1,
   printf("Host Dropout(Softmax(XQ . XK))\n");
   size_t xq_size = tensor_ref_dropout.size();
   assert(tensor_ref_dropout.size() == problem_size1.m() * problem_size1.n()/3);
-  ElementOutput* host_xq = tensor_ref_xqkv.host_data();
-  ElementOutput* host_xk = tensor_ref_xqkv.host_data() + xq_size;
-  ElementOutput* host_xv = tensor_ref_xqkv.host_data() + xq_size * 2;
+  size_t N = problem_size1.n()/3;
+  ElementOutput* host_xqkv = tensor_ref_xqkv.host_data();
   ElementOutput* host_dropout = tensor_ref_dropout.host_data();
 
-  for (size_t i = 0; i < xq_size; i++) {
-    ElementOutput xqk = host_xq[i] * host_xk[i];
-    host_dropout[i] = xqk;
+  for (size_t row = 0; row < problem_size1.m(); row++) {
+    for (size_t col = 0; col < problem_size1.n()/3; col++) {
+      ElementOutput xqk = host_xqkv[row * 3 * N + col] * host_xqkv[row * 3 * N + (col + N)];
+      host_dropout[row * N + col] = xqk;
+    }
   }
 
   for (size_t ROW = 0; ROW < problem_size1.m(); ROW++) {
     float sum = 0.0f;
     for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
       // printf("(float)host_dropout[ROW*(problem_size1.n()/3) + COL] %f\n", (float)host_dropout[ROW*(problem_size1.n()/3) + COL]);
-      sum += exp((float)host_dropout[ROW*(problem_size1.n()/3) + COL]);
+      sum += exp((float)host_dropout[ROW*N + COL]);
     }
     // printf("sum %f\n", sum);
     // for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
@@ -241,7 +250,7 @@ cudaError_t host_attention(cutlass::gemm::GemmCoord problem_size1,
 
     for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
       //Assume dropout probability is 1.0
-      host_dropout[ROW*(problem_size1.n()/3) + COL] = (exp(host_dropout[ROW*(problem_size1.n()/3) + COL]) * host_xv[ROW*(problem_size1.n()/3) + COL])/sum;
+      host_dropout[ROW*N + COL] = (exp(host_dropout[ROW*N + COL]) * host_xqkv[ROW*3*N + COL+2*N])/sum;
     }
   }
   
@@ -277,7 +286,7 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
 
   ElementOutput* hostDropout = new ElementOutput[tensor_dropout.size()];
   CUDA_CHECK(cudaMemcpy(hostDropout, tensor_dropout.device_data(), tensor_dropout.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
-  printf("checking E tensor_e.size() %lu %lu\n", tensor_dropout.size(), tensor_ref_dropout.size());
+  printf("checking dropout tensor_e.size() %lu %lu\n", tensor_dropout.size(), tensor_ref_dropout.size());
   eq = equals(tensor_ref_dropout.size(), tensor_ref_dropout.host_data(), hostDropout, 1e-1);
   if (eq == false) {
     printf("dropout not correct\n");
@@ -286,7 +295,7 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
 
   ElementOutput* hostOut = new ElementOutput[tensor_out.size()];
   CUDA_CHECK(cudaMemcpy(hostOut, tensor_out.device_data(), tensor_out.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
-  printf("checking E tensor_e.size() %lu %lu\n", tensor_out.size(), tensor_ref_out.size());
+  printf("checking Out tensor_e.size() %lu %lu\n", tensor_out.size(), tensor_ref_out.size());
   eq = equals(tensor_ref_out.size(), tensor_ref_out.host_data(), hostOut, 1e-1);
   if (eq == false) {
     printf("Out not correct\n");
@@ -297,6 +306,11 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
   return cudaSuccess;
 }
 
+__global__ void print_kernel(ElementOutput* data) {
+  if (threadIdx.x < 10) {
+    printf("%p %f\n", data, (float)data[threadIdx.x]);
+  }
+}
 template<typename GemmTy1, typename GemmTy2>
 cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
                      cutlass::gemm::GemmCoord problem_size2,
@@ -405,7 +419,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       
       selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, false>
         <<<problem_size1.m(), 512, 0, streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
-                                                    (half*)device_xq, (half*)device_xk, (half*)device_xv, 
+                                                    (half*)device_xqkv,
                                                     (half*)tensor_dropout.device_data(), 
                                                     1.0f, randStates, handle1, handle1, false, NULL);
       status = gemm_op2(args2, false, workspace2.get(), streams[0]);
@@ -415,6 +429,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
         return cudaErrorUnknown;
       }
       CUDA_CHECK(cudaDeviceSynchronize());
+
       double end = timeInMicroSeconds();
       if (iters > 10)
         printf("%lf\n",end-start);
@@ -462,15 +477,15 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], handle1.iter);
       handle1.producerOrConsumer_ = false;
       handle2.producerOrConsumer_ = true;
-      // CUDA_CHECK(cudaDeviceSynchronize());
       selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, true><<<problem_size1.m(), 512, 0, streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
-                                                                 (half*)device_xq, (half*)device_xk, (half*)device_xv, 
+                                                                 (half*)device_xqkv,
                                                                  (half*)tensor_dropout.device_data(),
                                                                  1.0f,
                                                                  randStates, 
                                                                  handle1, handle2,
                                                                  rowSyncOrTileSync, (int*)&kernelExecuted[1]);
-      CUDA_CHECK(cudaDeviceSynchronize());
+      // CUDA_CHECK(cudaDeviceSynchronize());
+      // print_kernel<<<1, 32, 0, streams[1]>>>(tensor_dropout.device_data());
       handle2.producerOrConsumer_ = false;
       typename GemmTy2::Arguments args2{handle2,
         problem_size2,  // <- problem size of matrix multiplication
@@ -480,8 +495,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
         tensor_out.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
         split_k2};        // <- k-dimension split factor
-      CUDA_CHECK(cudaDeviceSynchronize());
-
+    
       waitKernel<<<1,1,0,streams[2]>>>((uint*)&kernelExecuted[1], handle2.iter);
       status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)&kernelExecuted[1], workspace2.get(), streams[2]);
       CUTLASS_CHECK(status);
@@ -720,7 +734,7 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int epochs = 40;
+  int epochs = 20;
   int warmup = 10;
 
   if (doChecking) {
@@ -804,6 +818,8 @@ int run(int argc, char* arg[]) {
   tensor_dropout.sync_device();
   tensor_out.sync_device();
 
+  // print_kernel<<<1,32>>>(tensor_xqkv.device_data());
+  
   OverlapHandle overlapHandle1(problem_size1.m(), problem_size1.n(), 1, 1);
   OverlapHandle overlapHandle2(problem_size2.m(), problem_size2.n(), 1, 1);
 

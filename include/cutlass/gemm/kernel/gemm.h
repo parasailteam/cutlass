@@ -457,8 +457,8 @@ struct Gemm {
       start_block_idx_x = shared_storage.tbInfo.block_idx_x;
       start_block_idx_y = shared_storage.tbInfo.block_idx_y;
       start_block_idx_z = shared_storage.tbInfo.block_idx_z;
-      // if (isProducerOrConsumer && params.overlap_handle.iter == 1 && threadIdx.x == 0) {
-      //   printf("%d %d %d\n", start_block_idx_x, start_block_idx_y, start_block_idx_z);
+      // if (!isProducerOrConsumer && params.overlap_handle.iter == 1 && threadIdx.x == 0) {
+      //   printf("%d %d %d %d\n", start_block_idx_x, start_block_idx_y, start_block_idx_z, rowSyncOrTileSync);
       // }
     } else {
       start_block_idx_y = blockIdx.y;
@@ -692,7 +692,7 @@ struct Gemm {
         // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1)
         if (rowSyncOrTileSync) {
           //Row sync
-          params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1);
+          params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1, block_idx_x, block_idx_y);
         } else {
           //Tile sync
           params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, 1);

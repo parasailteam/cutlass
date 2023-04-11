@@ -422,7 +422,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                                                       (half*)device_xqkv,
                                                       (half*)tensor_dropout.device_data(), 
                                                       1.0f, randStates, handle1, handle1, false, NULL);
-      // status = gemm_op2(args2, false, workspace2.get(), streams[0]);
+      status = gemm_op2(args2, false, workspace2.get(), streams[0]);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
@@ -497,7 +497,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
         split_k2};        // <- k-dimension split factor
     
       waitKernel<<<1,1,0,streams[2]>>>((uint*)&kernelExecuted[1], handle2.iter);
-      // status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)&kernelExecuted[1], workspace2.get(), streams[2]);
+      status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)&kernelExecuted[1], workspace2.get(), streams[2]);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
@@ -821,7 +821,7 @@ int run(int argc, char* arg[]) {
   // print_kernel<<<1,32>>>(tensor_xqkv.device_data());
   
   OverlapHandle overlapHandle1(problem_size1.m(), problem_size1.n(), 1, 1);
-  OverlapHandle overlapHandle2(problem_size2.m(), problem_size2.n(), 1, 1);
+  OverlapHandle overlapHandle2(problem_size1.m(), problem_size1.n()/3, 1, 1);
 
   int* kernelExecuted;
   CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int) * 128));

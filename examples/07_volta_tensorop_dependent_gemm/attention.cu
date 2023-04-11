@@ -124,88 +124,88 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 #include "common.h"
 
 
-template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, bool enableOverlap>
+template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, int RowTile, bool enableOverlap>
 __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
                                               T* XQKV, T* out, float p,
                                               curandState* randStates,
                                               OverlapHandle handle1, OverlapHandle handle2, bool rowSyncOrTileSync, int* kernelExecuted) {
-  __shared__ half xqkRows[2048];
-  int ROW = blockIdx.x;
+  __shared__ half xqkRows[1536];
   if (enableOverlap && blockIdx.x == 0 && threadIdx.x == 0) {
     *kernelExecuted = handle2.iter;
   }
-  if (ROW >= M) return;
   __shared__ AT sum;
   int linearThreadId = blockIdx.x * blockDim.x + threadIdx.x;
   curandState* localRandState = &randStates[linearThreadId];
   // __shared__ shRandStates[sizeof(curandState) * NTHREADS];
-
-  if (threadIdx.x == 0) {
-    sum = 0;
-  }
-  int tileM = blockIdx.x/TileM;
-  if (enableOverlap && rowSyncOrTileSync) {
-    // if (threadIdx.x == 0) printf("TileM %d TileN %d\n", TileM, TileN);
-    handle1.waitOnTile(tileM, 0, 0, (N*3)/TileN);
-  }
-
-  AT threadSum = (AT)0.0f;
-
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    if (enableOverlap) {
-      if (!rowSyncOrTileSync) {
-        handle1.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
-      }
-    }
-    T xq = XQKV[ROW * 3 * N + COL];
-    if (enableOverlap) {
-      if (rowSyncOrTileSync) {
-
-      } else {
-        handle1.waitOnTile(tileM, N/TileN + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
-      }
-    }
-    T xk = XQKV[ROW * 3 * N + (COL + N)];
-    // if (enableOverlap) {
-    //   handle.waitOnTiles();
-    // }
-    T xqk = xq * xk;
-    threadSum += (AT)exp((AT)xqk);
-    xqkRows[COL] = xqk;
-  }
   
-  __syncthreads();
-  atomicAdd(&sum, (AT)threadSum);
-  __syncthreads();
-  // if (threadIdx.x == 0) printf("sum %f\n", sum);
-  // for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-  //   xqkRows[COL] = xqkRows[COL]/(__half)sum;
-  // }
-  // __syncthreads();
-  // if (threadIdx.x == 0 && blockIdx.x == 0) {
-  //   printf("185: %p\n", out);
-  // }
-  for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    float r = curand_uniform(localRandState);
+  for (int ROW = blockIdx.x; ROW < M; ROW += gridDim.x) {
+    if (threadIdx.x == 0) {
+      sum = 0;
+    }
+    int tileM = ROW/TileM;
+    if (enableOverlap && rowSyncOrTileSync) {
+      // if (threadIdx.x == 0) printf("TileM %d TileN %d\n", TileM, TileN);
+      handle1.waitOnTile(tileM, 0, 0, (N*3)/TileN);
+    }
+
+    AT threadSum = (AT)0.0f;
+
+    for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
+      if (enableOverlap) {
+        if (!rowSyncOrTileSync) {
+          handle1.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+        }
+      }
+      T xq = XQKV[ROW * 3 * N + COL];
+      if (enableOverlap) {
+        if (rowSyncOrTileSync) {
+
+        } else {
+          handle1.waitOnTile(tileM, N/TileN + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+        }
+      }
+      T xk = XQKV[ROW * 3 * N + (COL + N)];
+      // if (enableOverlap) {
+      //   handle.waitOnTiles();
+      // }
+      T xqk = xq * xk;
+      threadSum += (AT)exp((AT)xqk);
+      xqkRows[COL] = xqk;
+    }
+    
+    __syncthreads();
+    atomicAdd(&sum, (AT)threadSum);
+    __syncthreads();
+    // if (threadIdx.x == 0) printf("sum %f\n", sum);
+    // for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
+    //   xqkRows[COL] = xqkRows[COL]/(__half)sum;
+    // }
+    // __syncthreads();
+    // if (threadIdx.x == 0 && blockIdx.x == 0) {
+    //   printf("185: %p\n", out);
+    // }
+    for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
+      float r = curand_uniform(localRandState);
+      if (enableOverlap) {
+        if (rowSyncOrTileSync) {
+
+        } else {
+          handle1.waitOnTile(tileM, N/TileN*2 + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+        }
+      }
+      __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * (float)XQKV[ROW* 3 * N + (COL + 2 * N)]))/sum) : (__half)0.0f;
+      // if (COL == 0 && blockIdx.x < 8) {
+      //   printf("199: %f %f %f %f %f\n", r, p, (float)v, (float)xqkRows[COL], (float)XQKV[ROW*N + COL]);
+      // }
+      out[ROW * N + COL] = v;
+    }
+
     if (enableOverlap) {
       if (rowSyncOrTileSync) {
-
+        handle2.setRowStatus(tileM, 0, 0, 1);
       } else {
-        handle1.waitOnTile(tileM, N/TileN*2 + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+        
       }
-    }
-    __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * (float)XQKV[ROW* 3 * N + (COL + 2 * N)]))/sum) : (__half)0.0f;
-    // if (COL == 0 && blockIdx.x < 8) {
-    //   printf("199: %f %f %f %f %f\n", r, p, (float)v, (float)xqkRows[COL], (float)XQKV[ROW*N + COL]);
-    // }
-    out[ROW * N + COL] = v;
-  }
-
-  if (enableOverlap) {
-    if (rowSyncOrTileSync) {
-      handle2.setRowStatus(tileM, 0, 0, 1);
-    } else {
-      
     }
   }
 }
@@ -417,12 +417,12 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
 
       handle1.producerOrConsumer_ = false;
       
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, false>
-        <<<problem_size1.m(), 512, 0, streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
-                                                    (half*)device_xqkv,
-                                                    (half*)tensor_dropout.device_data(), 
-                                                    1.0f, randStates, handle1, handle1, false, NULL);
-      status = gemm_op2(args2, false, workspace2.get(), streams[0]);
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 8, false>
+        <<<problem_size1.m()/8, 512, 0, streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
+                                                      (half*)device_xqkv,
+                                                      (half*)tensor_dropout.device_data(), 
+                                                      1.0f, randStates, handle1, handle1, false, NULL);
+      // status = gemm_op2(args2, false, workspace2.get(), streams[0]);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
@@ -477,7 +477,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], handle1.iter);
       handle1.producerOrConsumer_ = false;
       handle2.producerOrConsumer_ = true;
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, true><<<problem_size1.m(), 512, 0, streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 8, true><<<problem_size1.m()/8, 512, 0, streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                                  (half*)device_xqkv,
                                                                  (half*)tensor_dropout.device_data(),
                                                                  1.0f,
@@ -497,7 +497,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
         split_k2};        // <- k-dimension split factor
     
       waitKernel<<<1,1,0,streams[2]>>>((uint*)&kernelExecuted[1], handle2.iter);
-      status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)&kernelExecuted[1], workspace2.get(), streams[2]);
+      // status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)&kernelExecuted[1], workspace2.get(), streams[2]);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {
@@ -734,8 +734,8 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int epochs = 20;
-  int warmup = 10;
+  int epochs = 30;
+  int warmup = 20;
 
   if (doChecking) {
     result = host_attention(problem_size1, problem_size2, alpha, beta, 

@@ -124,7 +124,7 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 #include "common.h"
 
 
-template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, int RowTile, bool enableOverlap>
+template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, uint RowTile, bool enableOverlap>
 __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
                                               T* XQKV, T* out, float p,
                                               curandState* randStates,
@@ -133,19 +133,22 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   if (enableOverlap && blockIdx.x == 0 && threadIdx.x == 0) {
     *kernelExecuted = handle2.iter;
   }
+  __syncwarp();
   __shared__ AT sum;
   int linearThreadId = blockIdx.x * blockDim.x + threadIdx.x;
   curandState* localRandState = &randStates[linearThreadId];
   // __shared__ shRandStates[sizeof(curandState) * NTHREADS];
-  
-  for (int ROW = blockIdx.x; ROW < M; ROW += gridDim.x) {
+  uint ROW = blockIdx.x * RowTile;
+  const uint tileM = ROW/TileM;
+  if (enableOverlap && rowSyncOrTileSync) {
+    // if (threadIdx.x == 0 && tileM == 0) printf("TileM %d TileN %d ROW %d\n", TileM, TileN, ROW);
+    handle1.waitOnTile(tileM, 0, 0, (N*3)/TileN);
+    // if (tileM < M/TileM)
+    //   handle1.waitOnTile(tileM + 1, 0, 0, (N*3)/TileN);
+  }
+  for (uint ti = 0; ti < RowTile; ti++) {
     if (threadIdx.x == 0) {
       sum = 0;
-    }
-    int tileM = ROW/TileM;
-    if (enableOverlap && rowSyncOrTileSync) {
-      // if (threadIdx.x == 0) printf("TileM %d TileN %d\n", TileM, TileN);
-      handle1.waitOnTile(tileM, 0, 0, (N*3)/TileN);
     }
 
     AT threadSum = (AT)0.0f;
@@ -172,7 +175,6 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       threadSum += (AT)exp((AT)xqk);
       xqkRows[COL] = xqk;
     }
-    
     __syncthreads();
     atomicAdd(&sum, (AT)threadSum);
     __syncthreads();
@@ -199,13 +201,17 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       // }
       out[ROW * N + COL] = v;
     }
+    __syncthreads();
 
-    if (enableOverlap) {
-      if (rowSyncOrTileSync) {
-        handle2.setRowStatus(tileM, 0, 0, 1);
-      } else {
-        
-      }
+    ROW++;
+  }
+
+  if (enableOverlap) {
+    if (rowSyncOrTileSync) {
+      // tileM = ROW/TileM;
+      handle2.setRowStatus(tileM, 0, 0, RowTile);
+    } else {
+      
     }
   }
 }

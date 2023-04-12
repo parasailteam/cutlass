@@ -509,6 +509,7 @@ struct Gemm {
               if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
                 params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN * params.grid_tiled_shape.k());
               else
+                // #error "fix this"
                 params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, Mma::Shape::kM);//params.overlap_handle.ySize/Mma::Shape::kN);
             }
           // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);

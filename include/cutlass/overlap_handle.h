@@ -34,7 +34,7 @@ struct OverlapHandle {
   uint zGridDim;
 
   uint* tileStatusMap;
-  uint expectedInputStatusVal;
+  uint waitValue;
   uint iter;
   bool enable_;
 
@@ -49,9 +49,9 @@ struct OverlapHandle {
   DEVICE_FUNC HOST_FUNC OverlapHandle() : enable_(false), iter(0), xGridDim(0), yGridDim(0), zGridDim(0) {}
 
   DEVICE_FUNC HOST_FUNC OverlapHandle(uint xSize_, uint ySize_, uint zSize_, 
-                                      uint expectedInputStatusVal_) : 
+                                      uint waitValue_) : 
     xSize(xSize_), ySize(ySize_), zSize(zSize_), 
-    expectedInputStatusVal(expectedInputStatusVal_),
+    waitValue(waitValue_),
     enable_(true),
     producerOrConsumer_(false), iter(0)
   {}
@@ -114,6 +114,18 @@ struct OverlapHandle {
       while(waitBuffer[linearTileIdx] < iter * expectedInputStatusVal);
     }
     // if (expectedInputStatusVal == 2) printf("114: threadIdx.x %d %d\n", threadIdx.x, waitBuffer[linearTileIdx]);
+    __syncthreads();
+  }
+
+  DEVICE_FUNC void waitOnTilesWithSyncValue(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint numTiles) {
+    if (threadIdx.x < numTiles) {
+      volatile uint* waitBuffer = tileStatusMap;
+
+      uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
+      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d\n", linearTileIdx, waitBuffer[linearTileIdx], iter, expectedInputStatusVal);
+      while(waitBuffer[linearTileIdx + threadIdx.x] < iter * waitValue);
+    }
+
     __syncthreads();
   }
 

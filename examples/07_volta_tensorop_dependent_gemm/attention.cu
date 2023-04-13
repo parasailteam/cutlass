@@ -142,7 +142,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   const uint tileM = ROW/TileM;
   if (enableOverlap && rowSyncOrTileSync) {
     // if (threadIdx.x == 0 && tileM == 0) printf("TileM %d TileN %d ROW %d\n", TileM, TileN, ROW);
-    handle1.waitOnTile(tileM, 0, 0, (N*3)/TileN);
+    handle1.waitOnTilesWithSyncValue(tileM, 0, 0, 1);
     // if (tileM < M/TileM)
     //   handle1.waitOnTile(tileM + 1, 0, 0, (N*3)/TileN);
   }
@@ -826,8 +826,8 @@ int run(int argc, char* arg[]) {
 
   // print_kernel<<<1,32>>>(tensor_xqkv.device_data());
   
-  OverlapHandle overlapHandle1(problem_size1.m(), problem_size1.n(), 1, 1);
-  OverlapHandle overlapHandle2(problem_size1.m(), problem_size1.n()/3, 1, 1);
+  OverlapHandle overlapHandle1(problem_size1.m(), problem_size1.n(), 1, problem_size1.n()/ShapeMMAThreadBlock::kN);
+  OverlapHandle overlapHandle2(problem_size1.m(), problem_size1.n()/3, 1, ShapeMMAThreadBlock::kM);
 
   int* kernelExecuted;
   CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int) * 128));

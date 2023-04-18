@@ -409,6 +409,9 @@ struct Gemm {
     int totalTBs = params.grid_tiled_shape.m()*params.grid_tiled_shape.n()*params.grid_tiled_shape.k();
     if (threadIdx.x == 0) {
       if (isProducerOrConsumer) {
+        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
+          *kernelAllocated = params.overlap_handle.iter;
+        }
         shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y*gridDim.z;
         if (true) { //if (shared_storage.tbInfo.linear_id < totalTBs) {
           shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
@@ -433,10 +436,6 @@ struct Gemm {
             shared_storage.tbInfo.block_idx_y = params.grid_tiled_shape.n() + 1;
           }
         }
-        
-        if (shared_storage.tbInfo.linear_id == 0) {
-          *kernelAllocated = params.overlap_handle.iter;
-        } 
       } else {
         // printf("441: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
         shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numConsumerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y * gridDim.z;
@@ -507,7 +506,7 @@ struct Gemm {
               // if (threadIdx.x == 0 && blockIdx.x == 0)
               //   printf("508: %d\n", params.overlap_handle.ySize/Mma::Shape::kN);
               if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN * params.grid_tiled_shape.k());
+                params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN);
               else
                 // #error "fix this"
                 params.overlap_handle.waitOnTilesWithSyncValue(block_idx_x, 0, 0, 1);//params.overlap_handle.ySize/Mma::Shape::kN);

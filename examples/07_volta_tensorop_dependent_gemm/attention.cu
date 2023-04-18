@@ -129,7 +129,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
                                               T* XQKV, T* out, float p,
                                               curandState* randStates,
                                               OverlapHandle handle1, OverlapHandle handle2, bool rowSyncOrTileSync, int* kernelExecuted) {
-  __shared__ half xqkRows[1536];
+  extern __shared__ half xqkRows[];
   if (enableOverlap && blockIdx.x == 0 && threadIdx.x == 0) {
     *kernelExecuted = handle2.iter;
   }
@@ -424,7 +424,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       handle1.producerOrConsumer_ = false;
       
       selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 8, false>
-        <<<problem_size1.m()/8, 512, 0, streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
+        <<<problem_size1.m()/8, 512, problem_size1.n()/3 * sizeof(half), streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                       (half*)device_xqkv,
                                                       (half*)tensor_dropout.device_data(), 
                                                       1.0f, randStates, handle1, handle1, false, NULL);
@@ -483,7 +483,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], handle1.iter);
       handle1.producerOrConsumer_ = false;
       handle2.producerOrConsumer_ = true;
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 8, true><<<problem_size1.m()/8, 512, 0, streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 8, true><<<problem_size1.m()/8, 512, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                                  (half*)device_xqkv,
                                                                  (half*)tensor_dropout.device_data(),
                                                                  1.0f,
@@ -777,7 +777,7 @@ int run(int argc, char* arg[]) {
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, baselineHandle, streams, event, randStates, NULL, false, baselineTime, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
-
+    printf("START: baseline\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
     result = runAttention<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, baselineHandle, baselineHandle, streams, event, randStates, NULL, false, baselineTime, epochs);
@@ -790,7 +790,7 @@ int run(int argc, char* arg[]) {
     // CUDA_CHECK(cudaStreamSynchronize(streams));
     // double endTime = convertTimeValToDouble(getTimeOfDay());
     // baselineTime = endTime - startTime;
-    printf("cutlass-baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
+    printf("END: baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
   }
 
   #if 0
@@ -827,7 +827,9 @@ int run(int argc, char* arg[]) {
   // print_kernel<<<1,32>>>(tensor_xqkv.device_data());
   
   OverlapHandle overlapHandle1(problem_size1.m(), problem_size1.n(), 1, problem_size1.n()/ShapeMMAThreadBlock::kN);
+  overlapHandle1.tileBatch = 1;
   OverlapHandle overlapHandle2(problem_size1.m(), problem_size1.n()/3, 1, ShapeMMAThreadBlock::kM);
+  overlapHandle2.tileBatch = 1;
 
   int* kernelExecuted;
   CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int) * 128));
@@ -974,9 +976,9 @@ int run(int argc, char* arg[]) {
   int totalBlocks = 0;
   // const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
   printf("Number of TBs: %d\n", gridDim.x*gridDim.y*gridDim.z);
-  if ((gridDim.x*gridDim.y*gridDim.z)%80 == 0) {
+  if ((gridDim.x*gridDim.y*gridDim.z)%160 == 0) {
     printf("Invalid\n");
-    return 0;
+    return -1;
   }
   // printf("startRemainingBlockId %d to %d\n", startRemainingBlockId, gridDim.x*gridDim.y);
   // for (int x = 0; x < gridDim.x; x++) {
@@ -1014,12 +1016,11 @@ int run(int argc, char* arg[]) {
     tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, overlapHandle1, overlapHandle2, streams, event, randStates,kernelExecuted, rowSyncOrTileSync, overlapTime, warmup);
 
   CUDA_CHECK(cudaDeviceSynchronize());
-  
-  printf("728:\n");
+  printf("START: overlapped\n");
   result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
     tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, overlapHandle1, overlapHandle2, streams, event, randStates, kernelExecuted, rowSyncOrTileSync, overlapTime, epochs);
   
-  printf("overlapped elapsedtime %lf microseconds\n", overlapTime/(float)epochs);
+  printf("END: overlapped elapsedtime %lf microseconds\n", overlapTime/(float)epochs);
   }
 
   return 0;

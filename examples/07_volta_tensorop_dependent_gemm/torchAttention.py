@@ -33,11 +33,11 @@ for i in range(epochs):
     XK = XQKV[:,N:2*N]
     XV = XQKV[:,2*N:3*N]
     
-    XQDotXK = XQ*XK
-    softmax = torch.softmax(XQDotXK, dim = 0)
-    softmaxDotXV = softmax*XV
-    dropout = torch.dropout(softmaxDotXV, 1.0, False)
-    out = dropout@W2
+    # XQDotXK = XQ*XK
+    # softmax = torch.softmax(XQDotXK, dim = 0)
+    # softmaxDotXV = softmax*XV
+    # dropout = torch.dropout(softmaxDotXV, 1.0, False)
+    out = XQ@W2
 torch.cuda.synchronize()
 end = time.time_ns()
 

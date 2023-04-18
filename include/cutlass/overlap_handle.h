@@ -37,6 +37,7 @@ struct OverlapHandle {
   uint waitValue;
   uint iter;
   bool enable_;
+  uint tileBatch; 
 
   int* isBlockRemaining;
   int* numProducerTBs;
@@ -46,14 +47,14 @@ struct OverlapHandle {
   //True for producer and false for consumer
   bool producerOrConsumer_;
 
-  DEVICE_FUNC HOST_FUNC OverlapHandle() : enable_(false), iter(0), xGridDim(0), yGridDim(0), zGridDim(0) {}
+  DEVICE_FUNC HOST_FUNC OverlapHandle() : enable_(false), iter(0), xGridDim(0), yGridDim(0), zGridDim(0), tileBatch(1) {}
 
   DEVICE_FUNC HOST_FUNC OverlapHandle(uint xSize_, uint ySize_, uint zSize_, 
                                       uint waitValue_) : 
     xSize(xSize_), ySize(ySize_), zSize(zSize_), 
     waitValue(waitValue_),
     enable_(true),
-    producerOrConsumer_(false), iter(0)
+    producerOrConsumer_(false), iter(0), tileBatch(1)
   {}
 
   void setGridDims(uint xGridDim_, uint yGridDim_, uint zGridDim_) {

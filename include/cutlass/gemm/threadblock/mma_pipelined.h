@@ -355,7 +355,7 @@ public:
     if (!isRowSyncOrTileSync) {
       int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
       if (startK%Shape::kN == 0 && tb_offset_B.column() == 0)
-        overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, 1);
+        overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
     }
     iterator_A.load(tb_frag_A);
     iterator_B.load(tb_frag_B);
@@ -452,7 +452,7 @@ public:
           if (!isRowSyncOrTileSync) {
             int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
             if (startK%Shape::kN == 0)
-              overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, 1);
+              overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
           }
           iterator_A.load(tb_frag_A);
           iterator_B.load(tb_frag_B);

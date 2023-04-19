@@ -157,9 +157,25 @@ struct OverlapHandle {
     __syncwarp();
   }
 
-  DEVICE_FUNC void setTileStatus(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus) {
+  DEVICE_FUNC void setTiles(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus, int threadid = 0) {
     __syncthreads();
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+    if (threadIdx.x == threadid && threadIdx.y == 0 && threadIdx.z == 0) {
+      int xMaxTiles = xSize/xTile;
+      int yMaxTiles = ySize/yTile;
+      int zMaxTiles = zSize/zTile;
+      uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
+      // uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
+      // printf("tileStatusMap[%d] %d xTileIdx %d yTileIdx %d tileStatus %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, tileStatus*iter);
+      // atomicAdd(&tileStatusMap[linearTileIdx], 1);
+      atomicAdd(&tileStatusMap[linearTileIdx], tileStatus);
+    }
+
+    __syncwarp();
+  }
+
+  DEVICE_FUNC void setTileStatus(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus, int threadid = 0) {
+    __syncthreads();
+    if (threadIdx.x == threadid && threadIdx.y == 0 && threadIdx.z == 0) {
       int xMaxTiles = xSize/xTile;
       int yMaxTiles = ySize/yTile;
       int zMaxTiles = zSize/zTile;

@@ -362,7 +362,7 @@ public:
 
   /// Determines whether the GEMM can execute the given problem.
   static Status can_implement(Arguments const &args) {
-    printf("365: kSplitKSerial %d args.split_k_slices %d\n", kSplitKSerial, args.split_k_slices);
+    // printf("365: kSplitKSerial %d args.split_k_slices %d\n", kSplitKSerial, args.split_k_slices);
     if (!kSplitKSerial && args.split_k_slices > 1) {
       return Status::kErrorInvalidProblem;
     }

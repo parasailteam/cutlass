@@ -8,6 +8,14 @@ minimumTimes = {}
 speedup = {}
 maxspeedup = {}
 
+# Dictionary of tile sizes for each M
+tiles = {
+  #RowSync
+  2048: [256, 128, 32, 128, 64, 32],
+  1024: [128, 128, 32, 64, 64, 32],
+
+  #TileSync
+}
 #SelfAttention
 for h in [8192, 10240, 12288, 16384, 20480, 25600]:
   m = 2048

@@ -144,8 +144,8 @@ struct OverlapHandle {
 
   DEVICE_FUNC void setRowStatus(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus, int blockIdx_x = 0, int blockIdx_y = 0) {
     __syncthreads();
-    // __threadfence_system();
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+      __threadfence_system();
       // uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
       uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
       atomicAdd(&tileStatusMap[linearTileIdx], tileStatus);
@@ -160,6 +160,7 @@ struct OverlapHandle {
   DEVICE_FUNC void setTiles(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus, int threadid = 0) {
     __syncthreads();
     if (threadIdx.x == threadid && threadIdx.y == 0 && threadIdx.z == 0) {
+      __threadfence_system();
       int xMaxTiles = xSize/xTile;
       int yMaxTiles = ySize/yTile;
       int zMaxTiles = zSize/zTile;
@@ -176,6 +177,7 @@ struct OverlapHandle {
   DEVICE_FUNC void setTileStatus(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint tileStatus, int threadid = 0) {
     __syncthreads();
     if (threadIdx.x == threadid && threadIdx.y == 0 && threadIdx.z == 0) {
+      __threadfence_system();
       int xMaxTiles = xSize/xTile;
       int yMaxTiles = ySize/yTile;
       int zMaxTiles = zSize/zTile;

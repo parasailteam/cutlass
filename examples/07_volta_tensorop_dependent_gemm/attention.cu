@@ -402,10 +402,9 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
     status = gemm_op2.initialize(args2, workspace2.get());
     CUTLASS_CHECK(status);
   }
-
+  const int SoftmaxRowTile = 1;
   execTime = 0;
   if (!handle1.enable()) {
-    printf("440\n");
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
       handle1.iter += 1;
@@ -429,17 +428,19 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       }
       CUDA_CHECK(cudaStreamSynchronize(streams[0]));
       double middle1 = timeInMicroSeconds();
-      matmul1Time += middle1-start;
+      double iterMatMul1 = middle1-start;
+      matmul1Time += iterMatMul1;
       handle1.producerOrConsumer_ = false;
       
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 8, false>
-        <<<DIVUP(problem_size1.m(), 8), 512, problem_size1.n()/3 * sizeof(half), streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, false>
+        <<<DIVUP(problem_size1.m(), SoftmaxRowTile), 512, problem_size1.n()/3 * sizeof(half), streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                       (half*)device_xqkv,
                                                       (half*)tensor_dropout.device_data(), 
                                                       1.0f, randStates, handle1, handle1, false, NULL);
       CUDA_CHECK(cudaStreamSynchronize(streams[0]));
       double middle2 = timeInMicroSeconds();
-      softmaxTime += middle2-middle1;
+      double iterSoftmax = middle2-middle1;
+      softmaxTime += iterSoftmax;
       status = gemm_op2(args2, false, workspace2.get(), streams[0]);
       CUTLASS_CHECK(status);
 
@@ -448,10 +449,11 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       }
       CUDA_CHECK(cudaDeviceSynchronize());
       double middle3 = timeInMicroSeconds();
-      matmul2Time += middle3-middle2;
+      double iterMatmul2 = middle3-middle2;
+      matmul2Time += iterMatmul2;
       double end = timeInMicroSeconds();
       if (iters > 10)
-        printf("%lf\n",end-start);
+        printf("{\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf}\n",end-start,iterMatMul1,iterSoftmax, iterMatmul2);
       execTime += end-start;
     }
   } else {
@@ -497,7 +499,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       handle1.producerOrConsumer_ = false;
       handle2.producerOrConsumer_ = true;
       // printf("498:\n");
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 8, true><<<DIVUP(problem_size1.m(), 8), 512, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, true><<<DIVUP(problem_size1.m(), SoftmaxRowTile), 512, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                                  (half*)device_xqkv,
                                                                  (half*)tensor_dropout.device_data(),
                                                                  1.0f,
@@ -529,7 +531,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
       double end = timeInMicroSeconds();
       if (iters > 10)
-        printf("%lf\n",end-start);
+        printf("{\"Total\": %lf, \"matmul1Time\": -1, \"softmaxTime\": -1, \"matmul2Time\": -1}\n",end-start);
       execTime += end-start;
       matmul1Time = -1;
       softmaxTime = -1;
@@ -817,7 +819,7 @@ int run(int argc, char* arg[]) {
     // CUDA_CHECK(cudaStreamSynchronize(streams));
     // double endTime = convertTimeValToDouble(getTimeOfDay());
     // baselineTime = endTime - startTime;
-    printf("END-BASELINE: {Total: %lf, matmul1Time: %lf, softmaxTime: %lf, matmul2Time: %lf} microseconds\n", baselineTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
+    printf("END-BASELINE: {\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf} microseconds\n", baselineTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
   }
 
   #if 0
@@ -1052,7 +1054,7 @@ int run(int argc, char* arg[]) {
   result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
     tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, overlapHandle1, overlapHandle2, streams, event, randStates, kernelExecuted, rowSyncOrTileSync, overlapTime, matmul1Time, softmaxTime, matmul2Time, epochs);
   
-  printf("END-OVERLAPPED: {Total: %lf, matmul1Time: %lf, softmaxTime: %lf, matmul2Time: %lf} microseconds\n", overlapTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
+  printf("END-OVERLAPPED: {\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf} microseconds\n", overlapTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
   }
 
   return 0;

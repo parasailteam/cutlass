@@ -674,7 +674,7 @@ struct Gemm {
           if (rowSyncOrTileSync) //Row sync
             params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1);
           else {//Tile sync
-            params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, 1);
+            params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, params.overlap_handle.waitValue);
           }
         }
         // The final threadblock resets the semaphore for subsequent grids.

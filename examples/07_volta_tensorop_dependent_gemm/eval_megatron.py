@@ -258,8 +258,8 @@ elif attention_or_mlp == "mlp":
       25600: {"split_ks":  [4,1]}}
   }
 
-for h in [6144, 8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
-  for m in [256]: #[256, 512, 1024, 2048]: #1,2,4,8,16,32,64,128, 256, 
+for h in [6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
+  for m in [256]: #[256, 512, 1024, 2048]: # 256, [1,2,4,8,16,32,64,128]:
     if attention_or_mlp == "attention":
       (s, o) = subprocess.getstatusoutput(f"python3 torchAttention.py {m} {int(h/8)} {h} {h}")
     else:
@@ -271,7 +271,7 @@ for h in [6144, 8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
       ctime = o
       cublasTimes[m] = ctime
 
-    for syncPolicy in ['Row-Sync', 'Tile-Sync']:
+    for syncPolicy in ['Row-Sync','Tile-Sync']:
       if attention_or_mlp == "mlp":
         command = f"./mlp {m} {int(4*h/8)} {h} {h}"
       else:

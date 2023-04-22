@@ -357,7 +357,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
       // CUDA_CHECK(cudaDeviceSynchronize());
-      //waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
+      waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
       status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)kernelExecuted, workspace2.get(), consumer_stream);
       CUTLASS_CHECK(status);
 
@@ -832,10 +832,10 @@ int run(int argc, char* arg[]) {
   int totalBlocks = 0;
   // const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
   printf("Number of TBs: %d\n", gridDim.x*gridDim.y*gridDim.z);
-  if ((gridDim.x*gridDim.y*gridDim.z)%80 == 0) {
-    printf("Invalid\n");
-    return 0;
-  }
+  // if ((gridDim.x*gridDim.y*gridDim.z)%80 == 0) {
+  //   printf("Invalid\n");
+  //   return 0;
+  // }
   // printf("startRemainingBlockId %d to %d\n", startRemainingBlockId, gridDim.x*gridDim.y);
   // for (int x = 0; x < gridDim.x; x++) {
   //   for (int y = 0; y < gridDim.y; y++) {

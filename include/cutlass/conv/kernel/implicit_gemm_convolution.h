@@ -49,6 +49,8 @@
 #include "cutlass/conv/conv3d_problem_size.h"
 #include "cutlass/epilogue/threadblock/output_iterator_parameter.h"
 
+#include "cutlass/overlap_handle.h"
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -147,7 +149,7 @@ struct ImplicitGemmConvolution {
     //
     // Data members
     //
-
+    OverlapHandle overlap_handle;
     ConvProblemSize problem_size;
     TensorRefA ref_A;
     TensorRefB ref_B;
@@ -172,6 +174,7 @@ struct ImplicitGemmConvolution {
 
     CUTLASS_HOST_DEVICE
     Arguments(
+      OverlapHandle& overlap_handle,
       ConvProblemSize const & problem_size,
       TensorRefA const & ref_A,
       TensorRefB const & ref_B,
@@ -180,6 +183,7 @@ struct ImplicitGemmConvolution {
       typename EpilogueOutputOp::Params const & output_op,
       SplitKMode const & split_k_mode = SplitKMode::kSerial
     ):
+      overlap_handle(overlap_handle),
       problem_size(problem_size),
       ref_A(ref_A),
       ref_B(ref_B),
@@ -195,6 +199,7 @@ struct ImplicitGemmConvolution {
 
   /// Parameters structure
   struct Params {
+    OverlapHandle overlap_handle;
     ConvProblemSize problem_size;
     cutlass::gemm::GemmCoord grid_tiled_shape;
     gemm::GemmCoord implicit_gemm_problem_size;
@@ -227,6 +232,7 @@ struct ImplicitGemmConvolution {
       Arguments const &args,
       int *semaphore = nullptr
     ):
+      overlap_handle(args.overlap_handle),
       problem_size(args.problem_size),
       implicit_gemm_problem_size(cutlass::conv::implicit_gemm_problem_size(kConvolutionalOperator, args.problem_size)),
       iterator_A(Mma::IteratorA::getParams(args.problem_size, args.ref_A.layout())),
@@ -444,6 +450,200 @@ struct ImplicitGemmConvolution {
       
       semaphore.release(lock);
     }
+  }
+
+  CUTLASS_DEVICE
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage,
+            bool isProducerOrConsumer, bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
+
+    // Compute threadblock location
+    ThreadblockSwizzle threadblock_swizzle;
+
+    cutlass::gemm::GemmCoord threadblock_tile_idx =
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+    
+    uint block_idx_y = blockIdx.y;
+    uint block_idx_x = blockIdx.x;
+
+    // Early exit if CTA is out of range
+    if (params.grid_tiled_shape.m() <= threadblock_tile_idx.m() ||
+      params.grid_tiled_shape.n() <= threadblock_tile_idx.n()) {
+
+      return;
+    }
+
+    // Compute position within threadblock
+    int thread_idx = threadIdx.x;
+    int iterator_A_column_offset = threadblock_tile_idx.k() * Mma::Shape::kK;
+    if (kGroupMode != GroupMode::kNone) {
+      if (kGroupMode != GroupMode::kDepthwise) {
+        int k_per_group = params.problem_size.K / params.problem_size.groups;
+        int group_idx = threadblock_tile_idx.n() * Mma::Shape::kN / k_per_group;
+        int channels_per_group = params.problem_size.C / params.problem_size.groups;
+        iterator_A_column_offset += group_idx * channels_per_group;
+      } else {
+        iterator_A_column_offset += threadblock_tile_idx.n() * Mma::Shape::kN;
+      }
+    } 
+
+    if (isProducerOrConsumer == false) {
+      // Wait for tile of this thread block to be processed by other kernel
+      if (rowSyncOrTileSync) {
+        //Row Sync
+        if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1)
+          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN);
+        else
+          // #error "fix this"
+          params.overlap_handle.waitOnTilesWithSyncValue(block_idx_x, 0, 0, 1);//params.overlap_handle.ySize/Mma::Shape::kN);
+      }
+    }
+
+    // Construct iterators to A and B operands
+    typename Mma::IteratorA iterator_A(
+      params.iterator_A,
+      params.problem_size,
+      params.ptr_A,
+      thread_idx,
+      MatrixCoord(
+        threadblock_tile_idx.m() * Mma::Shape::kM,
+        iterator_A_column_offset
+      )
+    );
+    
+    typename Mma::IteratorB iterator_B(
+      params.iterator_B,
+      params.problem_size,
+      params.ptr_B,
+      thread_idx,
+      MatrixCoord(
+        threadblock_tile_idx.k() * Mma::Shape::kK,
+        threadblock_tile_idx.n() * Mma::Shape::kN
+      )
+    );
+
+    // Broadcast the warp_id computed by lane 0 to ensure dependent code
+    // is compiled as warp-uniform.
+    int warp_idx = __shfl_sync(0xffffffff, threadIdx.x / 32, 0);
+    int lane_idx = threadIdx.x % 32;
+
+    //
+    // Main loop
+    //
+
+    // Construct thread-scoped matrix multiply
+    Mma mma(shared_storage.main_loop, thread_idx, warp_idx, lane_idx);
+
+    typename Mma::FragmentC accumulators;
+
+    accumulators.clear();
+
+    // Compute threadblock-scoped matrix multiply-add
+    mma(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.gemm_k_iterations_per_channel);
+
+    //
+    // Epilogue
+    //
+
+    EpilogueOutputOp output_op(params.output_op);
+
+    // Construct the semaphore.
+    int block_idx = threadblock_tile_idx.m() + threadblock_tile_idx.n() * params.grid_tiled_shape.m();
+
+    Semaphore semaphore(params.semaphore + block_idx, thread_idx);
+    
+    // Compute logical position within grid
+    threadblock_tile_idx =
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+
+    // If performing a reduction via split-K, fetch the initial synchronization
+    if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1) {
+        
+      // Fetch the synchronization lock initially but do not block.
+      semaphore.fetch();
+
+      // Indicate which position in a serial reduction the output operator is currently updating
+      output_op.set_k_partition(threadblock_tile_idx.k(), params.grid_tiled_shape.k());
+    }
+
+    MatrixCoord threadblock_offset(
+      threadblock_tile_idx.m() * Mma::Shape::kM,
+      threadblock_tile_idx.n() * Mma::Shape::kN
+    );
+
+    // Tile iterator writing to destination tensor
+    typename Epilogue::OutputTileIterator iterator_D(
+      params.iterator_D,
+      params.ptr_D,
+      ConvOutputIteratorParameter::extent(params.problem_size),
+      thread_idx,
+      threadblock_offset
+    );
+    
+    // Tile iterator reading from source accumulator tensor
+    typename Epilogue::OutputTileIterator iterator_C(
+      params.iterator_C,
+      params.ptr_C,
+      ConvOutputIteratorParameter::extent(params.problem_size),
+      thread_idx,
+      threadblock_offset
+    );
+
+
+    // Construct the epilogue
+    Epilogue epilogue(
+      shared_storage.epilogue, 
+      thread_idx, 
+      warp_idx, 
+      lane_idx);
+
+    // Wait on the semaphore - this latency may have been covered by iterator construction
+    if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1) {
+        
+      // For subsequent threadblocks, the source matrix is held in the 'D' tensor.
+      if (threadblock_tile_idx.k()) {
+        iterator_C = iterator_D;
+      }
+
+      semaphore.wait(threadblock_tile_idx.k());
+
+    }
+    // Each split-k-slice writes to a unique tensor location
+    else if (params.split_k_mode == SplitKMode::kParallel) {
+      iterator_D.add_pointer_offset(threadblock_tile_idx.k() * 
+        cutlass::conv::implicit_gemm_tensor_c_size(ConvOperator, params.problem_size));
+    }
+
+    // Run efficient epilogue
+    epilogue(output_op, iterator_D, accumulators, iterator_C);
+  
+    //
+    // Release the semaphore
+    //
+
+    if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1) { 
+
+      int lock = 0;
+      if (params.grid_tiled_shape.k() == threadblock_tile_idx.k() + 1) {
+
+        // The final threadblock resets the semaphore for subsequent grids.
+        lock = 0;
+      }
+      else {
+        // Otherwise, the semaphore is incremented
+        lock = threadblock_tile_idx.k() + 1;
+      }
+      
+      semaphore.release(lock);
+    }
+
+    if (isProducerOrConsumer && params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() == 1)
+      if (rowSyncOrTileSync) {
+        //Row sync
+        params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1, block_idx_x, block_idx_y);
+      } else {
+        //Tile sync
+        params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, 1);
+      }
   } 
 };
 

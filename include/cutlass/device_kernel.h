@@ -59,7 +59,7 @@ void Kernel(typename Operator::Params params) {
 
 template <typename Operator, bool rowOrTileSync>
 __global__
-void KernelOverlapProducer(typename Operator::Params params, int* kernelExecuted) {
+void KernelOverlapProducer(typename Operator::Params params, volatile uint* kernelExecuted) {
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 
@@ -73,7 +73,7 @@ void KernelOverlapProducer(typename Operator::Params params, int* kernelExecuted
 
 template <typename Operator, bool rowOrTileSync>
 __global__
-void KernelOverlapConsumer(typename Operator::Params params, int* kernelExecuted) {
+void KernelOverlapConsumer(typename Operator::Params params, volatile uint* kernelExecuted) {
   // Dynamic shared memory base pointer
   extern __shared__ int SharedStorageBase[];
 

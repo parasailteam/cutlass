@@ -111,7 +111,7 @@ public:
     if (Status::kSuccess != status) {
       return status;
     }
-
+    // printf("args.problem_size.groups %d\n", args.problem_size.groups);
     // check group conv constraint
     if (args.problem_size.groups != 1) {
       if (kGroupMode == conv::GroupMode::kNone) {
@@ -279,13 +279,12 @@ public:
     params_.ptr_D = args.ref_D.data();
     params_.output_op = args.output_op;
     params_.semaphore = static_cast<int *>(workspace);
-
+    params_.overlap_handle = args.overlap_handle;
     return Status::kSuccess;
   }
 
   /// Runs the kernel using initialized state.
   Status run(cudaStream_t stream = nullptr) {
-
 
     ThreadblockSwizzle threadblock_swizzle;
 
@@ -295,6 +294,39 @@ public:
     int smem_size = int(sizeof(typename ImplicitGemmKernel::SharedStorage));
 
     cutlass::Kernel<ImplicitGemmKernel><<<grid, block, smem_size, stream>>>(params_);
+
+    cudaError_t result = cudaGetLastError();
+
+    return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
+  }
+
+    /// Runs the kernel using initialized state.
+  Status run(bool overlap, bool isRowSyncOrTileSync, volatile uint* kernelExecuted, cudaStream_t stream = nullptr) {
+
+    ThreadblockSwizzle threadblock_swizzle;
+
+    dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+    dim3 block(32 * kWarpCount, 1, 1);
+
+    int smem_size = int(sizeof(typename ImplicitGemmKernel::SharedStorage));
+
+    if (overlap) {
+      if (params_.overlap_handle.isProducer()) {
+        if (isRowSyncOrTileSync) {
+          cutlass::KernelOverlapProducer<ImplicitGemmKernel, true><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        } else {
+          cutlass::KernelOverlapProducer<ImplicitGemmKernel, false><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        }
+      } else {
+        if (isRowSyncOrTileSync) {
+          cutlass::KernelOverlapConsumer<ImplicitGemmKernel, true><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        } else {
+          cutlass::KernelOverlapConsumer<ImplicitGemmKernel, false><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+        }
+      }
+    } else {
+      cutlass::Kernel<ImplicitGemmKernel><<<grid, block, smem_size, stream>>>(params_);
+    }
 
     cudaError_t result = cudaGetLastError();
 
@@ -316,6 +348,21 @@ public:
     
     if (status == Status::kSuccess) {
       status = run(stream);
+    }
+
+    return status;
+  }
+
+  Status operator()(
+    Arguments const &args,
+    bool overlap, bool rowSyncOrTileSync, volatile uint* kernelExecuted,
+    void *workspace = nullptr, 
+    cudaStream_t stream = nullptr) {
+    
+    Status status = initialize(args, workspace, stream);
+    
+    if (status == Status::kSuccess) {
+      status = run(overlap, rowSyncOrTileSync, kernelExecuted, stream);
     }
 
     return status;

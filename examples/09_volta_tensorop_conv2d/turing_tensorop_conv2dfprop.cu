@@ -131,6 +131,8 @@ compare if the output from CUTLASS kernel is same as the reference implicit GEMM
 #include "cutlass/gemm/device/gemm.h"
 #include "cutlass/conv/kernel/default_conv2d_fprop.h"
 #include "cutlass/conv/device/implicit_gemm_convolution.h"
+#include "cutlass/conv/conv2d_problem_size.h"
+#include "cutlass/conv/convolution.h"
 
 #include "cutlass/util/command_line.h"
 #include "cutlass/util/host_tensor.h"
@@ -145,6 +147,7 @@ compare if the output from CUTLASS kernel is same as the reference implicit GEMM
 #include "helper.h"
 #include<time.h>
 #include<sys/time.h>
+#include<overlap_handle.h>
 
 static double convertTimeValToDouble(struct timeval _time) {
   return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
@@ -461,13 +464,15 @@ struct Result {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<typename ImplicitGemm1, typename ImplicitGemm2, typename TensorA, typename TensorB, typename TensorC>
-void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options& options, 
+template<bool baselineOrOverlap, typename ImplicitGemm1, typename ImplicitGemm2, typename TensorA, typename TensorB, typename TensorC>
+void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options& options, cudaStream_t* streams, OverlapHandle& overlapHandle,
                     TensorA& tensor_x, TensorB& tensor_w1, TensorB& tensor_w2, TensorC& tensor_y1, TensorC& tensor_y2, 
+                    volatile uint* kernelExecuted,
                     double& elapsedTime, double& conv1Time, double& conv2Time, int runs) {
   // Construct ImplicitGemm::Argument structure with conv2d 
   // problem size, data pointers, and epilogue values
   typename ImplicitGemm1::Arguments args1{
+    overlapHandle,
     problem_size,
     tensor_x.device_ref(),
     tensor_w1.device_ref(),
@@ -477,6 +482,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
   };
 
   typename ImplicitGemm2::Arguments args2{
+    overlapHandle,
     problem_size,
     tensor_y1.device_ref(),
     tensor_w2.device_ref(),
@@ -491,54 +497,83 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
 
   ImplicitGemm1 implicit_gemm_op1;
   ImplicitGemm2 implicit_gemm_op2;
-  {
-    size_t workspace_size = implicit_gemm_op1.get_workspace_size(args1);
+  
+    size_t workspace_size1 = implicit_gemm_op1.get_workspace_size(args1);
 
     // Allocate workspace memory
-    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+    cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size1);
 
     auto status = implicit_gemm_op1.can_implement(args1);
     CUTLASS_CHECK(status);
 
-    status = implicit_gemm_op1.initialize(args1, workspace.get());
+    status = implicit_gemm_op1.initialize(args1, workspace1.get());
     CUTLASS_CHECK(status);
-  }
-
-  {
-    size_t workspace_size = implicit_gemm_op2.get_workspace_size(args2);
+  
+    size_t workspace_size2 = implicit_gemm_op2.get_workspace_size(args2);
 
     // Allocate workspace memory
-    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+    cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size2);
 
-    auto status = implicit_gemm_op2.can_implement(args2);
+    status = implicit_gemm_op2.can_implement(args2);
     CUTLASS_CHECK(status);
 
-    status = implicit_gemm_op2.initialize(args2, workspace.get());
+    status = implicit_gemm_op2.initialize(args2, workspace2.get());
     CUTLASS_CHECK(status);
+
+  if (baselineOrOverlap == true) {
+    for (int i = 0; i < runs; i++) {
+      double start = getCurrentTime();
+      auto status = implicit_gemm_op1(args1, workspace1.get(), streams[0]);
+
+      CUTLASS_CHECK(status);
+      cudaDeviceSynchronize();
+      double middle1 = getCurrentTime();
+      conv1Time += middle1 - start;
+      status = implicit_gemm_op2(args2, workspace2.get(), streams[0]);
+
+      CUTLASS_CHECK(status);
+      cudaDeviceSynchronize();
+      double end = getCurrentTime();
+      conv2Time += end - middle1;
+      elapsedTime += end - start;
+    }
+  } else {
+    for (int i = 0; i < runs; i++) {
+      double start = getCurrentTime();
+      args1.overlap_handle.producerOrConsumer_ = true;
+      auto status = implicit_gemm_op1(args1, true, true, kernelExecuted, workspace1.get(), streams[0]);
+
+      CUTLASS_CHECK(status);
+      cudaDeviceSynchronize();
+      args2.overlap_handle.producerOrConsumer_ = false;
+      double middle1 = getCurrentTime();
+      conv1Time += middle1 - start;
+      status = implicit_gemm_op2(args2, true, true, kernelExecuted, workspace2.get(), streams[1]);
+
+      CUTLASS_CHECK(status);
+      cudaDeviceSynchronize();
+      double end = getCurrentTime();
+      conv2Time += end - middle1;
+      elapsedTime += end - start;
+    }
   }
-
-  for (int i = 0; i < runs; i++) {
-    double start = getCurrentTime();
-    auto status = implicit_gemm_op1();
-
-    CUTLASS_CHECK(status);
-    cudaDeviceSynchronize();
-    double middle1 = getCurrentTime();
-    conv1Time += middle1 - start;
-    status = implicit_gemm_op2();
-
-    CUTLASS_CHECK(status);
-    cudaDeviceSynchronize();
-    double end = getCurrentTime();
-    conv2Time += end - middle1;
-    elapsedTime += end - start;
-  }
-
-  cudaDeviceSynchronize();
 }
 
 /// Runs one benchmark
 Result profile_convolution(Options const &options) {
+  // Check the problem size is supported or not 
+
+  int highestPriority;
+  int lowestPriority;
+
+  CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&lowestPriority, &highestPriority));
+  if (highestPriority >= lowestPriority) {
+    printf("Wrong priorites: Lowest %d highest %d\n", lowestPriority, highestPriority);
+  }
+  cudaStream_t streams[(lowestPriority - highestPriority + 1)];
+  for (int i = highestPriority; i <= lowestPriority; i++) {
+    CUDA_CHECK(cudaStreamCreateWithPriority(&streams[i - highestPriority], 0, i));
+  }
 
   Result result;
 
@@ -590,17 +625,24 @@ Result profile_convolution(Options const &options) {
 
   // Fill tensor C on host with zeros
   cutlass::reference::host::TensorFill(
-      tensor_y1.host_view());
+    tensor_y1.host_view());
+  cutlass::reference::host::TensorFill(
+    tensor_y2.host_view());
 
   // Fill tensor C for reference on host with zeros
   cutlass::reference::host::TensorFill(
     tensor_ref_y1.host_view());
-
+  cutlass::reference::host::TensorFill(
+    tensor_ref_y2.host_view());
+  
   // Copy data from host to GPU
   tensor_x.sync_device();
   tensor_w1.sync_device();
+  tensor_w2.sync_device();
   tensor_y1.sync_device();
+  tensor_y2.sync_device();
   tensor_ref_y1.sync_device();
+  tensor_ref_y2.sync_device();
 
   // mode (kCrossCorrelation or kConvolution)
   cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
@@ -622,19 +664,15 @@ Result profile_convolution(Options const &options) {
   // Optional reference check
   //
 
-  if (options.reference_check) {
-    
-
-  }
-  
   int warmup = 10;
   int epochs = 20;
   double elapsedTime = 0;
   double conv1Time = 0;
   double conv2Time = 0;
-
-  runConvolution<ImplicitGemm1, ImplicitGemm2>
-    (problem_size, options, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, 1);
+  
+  OverlapHandle baselineHandle;
+  runConvolution<true, ImplicitGemm1, ImplicitGemm2>
+    (problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, 1);
 
   if (options.reference_check) {
     std::cout << "Verification on host...\n";
@@ -708,15 +746,67 @@ Result profile_convolution(Options const &options) {
     }
   }
 
-  runConvolution<ImplicitGemm1, ImplicitGemm2>
-    (problem_size, options, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
+  runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, warmup);
   elapsedTime = 0; 
   conv1Time = 0;
   conv2Time = 0;
-  runConvolution<ImplicitGemm1, ImplicitGemm2>
-    (problem_size, options, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
+  runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, epochs);
   
   printf("Baseline {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
+  
+  auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
+  OverlapHandle overlapHandle(gemm_problem_size.m(), gemm_problem_size.n(), 1, 1);
+  if (true) 
+    overlapHandle.waitValue = overlapHandle.ySize/ThreadblockShape::kN;
+  // else
+  //   overlapHandle.waitValue =  1;
+  
+  overlapHandle.allocTileStatusMap(ThreadblockShape::kM, ThreadblockShape::kN, 1);
+  // double overlapTime = 0;
+  uint* kernelExecuted;
+  CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(uint) * 128));
+  CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(uint) * 128));
+  
+  cutlass::reference::host::TensorFill(
+    tensor_y1.host_view());
+  cutlass::reference::host::TensorFill(
+    tensor_y2.host_view());
+  
+  tensor_y1.sync_device();
+  tensor_y2.sync_device();
+      
+  runConvolution<false, ImplicitGemm1, ImplicitGemm2>
+    (problem_size, options, &streams[0], overlapHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, kernelExecuted, elapsedTime, conv1Time, conv2Time, 1);
+
+  if (options.reference_check) {
+    // Check if output from CUTLASS kernel and reference kernel are equal or not
+    tensor_y1.sync_host(); tensor_y2.sync_host();
+    bool passed = cutlass::reference::host::TensorEquals(
+      tensor_y1.host_view(),
+      tensor_ref_y1.host_view());
+
+    if (!passed) {
+      result.reference_check = cutlass::Status::kErrorInternal;
+      std::cout << "ERROR - First conv incorrect.\n";
+      return result;
+    } else {
+      result.reference_check = cutlass::Status::kSuccess;
+      std::cout << "First Passed.\n";
+    }
+
+    passed = cutlass::reference::host::TensorEquals(
+      tensor_y2.host_view(),
+      tensor_ref_y2.host_view());
+    
+    if (!passed) {
+      result.reference_check = cutlass::Status::kErrorInternal;
+      std::cout << "ERROR - second conv incorrect.\n";
+      return result;
+    } else {
+      result.reference_check = cutlass::Status::kSuccess;
+      std::cout << "Second Passed.\n";
+    }
+  }
   return result;
 }
 

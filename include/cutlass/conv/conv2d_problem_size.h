@@ -330,6 +330,7 @@ CUTLASS_HOST_DEVICE
 cutlass::gemm::GemmCoord implicit_gemm_problem_size(
   Operator conv_operator, 
   Conv2dProblemSize const &problem_size) {
+  // printf("problem_size.P %d problem_size.Q %d\n", problem_size.P, problem_size.Q);
   // Compute problem size
   switch (conv_operator) {
   case Operator::kFprop:

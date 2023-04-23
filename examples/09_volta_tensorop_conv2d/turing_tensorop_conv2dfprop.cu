@@ -462,6 +462,21 @@ struct Result {
   }
 };
 
+__device__ inline uint glLoad(volatile uint* addr) {
+  uint val;
+  // asm ("ld.volatile.global.u32 {%0}, [%1];" : "=r"(val) : "l"(addr));
+  return *addr;
+}
+
+__global__ void waitKernel(volatile uint* kernelExecuted, uint expectedValue) {
+  if (threadIdx.x == 0) {
+    // printf("expectedValue %d\n", expectedValue);
+    uint v = glLoad(kernelExecuted);
+    while(v < expectedValue) {
+      v = glLoad(kernelExecuted);
+    }
+  }
+}
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<bool baselineOrOverlap, typename ImplicitGemm1, typename ImplicitGemm2, typename TensorA, typename TensorB, typename TensorC>
@@ -536,6 +551,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       double end = getCurrentTime();
       conv2Time += end - middle1;
       elapsedTime += end - start;
+      printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,conv1Time,conv2Time);
     }
   } else {
     for (int i = 0; i < runs; i++) {
@@ -548,15 +564,16 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       CUTLASS_CHECK(status);
       // cudaDeviceSynchronize();
       args2.overlap_handle.producerOrConsumer_ = false;
-      double middle1 = getCurrentTime();
-      conv1Time += middle1 - start;
+      // double middle1 = getCurrentTime();
+      // conv1Time += middle1 - start;
       status = implicit_gemm_op2(args2, true, true, kernelExecuted, workspace2.get(), streams[1]);
 
       CUTLASS_CHECK(status);
       cudaDeviceSynchronize();
       double end = getCurrentTime();
-      conv2Time += end - middle1;
+      // conv2Time += end - middle1;
       elapsedTime += end - start;
+      printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,conv1Time,conv2Time);
     }
   }
 }
@@ -752,9 +769,10 @@ Result profile_convolution(Options const &options) {
   elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
+  printf("START-BASELINE:\n");
   runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, epochs);
   
-  printf("Baseline {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
+  printf("END-BASELINE: {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
   
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
   OverlapHandle overlapHandle(gemm_problem_size.m(), gemm_problem_size.n(), 1, 1);
@@ -815,9 +833,10 @@ Result profile_convolution(Options const &options) {
   elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
+  printf("START-OVERLAP:\n");
   runConvolution<false, ImplicitGemm1, ImplicitGemm2>
     (problem_size, options, &streams[0], overlapHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, kernelExecuted, elapsedTime, conv1Time, conv2Time, epochs);
-  printf("OverlapTime {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
+  printf("END-OVERLAP {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
 
   return result;
 }

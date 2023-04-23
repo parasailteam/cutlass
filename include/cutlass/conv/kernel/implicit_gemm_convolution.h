@@ -464,7 +464,11 @@ struct ImplicitGemmConvolution {
     
     uint block_idx_y = blockIdx.y;
     uint block_idx_x = blockIdx.x;
-
+    if (isProducerOrConsumer) {
+      if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
+        *kernelAllocated = params.overlap_handle.iter;
+      }
+    }
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_idx.m() ||
       params.grid_tiled_shape.n() <= threadblock_tile_idx.n()) {

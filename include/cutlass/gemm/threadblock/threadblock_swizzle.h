@@ -138,7 +138,7 @@ struct GemmIdentityThreadblockSwizzle {
 
     gemm::GemmCoord implicit_gemm_problem_size = 
     cutlass::conv::implicit_gemm_problem_size(conv_operator, problem_size);
-    printf("implicit_gemm_problem_size {%d, %d, %d}\n", implicit_gemm_problem_size.m(), implicit_gemm_problem_size.n(), implicit_gemm_problem_size.k());
+    // printf("implicit_gemm_problem_size {%d, %d, %d}\n", implicit_gemm_problem_size.m(), implicit_gemm_problem_size.n(), implicit_gemm_problem_size.k());
     return get_tiled_shape(
       implicit_gemm_problem_size, tile_size, split_k_slices);
   }

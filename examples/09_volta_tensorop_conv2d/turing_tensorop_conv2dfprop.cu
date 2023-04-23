@@ -143,14 +143,40 @@ compare if the output from CUTLASS kernel is same as the reference implicit GEMM
 #include "cutlass/util/tensor_view_io.h"
 
 #include "helper.h"
+#include<time.h>
+#include<sys/time.h>
+
+static double convertTimeValToDouble(struct timeval _time) {
+  return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
+}
+
+static struct timeval getTimeOfDay () {
+  struct timeval _time;
+
+  if (gettimeofday (&_time, NULL) == -1) {
+    fprintf (stderr, "gettimeofday returned -1\n");
+    perror ("");
+    abort ();
+  }
+
+  return _time;
+}
+
+static double timeInMicroSeconds() {
+  return convertTimeValToDouble(getTimeOfDay());
+}
+
+static double getCurrentTime() {
+  return timeInMicroSeconds();
+}
 
 // The code section below describes datatype for input, output tensors and computation between
 // elements
 using ElementAccumulator = float;                 // Data type of accumulator
 using ElementComputeEpilogue = float;               // Data type of epilogue computation (alpha, beta)
 using ElementInputA = cutlass::half_t;             // Data type of elements in input tensor
-using ElementInputB = cutlass::half_t;             // Data type of elements in input tensor
-using ElementOutput = float;             // Data type of elements in output tensor
+using ElementInputB = ElementInputA;             // Data type of elements in input tensor
+using ElementOutput = ElementInputB;             // Data type of elements in output tensor
 
 using LayoutInputA = cutlass::layout::TensorNHWC;
 using LayoutInputB = cutlass::layout::TensorNHWC;
@@ -163,10 +189,10 @@ using MMAOp = cutlass::arch::OpClassTensorOp;
 using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
-using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;  // Threadblock tile shape
+using ThreadblockShape = cutlass::gemm::GemmShape<64, 64, 32>;  // Threadblock tile shape
 
 // This code section describes tile size a warp will compute
-using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;         // Warp tile shape
+using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;         // Warp tile shape
 
 // This code section describes the size of MMA op
 using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;    // TensorCore instruction shape
@@ -204,7 +230,8 @@ using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
   cutlass::conv::IteratorAlgorithm::kAnalytic
 >::Kernel;
 
-using ImplicitGemm = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+using ImplicitGemm1 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+using ImplicitGemm2 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -434,6 +461,82 @@ struct Result {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
+template<typename ImplicitGemm1, typename ImplicitGemm2, typename TensorA, typename TensorB, typename TensorC>
+void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options& options, 
+                    TensorA& tensor_x, TensorB& tensor_w1, TensorB& tensor_w2, TensorC& tensor_y1, TensorC& tensor_y2, 
+                    double& elapsedTime, double& conv1Time, double& conv2Time, int runs) {
+  // Construct ImplicitGemm::Argument structure with conv2d 
+  // problem size, data pointers, and epilogue values
+  typename ImplicitGemm1::Arguments args1{
+    problem_size,
+    tensor_x.device_ref(),
+    tensor_w1.device_ref(),
+    tensor_y1.device_ref(),
+    tensor_y1.device_ref(),
+    {options.alpha, options.beta},
+  };
+
+  typename ImplicitGemm2::Arguments args2{
+    problem_size,
+    tensor_y1.device_ref(),
+    tensor_w2.device_ref(),
+    tensor_y2.device_ref(),
+    tensor_y2.device_ref(),
+    {options.alpha, options.beta},
+  };
+
+  //
+  // Initialize CUTLASS Convolution
+  //
+
+  ImplicitGemm1 implicit_gemm_op1;
+  ImplicitGemm2 implicit_gemm_op2;
+  {
+    size_t workspace_size = implicit_gemm_op1.get_workspace_size(args1);
+
+    // Allocate workspace memory
+    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+
+    auto status = implicit_gemm_op1.can_implement(args1);
+    CUTLASS_CHECK(status);
+
+    status = implicit_gemm_op1.initialize(args1, workspace.get());
+    CUTLASS_CHECK(status);
+  }
+
+  {
+    size_t workspace_size = implicit_gemm_op2.get_workspace_size(args2);
+
+    // Allocate workspace memory
+    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+
+    auto status = implicit_gemm_op2.can_implement(args2);
+    CUTLASS_CHECK(status);
+
+    status = implicit_gemm_op2.initialize(args2, workspace.get());
+    CUTLASS_CHECK(status);
+  }
+
+  for (int i = 0; i < runs; i++) {
+    double start = getCurrentTime();
+    auto status = implicit_gemm_op1();
+
+    CUTLASS_CHECK(status);
+    cudaDeviceSynchronize();
+    double middle1 = getCurrentTime();
+    conv1Time += middle1 - start;
+    status = implicit_gemm_op2();
+
+    CUTLASS_CHECK(status);
+    cudaDeviceSynchronize();
+    double end = getCurrentTime();
+    conv2Time += end - middle1;
+    elapsedTime += end - start;
+  }
+
+  cudaDeviceSynchronize();
+}
+
 /// Runs one benchmark
 Result profile_convolution(Options const &options) {
 
@@ -443,48 +546,61 @@ Result profile_convolution(Options const &options) {
   // Allocate host-device tensors using the CUTLASS Utilities.
   //
 
-  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_a(options.input_size);
-  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_b(options.filter_size);
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_c(options.output_size());
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_c(options.output_size());
+  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_x(options.input_size);
+  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_w1(options.filter_size);
+  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_w2(options.filter_size);
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_y1(options.output_size());
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_y2(options.output_size());
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_y1(options.output_size());
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_y2(options.output_size());
 
   //
   // Initialize tensors
   //
 
+  cutlass::reference::host::TensorFillRandomUniform(
+      tensor_x.host_view(), ElementInputA(1.0f));
+  cutlass::reference::host::TensorFillRandomUniform(
+      tensor_w1.host_view(), ElementInputB(1.0f));
+  cutlass::reference::host::TensorFillRandomUniform(
+      tensor_y1.host_view(), ElementOutput(1.0f));
   // Fill tensor A on host with uniform-distribution random data
-  cutlass::reference::host::TensorFillRandomUniform(
-      tensor_a.host_view(),
-      1,
-      ElementInputA(7),
-      ElementInputA(-8),
-      0);
+  // cutlass::reference::host::TensorFillRandomUniform(
+  //     tensor_x.host_view(),
+  //     1,
+  //     ElementInputA(1),
+  //     ElementInputA(-1),
+  //     0);
 
-  // Fill tensor B on host with uniform-distribution random data
-  cutlass::reference::host::TensorFillRandomUniform(
-      tensor_b.host_view(),
-      1,
-      ElementInputB(7),
-      ElementInputB(-8),
-      0);
+  // // Fill tensor B on host with uniform-distribution random data
+  // cutlass::reference::host::TensorFillRandomUniform(
+  //     tensor_w1.host_view(),
+  //     1,
+  //     ElementInputB(1),
+  //     ElementInputB(-1),
+  //     0);
+  
+  // // Fill tensor B on host with uniform-distribution random data
+  // cutlass::reference::host::TensorFillRandomUniform(
+  //   tensor_w2.host_view(),
+  //   1,
+  //   ElementInputB(1),
+  //   ElementInputB(-1),
+  //   0);
 
   // Fill tensor C on host with zeros
   cutlass::reference::host::TensorFill(
-      tensor_c.host_view());
+      tensor_y1.host_view());
 
   // Fill tensor C for reference on host with zeros
   cutlass::reference::host::TensorFill(
-      tensor_ref_c.host_view());
+    tensor_ref_y1.host_view());
 
   // Copy data from host to GPU
-  tensor_a.sync_device();
-  tensor_b.sync_device();
-  tensor_c.sync_device();
-  tensor_ref_c.sync_device();
-
-  //
-  // Define arguments for CUTLASS Convolution
-  //
+  tensor_x.sync_device();
+  tensor_w1.sync_device();
+  tensor_y1.sync_device();
+  tensor_ref_y1.sync_device();
 
   // mode (kCrossCorrelation or kConvolution)
   cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
@@ -493,7 +609,7 @@ Result profile_convolution(Options const &options) {
   int split_k_slices = 1;
 
   // Construct Conv2dProblemSize with user defined output size
-  cutlass::conv::Conv2dProblemSize problem_size(      
+  cutlass::conv::Conv2dProblemSize problem_size(
       options.input_size,
       options.filter_size,
       options.padding,
@@ -502,46 +618,24 @@ Result profile_convolution(Options const &options) {
       options.output_size(),
       mode,
       split_k_slices);
-
-  // Construct ImplicitGemm::Argument structure with conv2d 
-  // problem size, data pointers, and epilogue values
-  typename ImplicitGemm::Arguments arguments{
-    problem_size,
-    tensor_a.device_ref(),
-    tensor_b.device_ref(),
-    tensor_c.device_ref(),
-    tensor_c.device_ref(),
-    {options.alpha, options.beta},
-  };
-
-  //
-  // Initialize CUTLASS Convolution
-  //
-
-  ImplicitGemm implicit_gemm_op;
-
-  size_t workspace_size = implicit_gemm_op.get_workspace_size(arguments);
-
-  // Allocate workspace memory
-  cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
-
-  result.status = implicit_gemm_op.can_implement(arguments);
-  CUTLASS_CHECK(result.status);
-
-  result.status = implicit_gemm_op.initialize(arguments, workspace.get());
-  CUTLASS_CHECK(result.status);
-
-  //
-  // Launch initialized CUTLASS kernel
-  //
-  result.status = implicit_gemm_op();
-
-  CUTLASS_CHECK(result.status);
-
   //
   // Optional reference check
   //
+
+  if (options.reference_check) {
+    
+
+  }
   
+  int warmup = 10;
+  int epochs = 20;
+  double elapsedTime = 0;
+  double conv1Time = 0;
+  double conv2Time = 0;
+
+  runConvolution<ImplicitGemm1, ImplicitGemm2>
+    (problem_size, options, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, 1);
+
   if (options.reference_check) {
     std::cout << "Verification on host...\n";
 
@@ -558,120 +652,71 @@ Result profile_convolution(Options const &options) {
       cutlass::NumericConverter<ElementOutput, ElementComputeEpilogue>
     >(
       problem_size,
-      tensor_a.host_ref(),
-      tensor_b.host_ref(),
-      tensor_c.host_ref(),
-      tensor_ref_c.host_ref(),
+      tensor_x.host_ref(),
+      tensor_w1.host_ref(),
+      tensor_y1.host_ref(),
+      tensor_ref_y1.host_ref(),
       options.alpha,
       options.beta
     );
 
+    cutlass::reference::host::Conv2dFprop<
+      ElementInputA,
+      LayoutInputA,
+      ElementInputB,
+      LayoutInputB,
+      ElementOutput,
+      LayoutOutput,
+      ElementComputeEpilogue,
+      ElementAccumulator,
+      cutlass::NumericConverter<ElementOutput, ElementComputeEpilogue>
+    >(
+      problem_size,
+      tensor_y1.host_ref(),
+      tensor_w2.host_ref(),
+      tensor_y2.host_ref(),
+      tensor_ref_y2.host_ref(),
+      options.alpha,
+      options.beta
+    );
     // Check if output from CUTLASS kernel and reference kernel are equal or not
-    tensor_c.sync_host();
-
+    tensor_y1.sync_host(); tensor_y2.sync_host();
     bool passed = cutlass::reference::host::TensorEquals(
-      tensor_c.host_view(),
-      tensor_ref_c.host_view());
+      tensor_y1.host_view(),
+      tensor_ref_y1.host_view());
 
     if (!passed) {
       result.reference_check = cutlass::Status::kErrorInternal;
-      std::cout << "ERROR - results miscompared.\n";
-    }
-    else {
+      std::cout << "ERROR - First conv incorrect.\n";
+      return result;
+    } else {
       result.reference_check = cutlass::Status::kSuccess;
-      std::cout << "Passed.\n";
-    }
-  }
-  else {
-    result.reference_check = cutlass::Status::kInvalid;
-  }
-
-  if (options.save_workspace) {
-
-    std::stringstream ss;
-
-    ss << "09_tensor_conv_workspace_conv2dfprop_"
-      << options.input_size.n() << "x" << options.input_size.h() << "x" << options.input_size.w() << "x" << options.input_size.c() 
-      << "_"
-      << options.filter_size.n() << "x" << options.filter_size.h() << "x" << options.filter_size.w() << "x" << options.filter_size.c() 
-      << ".dat";
-
-    std::ofstream output_workspace(ss.str());
-
-    output_workspace 
-      << "Input = \n" << tensor_a.host_view() << "\n\n"
-      << "Filters = \n" << tensor_b.host_view() << "\n\n";
-
-    if (options.reference_check) {
-      output_workspace << "Reference = \n" << tensor_ref_c.host_view() << "\n\n";
+      std::cout << "First Passed.\n";
     }
 
-    output_workspace << "Computed = \n" << tensor_c.host_view() << std::endl;
-
-    std::cout << "Results written to '" << ss.str() << "'." << std::endl;
-  }
-  
-  //
-  // Performance measurement
-  //
-
-  if (options.measure_performance) {
-
-    cudaEvent_t events[2];
+    passed = cutlass::reference::host::TensorEquals(
+      tensor_y2.host_view(),
+      tensor_ref_y2.host_view());
     
-    for (auto & event : events) {
-      result.error = cudaEventCreate(&event);
-      if (result.error != cudaSuccess) {
-        std::cerr << "cudaEventCreate() failed: " << cudaGetErrorString(result.error) << std::endl;
-        return result;
-      }
-    }
-
-    // Record an event at the start of a series of convolution operations.
-    result.error = cudaEventRecord(events[0]);
-    if (result.error != cudaSuccess) {
-      std::cerr << "cudaEventRecord() failed: " << cudaGetErrorString(result.error) << std::endl;
+    if (!passed) {
+      result.reference_check = cutlass::Status::kErrorInternal;
+      std::cout << "ERROR - second conv incorrect.\n";
       return result;
-    }
-
-    // Launch a sequence of implicit GEMM operations on the device
-    for (int iteration = 0; iteration < options.iterations; ++iteration) {
-      result.status = implicit_gemm_op();
-      CUTLASS_CHECK(result.status);
-    }
-
-    // Record an event when the convolutions have been launched.
-    result.error = cudaEventRecord(events[1]);
-    if (result.error != cudaSuccess) {
-      std::cerr << "cudaEventRecord() failed: " << cudaGetErrorString(result.error) << std::endl;
-      return result;
-    }
-
-    // Wait for work on the device to complete.
-    result.error = cudaEventSynchronize(events[1]);
-    if (result.error != cudaSuccess) {
-      std::cerr << "cudaEventSynchronize() failed: " << cudaGetErrorString(result.error) << std::endl;
-      return result;
-    }
-
-    // Measure elapsed runtime
-    float runtime_ms = 0;
-    result.error = cudaEventElapsedTime(&runtime_ms, events[0], events[1]);
-    if (result.error != cudaSuccess) {
-      std::cerr << "cudaEventElapsed() failed: " << cudaGetErrorString(result.error) << std::endl;
-      return result;
-    }
-
-    // Print average runtime and GFLOPs.
-    result.runtime_ms = double(runtime_ms) / double(options.iterations);
-    result.gflops = options.gflops(result.runtime_ms / 1000.0);
-
-    // Cleanup
-    for (auto event : events) {
-      (void)cudaEventDestroy(event);
+    } else {
+      result.reference_check = cutlass::Status::kSuccess;
+      std::cout << "Second Passed.\n";
     }
   }
 
+  runConvolution<ImplicitGemm1, ImplicitGemm2>
+    (problem_size, options, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
+  elapsedTime = 0; 
+  conv1Time = 0;
+  conv2Time = 0;
+  runConvolution<ImplicitGemm1, ImplicitGemm2>
+    (problem_size, options, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
+  
+  printf("Baseline {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
   return result;
 }
 
@@ -704,63 +749,16 @@ int main(int argc, char const **args) {
     options.print_usage(std::cout) << std::endl;
     return 0;
   }
-
-  if (options.benchmark) {
-    // Benchmark several layers
-
-    int batch_sizes[] = {1, 32, 64, 128, 256, 512};
-
-    struct Benchmark {
-      int h, w, c, k, r, s;
-    } layers[] = {
-      {56,  56,   64,   256, 1, 1},
-      {56,  56,   64,    64, 1, 1},
-      {56,  56,   64,    64, 3, 3},
-      {56,  56,  256,    64, 1, 1},
-      {56,  56,  256,   512, 1, 1},
-      {56,  56,  256,   128, 1, 1},
-      {28,  28,  128,   128, 3, 3},
-      {28,  28,  128,   512, 1, 1},
-      {28,  28,  512,   128, 1, 1},
-      {28,  28,  512,  1024, 1, 1},
-      {28,  28,  512,   256, 1, 1},
-      {14,  14,  256,   256, 3, 3},
-      {14,  14,  256,  1024, 1, 1},
-      {14,  14,  1024,  256, 1, 1},
-      {14,  14,  1024, 2048, 1, 1},
-      {14,  14,  1024,  512, 1, 1},
-      {7,    7,   512,  512, 3, 3},
-    };
-
-    Result::print_header(std::cout, options) << std::endl;
-
-    int idx = 1;
-
-    for (auto const &layer : layers) {
-      for (auto N : batch_sizes) {
-
-        options.update({N, layer.h, layer.w, layer.c}, {layer.k, layer.r, layer.s, layer.c});
-
-        Result result = profile_convolution(options);
-        result.print(std::cout, idx, options) << std::endl;
-      }
-
-      ++idx;
-    }
+  // Execute one problem size
+  if (!options.valid()) {
+    std::cerr << "Invalid problem." << std::endl;
+    return -1;
   }
-  else {
 
-    // Execute one problem size
-    if (!options.valid()) {
-      std::cerr << "Invalid problem." << std::endl;
-      return -1;
-    }
+  Result result = profile_convolution(options);
 
-    Result result = profile_convolution(options);
-
-    Result::print_header(std::cout, options) << std::endl;
-    result.print(std::cout, 1, options) << std::endl;
-  }
+  Result::print_header(std::cout, options) << std::endl;
+  result.print(std::cout, 1, options) << std::endl;
 
   return 0;
 }

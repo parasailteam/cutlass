@@ -23,8 +23,8 @@ conv2_o = conv2(conv1_o)
 
 def conv64x64_3(input):
     conv3_o = conv3(input)
-    conv3_o = conv3(conv3_o)
-    conv3_o = conv3(conv3_o)
+    # conv3_o = conv3(conv3_o)
+    # conv3_o = conv3(conv3_o)
     
 for i in range(10):
     conv64x64_3(conv2_o)

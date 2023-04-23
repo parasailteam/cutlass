@@ -92,7 +92,7 @@ struct TensorEqualsFunc {
     const float val = 1e-1f;
     
     if (::abs(rightFloat) < val && ::abs(leftFloat) < val) {
-      printf("%f %f\n", rightFloat, leftFloat);
+      // printf("%f %f\n", rightFloat, leftFloat);
       rel = 0;
     } else if (::abs(leftFloat) < val) {
       rel = diff/::abs(rightFloat);

@@ -539,12 +539,14 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
     }
   } else {
     for (int i = 0; i < runs; i++) {
+      args1.overlap_handle.iter += 1;
       double start = getCurrentTime();
       args1.overlap_handle.producerOrConsumer_ = true;
       auto status = implicit_gemm_op1(args1, true, true, kernelExecuted, workspace1.get(), streams[0]);
+      // waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
 
       CUTLASS_CHECK(status);
-      cudaDeviceSynchronize();
+      // cudaDeviceSynchronize();
       args2.overlap_handle.producerOrConsumer_ = false;
       double middle1 = getCurrentTime();
       conv1Time += middle1 - start;
@@ -747,7 +749,7 @@ Result profile_convolution(Options const &options) {
   }
 
   runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, warmup);
-  elapsedTime = 0; 
+  elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
   runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, epochs);
@@ -777,7 +779,7 @@ Result profile_convolution(Options const &options) {
       
   runConvolution<false, ImplicitGemm1, ImplicitGemm2>
     (problem_size, options, &streams[0], overlapHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, kernelExecuted, elapsedTime, conv1Time, conv2Time, 1);
-
+  
   if (options.reference_check) {
     // Check if output from CUTLASS kernel and reference kernel are equal or not
     tensor_y1.sync_host(); tensor_y2.sync_host();
@@ -807,6 +809,16 @@ Result profile_convolution(Options const &options) {
       std::cout << "Second Passed.\n";
     }
   }
+
+  runConvolution<false, ImplicitGemm1, ImplicitGemm2>
+    (problem_size, options, &streams[0], overlapHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, kernelExecuted, elapsedTime, conv1Time, conv2Time, warmup);
+  elapsedTime = 0;
+  conv1Time = 0;
+  conv2Time = 0;
+  runConvolution<false, ImplicitGemm1, ImplicitGemm2>
+    (problem_size, options, &streams[0], overlapHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, kernelExecuted, elapsedTime, conv1Time, conv2Time, epochs);
+  printf("OverlapTime {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
+
   return result;
 }
 

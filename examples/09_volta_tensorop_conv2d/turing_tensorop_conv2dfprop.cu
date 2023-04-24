@@ -775,6 +775,7 @@ Result profile_convolution(Options const &options) {
   printf("END-BASELINE: {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
   
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
+  printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN,1);
   OverlapHandle overlapHandle(gemm_problem_size.m(), gemm_problem_size.n(), 1, 1);
   if (true) 
     overlapHandle.waitValue = overlapHandle.ySize/ThreadblockShape::kN;

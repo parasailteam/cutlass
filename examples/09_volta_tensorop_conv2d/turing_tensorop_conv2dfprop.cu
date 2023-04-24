@@ -176,7 +176,7 @@ static double getCurrentTime() {
 // The code section below describes datatype for input, output tensors and computation between
 // elements
 using ElementAccumulator = float;                 // Data type of accumulator
-using ElementComputeEpilogue = float;               // Data type of epilogue computation (alpha, beta)
+using ElementComputeEpilogue = cutlass::half_t;               // Data type of epilogue computation (alpha, beta)
 using ElementInputA = cutlass::half_t;             // Data type of elements in input tensor
 using ElementInputB = ElementInputA;             // Data type of elements in input tensor
 using ElementOutput = ElementInputB;             // Data type of elements in output tensor
@@ -256,6 +256,7 @@ struct Options {
   ElementComputeEpilogue beta;
   bool benchmark;
   std::string tag;
+  int split_k_slices;
 
   Options():
     help(false),
@@ -270,6 +271,7 @@ struct Options {
     save_workspace(false),
     alpha(1),
     beta(0),
+    split_k_slices(0),
     benchmark(false) { }
 
   // Verify the problem size is compatible with the CUTLASS Convolution implementation.
@@ -336,6 +338,8 @@ struct Options {
       benchmark = true;
     }
 
+    cmd.get_cmd_line_argument("split_k_slices", split_k_slices);
+  
     cmd.get_cmd_line_argument("n", input_size.n());
     cmd.get_cmd_line_argument("h", input_size.h());
     cmd.get_cmd_line_argument("w", input_size.w());
@@ -384,7 +388,8 @@ struct Options {
       << "  --benchmark          If set (true), performance benchmarking on several layers and batch-size.\n"
       << "  --iterations=<int>   Number of profiling iterations to perform.\n"
       << "  --save-workspace     If set, workspace is written to a text file.\n"
-      << "  --tag=<string>       String to replicate across the first column in the results table\n";
+      << "  --tag=<string>       String to replicate across the first column in the results table\n"
+      << "  --split_k_slices=<int> ";
 
     out << "\n\nExamples:\n\n"
       << "$ ./examples/09_turing_tensorop_conv2dfprop/09_turing_tensorop_conv2dfprop  --n=32 --h=224 --w=224 --c=128 --k=256 --r=1 --s=1\n\n"
@@ -551,7 +556,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       double end = getCurrentTime();
       conv2Time += end - middle1;
       elapsedTime += end - start;
-      printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,conv1Time,conv2Time);
+      printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,middle1-start,end-middle1);
     }
   } else {
     for (int i = 0; i < runs; i++) {
@@ -666,9 +671,6 @@ Result profile_convolution(Options const &options) {
   // mode (kCrossCorrelation or kConvolution)
   cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
 
-  // Split K dimension into 1 partitions
-  int split_k_slices = 1;
-
   // Construct Conv2dProblemSize with user defined output size
   cutlass::conv::Conv2dProblemSize problem_size(
       options.input_size,
@@ -678,12 +680,12 @@ Result profile_convolution(Options const &options) {
       options.dilation,
       options.output_size(),
       mode,
-      split_k_slices);
+      options.split_k_slices);
   //
   // Optional reference check
   //
 
-  int warmup = 10;
+  int warmup = 5;
   int epochs = 20;
   double elapsedTime = 0;
   double conv1Time = 0;
@@ -775,7 +777,8 @@ Result profile_convolution(Options const &options) {
   printf("END-BASELINE: {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
   
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
-  printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN,1);
+  printf("gemm problem size: {%d, %d, %d}\n", gemm_problem_size.m(), gemm_problem_size.n(), gemm_problem_size.k());
+  printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN, options.split_k_slices);
   OverlapHandle overlapHandle(gemm_problem_size.m(), gemm_problem_size.n(), 1, 1);
   if (true) 
     overlapHandle.waitValue = overlapHandle.ySize/ThreadblockShape::kN;

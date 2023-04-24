@@ -561,15 +561,15 @@ public:
     if (overlap) {
       if (params_.overlap_handle.isProducer())
         if (isRowSyncOrTileSync) {
-          cutlass::KernelOverlapProducer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+          cutlass::KernelOverlapProducer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, (volatile uint*) kernelExecuted);
         } else {
-          cutlass::KernelOverlapProducer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+          cutlass::KernelOverlapProducer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
         }
       else
         if (isRowSyncOrTileSync) {
-          cutlass::KernelOverlapConsumer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+          cutlass::KernelOverlapConsumer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
         } else {
-          cutlass::KernelOverlapConsumer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, kernelExecuted);
+          cutlass::KernelOverlapConsumer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
         }
     }
     else

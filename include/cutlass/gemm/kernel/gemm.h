@@ -395,7 +395,7 @@ struct Gemm {
   /// Executes one GEMM
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
-                        bool rowSyncOrTileSync, volatile int* kernelAllocated) {
+                        bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
     //Convert 1-D thread block id to 2-D
     
     //In column major, y-dim is M,

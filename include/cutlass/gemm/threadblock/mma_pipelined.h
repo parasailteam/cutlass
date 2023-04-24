@@ -354,7 +354,10 @@ public:
       
     if (!isRowSyncOrTileSync) {
       int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-      if (startK%Shape::kN == 0 && tb_offset_B.column() == 0)
+      // if (threadIdx.x == 0 and blockIdx.x == 0) {
+      //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row());
+      // }
+      if (startK%Shape::kN == 0)
         overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
     }
     iterator_A.load(tb_frag_A);
@@ -451,6 +454,9 @@ public:
         if (warp_mma_k == 0) {
           if (!isRowSyncOrTileSync) {
             int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+            // if (threadIdx.x == 0 and blockIdx.x == 0) {
+            //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK);
+            // }
             if (startK%Shape::kN == 0)
               overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
           }

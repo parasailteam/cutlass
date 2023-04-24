@@ -257,6 +257,7 @@ struct Options {
   bool benchmark;
   std::string tag;
   int split_k_slices;
+  bool rowSyncOrTileSync;
 
   Options():
     help(false),
@@ -272,6 +273,7 @@ struct Options {
     alpha(1),
     beta(0),
     split_k_slices(0),
+    rowSyncOrTileSync(false),
     benchmark(false) { }
 
   // Verify the problem size is compatible with the CUTLASS Convolution implementation.
@@ -349,6 +351,11 @@ struct Options {
     cmd.get_cmd_line_argument("r", filter_size.h());
     cmd.get_cmd_line_argument("s", filter_size.w());
     filter_size.c() = input_size.c(); 
+
+    int syncType;
+    cmd.get_cmd_line_argument("syncType", syncType);
+    if (syncType == 0) rowSyncOrTileSync = false;
+    else rowSyncOrTileSync = true;
 
     cmd.get_cmd_line_argument("alpha", alpha);
     cmd.get_cmd_line_argument("beta", beta);
@@ -563,7 +570,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       args1.overlap_handle.iter += 1;
       double start = getCurrentTime();
       args1.overlap_handle.producerOrConsumer_ = true;
-      auto status = implicit_gemm_op1(args1, true, true, kernelExecuted, workspace1.get(), streams[0]);
+      auto status = implicit_gemm_op1(args1, true, options.rowSyncOrTileSync, kernelExecuted, workspace1.get(), streams[0]);
       // waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
 
       CUTLASS_CHECK(status);
@@ -571,7 +578,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       args2.overlap_handle.producerOrConsumer_ = false;
       // double middle1 = getCurrentTime();
       // conv1Time += middle1 - start;
-      status = implicit_gemm_op2(args2, true, true, kernelExecuted, workspace2.get(), streams[1]);
+      status = implicit_gemm_op2(args2, true, options.rowSyncOrTileSync, kernelExecuted, workspace2.get(), streams[1]);
 
       CUTLASS_CHECK(status);
       cudaDeviceSynchronize();
@@ -780,10 +787,10 @@ Result profile_convolution(Options const &options) {
   printf("gemm problem size: {%d, %d, %d}\n", gemm_problem_size.m(), gemm_problem_size.n(), gemm_problem_size.k());
   printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN, options.split_k_slices);
   OverlapHandle overlapHandle(gemm_problem_size.m(), gemm_problem_size.n(), 1, 1);
-  if (true) 
+  if (options.rowSyncOrTileSync) 
     overlapHandle.waitValue = overlapHandle.ySize/ThreadblockShape::kN;
-  // else
-  //   overlapHandle.waitValue =  1;
+  else
+    overlapHandle.waitValue =  1;
   
   overlapHandle.allocTileStatusMap(ThreadblockShape::kM, ThreadblockShape::kN, 1);
   // double overlapTime = 0;

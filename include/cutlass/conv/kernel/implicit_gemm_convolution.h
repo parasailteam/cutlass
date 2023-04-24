@@ -501,28 +501,28 @@ struct ImplicitGemmConvolution {
           params.overlap_handle.waitOnTilesWithSyncValue(block_idx_x, 0, 0, 1);//params.overlap_handle.ySize/Mma::Shape::kN);
       }
     }
-
+    auto tb_offset_A = MatrixCoord(
+        threadblock_tile_idx.m() * Mma::Shape::kM,
+        iterator_A_column_offset
+      );
     // Construct iterators to A and B operands
     typename Mma::IteratorA iterator_A(
       params.iterator_A,
       params.problem_size,
       params.ptr_A,
       thread_idx,
-      MatrixCoord(
-        threadblock_tile_idx.m() * Mma::Shape::kM,
-        iterator_A_column_offset
-      )
+      tb_offset_A
     );
-    
+    auto tb_offset_B = MatrixCoord(
+        threadblock_tile_idx.k() * Mma::Shape::kK,
+        threadblock_tile_idx.n() * Mma::Shape::kN
+      );
     typename Mma::IteratorB iterator_B(
       params.iterator_B,
       params.problem_size,
       params.ptr_B,
       thread_idx,
-      MatrixCoord(
-        threadblock_tile_idx.k() * Mma::Shape::kK,
-        threadblock_tile_idx.n() * Mma::Shape::kN
-      )
+      tb_offset_B
     );
 
     // Broadcast the warp_id computed by lane 0 to ensure dependent code
@@ -541,9 +541,12 @@ struct ImplicitGemmConvolution {
 
     accumulators.clear();
 
-    // Compute threadblock-scoped matrix multiply-add
-    mma(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.gemm_k_iterations_per_channel);
-
+    if (rowSyncOrTileSync || isProducerOrConsumer)
+      // Compute threadblock-scoped matrix multiply-add
+      mma(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.gemm_k_iterations_per_channel);
+    else {
+      mma.doWithOverlap(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, rowSyncOrTileSync, tb_offset_A, tb_offset_B, params.gemm_k_iterations_per_channel);
+    }
     //
     // Epilogue
     //
@@ -624,13 +627,21 @@ struct ImplicitGemmConvolution {
     // Release the semaphore
     //
 
-    if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1) { 
+    if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1) {
 
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_idx.k() + 1) {
 
         // The final threadblock resets the semaphore for subsequent grids.
         lock = 0;
+
+        if (rowSyncOrTileSync) {
+          //Row sync
+          params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1, block_idx_x, block_idx_y);
+        } else {
+          //Tile sync
+          params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, 1);
+        }
       }
       else {
         // Otherwise, the semaphore is incremented
@@ -638,9 +649,7 @@ struct ImplicitGemmConvolution {
       }
       
       semaphore.release(lock);
-    }
-
-    if (isProducerOrConsumer && params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() == 1)
+    } else if (isProducerOrConsumer) {
       if (rowSyncOrTileSync) {
         //Row sync
         params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1, block_idx_x, block_idx_y);
@@ -648,6 +657,7 @@ struct ImplicitGemmConvolution {
         //Tile sync
         params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, 1);
       }
+    }
   } 
 };
 

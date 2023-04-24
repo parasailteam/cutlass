@@ -307,7 +307,154 @@ public:
                  warp_frag_B[warp_mma_k % 2], accum);
       }
     }
+  }
 
+  CUTLASS_DEVICE
+  void doWithOverlap(
+    int gemm_k_iterations,                            ///< number of iterations of the mainloop
+    FragmentC &accum,                                 ///< destination accumulator tile
+    IteratorA iterator_A,                             ///< iterator over A operand in global memory
+    IteratorB iterator_B,                             ///< iterator over B operand in global memory
+    FragmentC const &src_accum,                       ///< source accumulator tile
+    OverlapHandle& overlap_handle,
+    bool isRowSyncOrTileSync,
+    cutlass::MatrixCoord tb_offset_A,
+    cutlass::MatrixCoord tb_offset_B,
+    int gemm_k_iterations_per_channel = 0,             ///< number of iterations per channel
+    TransformA transform_A = TransformA(),            ///< transformation applied to A fragment
+    TransformB transform_B = TransformB()) {          ///< transformation applied to B fragment
+
+    //
+    // Prologue
+    //
+
+    // Perform accumulation in the 'd' output operand
+    accum = src_accum;
+
+    FragmentA tb_frag_A;
+    FragmentB tb_frag_B;
+
+    tb_frag_A.clear();
+    tb_frag_B.clear();
+
+    if (!isRowSyncOrTileSync) {
+      int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+      // if (threadIdx.x == 0 and blockIdx.x == 0) {
+      //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row());
+      // }
+      if (startK%Shape::kN == 0)
+        overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+    }
+
+    // The last kblock is loaded in the prolog
+    iterator_A.load(tb_frag_A);
+    iterator_B.load(tb_frag_B);
+
+    ++iterator_A;
+    ++iterator_B;
+
+    this->smem_iterator_A_.store(transform_A(tb_frag_A));
+    this->smem_iterator_B_.store(transform_B(tb_frag_B));
+
+    ++this->smem_iterator_A_;
+    ++this->smem_iterator_B_;
+
+    __syncthreads();
+
+    // Pair of fragments used to overlap shared memory loads and math instructions
+    WarpFragmentA warp_frag_A[2];
+    WarpFragmentB warp_frag_B[2];
+
+    this->warp_tile_iterator_A_.set_kgroup_index(0);
+    this->warp_tile_iterator_B_.set_kgroup_index(0);
+
+    this->warp_tile_iterator_A_.load(warp_frag_A[0]);
+    this->warp_tile_iterator_B_.load(warp_frag_B[0]);
+
+    ++this->warp_tile_iterator_A_;
+    ++this->warp_tile_iterator_B_;
+
+    Operator warp_mma;
+
+    int smem_write_stage_idx = 1;
+
+    // Issue loads during the first warp-level matrix multiply-add *AFTER* issuing 
+    // shared memory loads (which have the tighest latency requirement).
+
+    //
+    // Mainloop
+    //
+    int total_gemm_k_iterations = gemm_k_iterations;
+    // Note: The main loop does not support Base::kWarpGemmIterations == 2.
+    CUTLASS_GEMM_LOOP
+    for (; gemm_k_iterations > 0; --gemm_k_iterations) {
+      //
+      // Loop over GEMM K dimension
+      //
+
+      CUTLASS_PRAGMA_UNROLL
+      for (int warp_mma_k = 0; warp_mma_k < Base::kWarpGemmIterations; ++warp_mma_k) {
+
+        // Load warp-level tiles from shared memory, wrapping to k offset if this is the last group
+        // as the case may be.
+
+        if (warp_mma_k == Base::kWarpGemmIterations - 1) {
+
+          // Write fragments to shared memory
+          this->smem_iterator_A_.store(transform_A(tb_frag_A));
+
+          this->smem_iterator_B_.store(transform_B(tb_frag_B));
+
+          __syncthreads();
+          
+          ++this->smem_iterator_A_;
+          ++this->smem_iterator_B_;
+
+          // Add negative offsets to return iterators to the 'start' of the circular buffer in shared memory
+          if (smem_write_stage_idx == 1) {
+            this->smem_iterator_A_.add_tile_offset({0, -Base::kStages});
+            this->smem_iterator_B_.add_tile_offset({-Base::kStages, 0});
+          }
+          else {
+            this->warp_tile_iterator_A_.add_tile_offset(
+                {0, -Base::kStages * Policy::kPartitionsK * Base::kWarpGemmIterations});
+            this->warp_tile_iterator_B_.add_tile_offset(
+                {-Base::kStages * Policy::kPartitionsK * Base::kWarpGemmIterations,
+                 0});
+          }
+
+          smem_write_stage_idx ^= 1;
+        }
+
+        this->warp_tile_iterator_A_.set_kgroup_index((warp_mma_k + 1) % Base::kWarpGemmIterations);
+        this->warp_tile_iterator_B_.set_kgroup_index((warp_mma_k + 1) % Base::kWarpGemmIterations);
+        
+        this->warp_tile_iterator_A_.load(warp_frag_A[(warp_mma_k + 1) % 2]);
+        this->warp_tile_iterator_B_.load(warp_frag_B[(warp_mma_k + 1) % 2]);
+
+        ++this->warp_tile_iterator_A_;
+        ++this->warp_tile_iterator_B_;
+
+        if (warp_mma_k == 0) {
+          if (!isRowSyncOrTileSync) {
+            int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+            // if (threadIdx.x == 0 and blockIdx.x == 0) {
+            //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK);
+            // }
+            if (startK%Shape::kN == 0)
+              overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+          }
+          iterator_A.load(tb_frag_A);
+          iterator_B.load(tb_frag_B);
+    
+          ++iterator_A;
+          ++iterator_B;
+        }
+
+        warp_mma(accum, warp_frag_A[warp_mma_k % 2],
+                 warp_frag_B[warp_mma_k % 2], accum);
+      }
+    }
   }
 };
 

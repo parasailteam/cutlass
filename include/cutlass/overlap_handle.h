@@ -103,7 +103,7 @@ struct OverlapHandle {
     return linearTileIdx;
   }
 
-  #define batchTile 1
+  #define batchTile 8
   DEVICE_FUNC void waitOnTile(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint expectedInputStatusVal, int threadId = 0) {
     volatile uint* waitBuffer = tileStatusMap;
     int yMaxTiles = ySize/yTile;
@@ -185,8 +185,8 @@ struct OverlapHandle {
       uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
       // uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
       // printf("tileStatusMap[%d] %d xTileIdx %d yTileIdx %d tileStatus %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, tileStatus*iter);
-      // atomicAdd(&tileStatusMap[linearTileIdx/batchTile], 1);
-      tileStatusMap[linearTileIdx] = tileStatus*iter;
+      atomicAdd(&tileStatusMap[linearTileIdx/batchTile], 1);
+      // tileStatusMap[linearTileIdx] = tileStatus*iter;
     }
 
     __syncwarp();

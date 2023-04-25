@@ -570,6 +570,16 @@ public:
           cutlass::KernelOverlapConsumer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
         } else {
           cutlass::KernelOverlapConsumer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
+          // void* args[] = {
+          //   &params_,
+          //   &kernelExecuted
+          // };
+          // auto err = cudaLaunchCooperativeKernel((const void*)cutlass::KernelOverlapConsumer<GemmKernel, false>, 
+          // grid, block, args, smem_size, stream);
+
+          // if (err != cudaSuccess) {
+          //   printf("device/gemm.h: 581 Error %s\n", cudaGetErrorString(err));
+          // }
         }
     }
     else

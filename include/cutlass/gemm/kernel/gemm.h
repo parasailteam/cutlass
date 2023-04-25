@@ -580,7 +580,8 @@ struct Gemm {
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       }
       else if (!isProducerOrConsumer) {
-        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.overlap_handle, rowSyncOrTileSync, tb_offset_A, tb_offset_B);
+        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, 
+          params.overlap_handle, rowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
       }
     }
 

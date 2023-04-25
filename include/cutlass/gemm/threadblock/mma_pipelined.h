@@ -46,7 +46,9 @@
 #include "cutlass/gemm/threadblock/mma_base.h"
 
 #include "cutlass/overlap_handle.h"
+#include <cooperative_groups.h>
 
+using namespace cooperative_groups;
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -330,6 +332,7 @@ public:
     bool isRowSyncOrTileSync,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
+    const uint block_idx_x, const uint block_idx_y,
     TransformA transform_A = TransformA(),            ///< transformation applied to A fragment
     TransformB transform_B = TransformB()) {          ///< transformation applied to B fragment
 
@@ -353,17 +356,24 @@ public:
     // if (threadIdx.x == 0) printf("startK %p Shape::kN %p tb_offset_B.column() %d isRowSyncOrTileSync %d\n", tb_offset_A.column(), Shape::kN, tb_offset_B.column(), isRowSyncOrTileSync);
       
     if (!isRowSyncOrTileSync) {
-      int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-      // if (threadIdx.x == 0 and blockIdx.x == 0) {
-      //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row());
-      // }
-      if (startK%Shape::kN == 0)
-        overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+      iterator_B.load(tb_frag_B);
+      ++iterator_B;
+        int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+        // if (threadIdx.x == 0 and blockIdx.x == 0) {
+        //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row());
+        // }
+        if (startK%Shape::kN == 0)
+          overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+      // g.sync();
+      iterator_A.load(tb_frag_A);
+      ++iterator_A;
+      
+    } else {
+      iterator_A.load(tb_frag_A);
+      iterator_B.load(tb_frag_B);
+      ++iterator_A;
+      ++iterator_B;
     }
-    iterator_A.load(tb_frag_A);
-    iterator_B.load(tb_frag_B);
-    ++iterator_A;
-    ++iterator_B;
 
     this->smem_iterator_A_.store(transform_A(tb_frag_A));
     this->smem_iterator_B_.store(transform_B(tb_frag_B));
@@ -452,19 +462,31 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
+          
+          
           if (!isRowSyncOrTileSync) {
-            int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-            // if (threadIdx.x == 0 and blockIdx.x == 0) {
-            //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK);
-            // }
-            if (startK%Shape::kN == 0)
-              overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
-          }
-          iterator_A.load(tb_frag_A);
-          iterator_B.load(tb_frag_B);
-          ++iterator_A;
-          ++iterator_B;
+            iterator_B.load(tb_frag_B);
+            ++iterator_B;
 
+            int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+            // if (threadIdx.x == 0 and block_idx_y == 0) {
+            //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d total_gemm_k_iterations %d gemm_k_iterations %d\n", 
+            //   tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK, total_gemm_k_iterations, gemm_k_iterations);
+            // }
+            if (startK%Shape::kN == 0) {
+              // if (block_idx_y == 0)
+              overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+              // g.sync();
+            }
+            iterator_A.load(tb_frag_A);
+            ++iterator_A;
+          } else {
+            iterator_A.load(tb_frag_A);
+            ++iterator_A;
+            iterator_B.load(tb_frag_B);
+            ++iterator_B;
+          }
+          
           // Avoid reading out of bounds if this was the last loop iteration
           iterator_A.clear_mask(gemm_k_iterations <= 2);
           iterator_B.clear_mask(gemm_k_iterations <= 2);

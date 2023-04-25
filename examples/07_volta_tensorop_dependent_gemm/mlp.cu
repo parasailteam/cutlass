@@ -589,7 +589,7 @@ int run(int argc, char* arg[]) {
   
   OverlapHandle baselineHandle;
   cudaError_t result;
-  int epochs = 40;
+  int epochs = 20;
   int warmup = 10;
 
   double cublasTime = 0;

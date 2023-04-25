@@ -103,7 +103,7 @@ struct OverlapHandle {
     return linearTileIdx;
   }
 
-  #define batchTile 8
+  #define batchTile 1
   DEVICE_FUNC void waitOnTile(uint xTileIdx, uint yTileIdx, uint zTileIdx, uint expectedInputStatusVal, int threadId = 0) {
     volatile uint* waitBuffer = tileStatusMap;
     int yMaxTiles = ySize/yTile;

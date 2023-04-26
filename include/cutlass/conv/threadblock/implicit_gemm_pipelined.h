@@ -439,8 +439,8 @@ public:
           if (!isRowSyncOrTileSync) {
             int startK = (tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations + 1)*Shape::kK)/9;
             
-            if (gemm_k_iterations + 1 < total_gemm_k_iterations/9 && startK%Shape::kN == 0) {
-              // if (threadIdx.x == 0) {
+            if (total_gemm_k_iterations/9 - gemm_k_iterations/9 + 1 < total_gemm_k_iterations/9 && startK%Shape::kN == 0) {
+              // if (threadIdx.x == 0 && blockIdx.x == 97) {
               //   printf("442: blockIdx {%d, %d} tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d gemm_k_iterations %d total_gemm_k_iterations %d\n", 
               //     blockIdx.x, blockIdx.y, tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK, gemm_k_iterations, total_gemm_k_iterations);
               // }

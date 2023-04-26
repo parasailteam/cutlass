@@ -110,9 +110,9 @@ struct OverlapHandle {
     uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;//getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
     if (linearTileIdx % batchTile != 0) return;
     if (threadIdx.x == threadId) {
-      // if (xTileIdx == 0)
-        // printf("waitBuffer[%d] = %d ; %d xTileIdx %d yTileIdx %p iter %d expectedInputStatusVal %d\n", 
-        //       linearTileIdx, waitBuffer[linearTileIdx], xTileIdx, yTileIdx, waitBuffer, iter, expectedInputStatusVal);
+      if (xTileIdx == 0)
+        printf("waitBuffer[%d] = %d ; %d xTileIdx %d yTileIdx %p iter %d expectedInputStatusVal %d\n", 
+              linearTileIdx, waitBuffer[linearTileIdx], xTileIdx, yTileIdx, waitBuffer, iter, expectedInputStatusVal);
       while(waitBuffer[linearTileIdx/batchTile] < iter * expectedInputStatusVal * batchTile);
     }
     // if (expectedInputStatusVal == 2) printf("114: threadIdx.x %d %d\n", threadIdx.x, waitBuffer[linearTileIdx]);
@@ -168,7 +168,7 @@ struct OverlapHandle {
       int zMaxTiles = zSize/zTile;
       uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
       // uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
-      // printf("tileStatusMap[%d] %d xTileIdx %d yTileIdx %d tileStatus %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, tileStatus*iter);
+      printf("tileStatusMap[%d] %d xTileIdx %d yTileIdx %d tileStatus %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, tileStatus*iter);
       // atomicAdd(&tileStatusMap[linearTileIdx], 1);
       atomicAdd(&tileStatusMap[linearTileIdx], tileStatus);
     }
@@ -185,7 +185,7 @@ struct OverlapHandle {
       int zMaxTiles = zSize/zTile;
       uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
       // uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
-      // printf("tileStatusMap[%d] %d xTileIdx %d yTileIdx %d tileStatus %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, tileStatus*iter);
+      printf("tileStatusMap[%d] %d xTileIdx %d yTileIdx %d tileStatus %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, tileStatus*iter);
       atomicAdd(&tileStatusMap[linearTileIdx/batchTile], 1);
       // tileStatusMap[linearTileIdx] = tileStatus*iter;
     }

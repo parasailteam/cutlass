@@ -572,7 +572,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       double start = getCurrentTime();
       args1.overlap_handle.producerOrConsumer_ = true;
       auto status = implicit_gemm_op1(args1, true, options.rowSyncOrTileSync, kernelExecuted, workspace1.get(), streams[0]);
-      // waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
+      waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
 
       CUTLASS_CHECK(status);
       // cudaDeviceSynchronize();

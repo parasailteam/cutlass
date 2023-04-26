@@ -568,6 +568,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
   } else {
     for (int i = 0; i < runs; i++) {
       args1.overlap_handle.iter += 1;
+      args2.overlap_handle.iter += 1;
       double start = getCurrentTime();
       args1.overlap_handle.producerOrConsumer_ = true;
       auto status = implicit_gemm_op1(args1, true, options.rowSyncOrTileSync, kernelExecuted, workspace1.get(), streams[0]);
@@ -588,6 +589,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,conv1Time,conv2Time);
     }
   }
+  overlapHandle.iter = args1.overlap_handle.iter;
 }
 
 /// Runs one benchmark
@@ -773,7 +775,7 @@ Result profile_convolution(Options const &options) {
       std::cout << "Second Passed.\n";
     }
   }
-
+  if (true) {
   runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, warmup);
   elapsedTime = 0;
   conv1Time = 0;
@@ -782,7 +784,7 @@ Result profile_convolution(Options const &options) {
   runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, NULL, elapsedTime, conv1Time, conv2Time, epochs);
   
   printf("END-BASELINE: {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
-  
+  }
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
   printf("gemm problem size: {%d, %d, %d}\n", gemm_problem_size.m(), gemm_problem_size.n(), gemm_problem_size.k());
   printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN, options.split_k_slices);

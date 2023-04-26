@@ -356,8 +356,9 @@ public:
     // if (threadIdx.x == 0) printf("startK %p Shape::kN %p tb_offset_B.column() %d isRowSyncOrTileSync %d\n", tb_offset_A.column(), Shape::kN, tb_offset_B.column(), isRowSyncOrTileSync);
       
     if (!isRowSyncOrTileSync) {
-      iterator_B.load(tb_frag_B);
-      ++iterator_B;
+        iterator_B.load(tb_frag_B);
+        ++iterator_B;
+        this->smem_iterator_B_.store(transform_B(tb_frag_B));
         int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
         // if (threadIdx.x == 0 and blockIdx.x == 0) {
         //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d\n", tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row());
@@ -367,16 +368,15 @@ public:
       // g.sync();
       iterator_A.load(tb_frag_A);
       ++iterator_A;
-      
+      this->smem_iterator_A_.store(transform_A(tb_frag_A));
     } else {
       iterator_A.load(tb_frag_A);
       iterator_B.load(tb_frag_B);
       ++iterator_A;
       ++iterator_B;
+      this->smem_iterator_A_.store(transform_A(tb_frag_A));
+      this->smem_iterator_B_.store(transform_B(tb_frag_B));
     }
-
-    this->smem_iterator_A_.store(transform_A(tb_frag_A));
-    this->smem_iterator_B_.store(transform_B(tb_frag_B));
 
     ++this->smem_iterator_A_;
     ++this->smem_iterator_B_;

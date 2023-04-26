@@ -124,7 +124,8 @@ struct OverlapHandle {
       volatile uint* waitBuffer = tileStatusMap;
 
       uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
-      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d\n", linearTileIdx, waitBuffer[linearTileIdx], iter, waitValue);
+      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockidx.x %d\n", 
+      // linearTileIdx, waitBuffer[linearTileIdx], iter, waitValue, blockIdx.x);
       while(waitBuffer[linearTileIdx + threadIdx.x] < iter * waitValue);
     }
 
@@ -136,7 +137,7 @@ struct OverlapHandle {
       volatile uint* waitBuffer = tileStatusMap;
 
       uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
-      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d\n", linearTileIdx, waitBuffer[linearTileIdx], iter, expectedInputStatusVal);
+      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, waitBuffer[linearTileIdx], iter, expectedInputStatusVal, blockIdx.x);
       while(waitBuffer[linearTileIdx + threadIdx.x] < iter * expectedInputStatusVal);
     }
 
@@ -150,8 +151,8 @@ struct OverlapHandle {
       // uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
       uint linearTileIdx = getLinearTileIdx(xTileIdx, yTileIdx, zTileIdx);
       atomicAdd(&tileStatusMap[linearTileIdx], tileStatus);
-      // if (xTileIdx == 0)
-      //   printf("tileStatus//////ap[%d] %d xTileIdx %d yTileIdx %d blockIdx.x %d blockIdx.y %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, blockIdx_x, blockIdx_y);
+      
+      // printf("tileStatusmap[%d] %d xTileIdx %d yTileIdx %d blockIdx.x %d blockIdx.y %d\n", linearTileIdx, tileStatusMap[linearTileIdx], xTileIdx, yTileIdx, blockIdx.x, blockIdx.y);
       // tileStatusMap[linearTileIdx] = iter;
     }
 

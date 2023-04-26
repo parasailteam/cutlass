@@ -258,7 +258,7 @@ elif attention_or_mlp == "mlp":
       25600: {"split_ks":  [4,1]}}
   }
 
-for h in [6144]:#[6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
+for h in [16384]:#[6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
   for m in [1,2,4,8,16,32,64]: #[256, 512, 1024, 2048]: # 256, [1,2,4,8,16,32,64,128]:
     if attention_or_mlp == "attention":
       (s, o) = subprocess.getstatusoutput(f"python3 torchAttention.py {m} {int(h/8)} {h} {h}")

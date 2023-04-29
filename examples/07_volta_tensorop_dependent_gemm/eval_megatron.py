@@ -47,7 +47,7 @@ if attention_or_mlp == "attention":
   # Dictionary of tile sizes for each M
   tiles = {
     2048: {
-      "TileSizes" : [256, 128, 32, 128, 64, 32], "SoftmaxRowTile" : 8, "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "TileSizes" : [256, 128, 32, 128, 64, 32], "SoftmaxRowTile" : 4, "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
       6144: {"split_ks": [2,1]},
       8192: {"split_ks": [2,1]},
       10240: {"split_ks": [1,1]},
@@ -60,7 +60,7 @@ if attention_or_mlp == "attention":
       6144: {"split_ks": [2,1]},
       8192: {"split_ks": [2,1]},
       10240: {"split_ks": [3,1]},
-      12288: {"split_ks": [2,1]},
+      12288: {"split_ks": [1,1]},
       16384: {"split_ks": [2,1]},
       20480: {"split_ks": [2,1]},
       25600: {"split_ks": [2,1]},

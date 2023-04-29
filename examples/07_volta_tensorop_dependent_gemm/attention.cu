@@ -403,6 +403,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
     CUTLASS_CHECK(status);
   }
   const int SoftmaxRowTile = 1;
+  const int SoftmaxThreads = 256;
   execTime = 0;
   if (!handle1.enable()) {
     // Launch initialized CUTLASS kernel
@@ -432,8 +433,8 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       matmul1Time += iterMatMul1;
       handle1.producerOrConsumer_ = false;
       
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, false>
-        <<<DIVUP(problem_size1.m(), SoftmaxRowTile), 512, problem_size1.n()/3 * sizeof(half), streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, false>
+        <<<DIVUP(problem_size1.m(), SoftmaxRowTile), SoftmaxThreads, problem_size1.n()/3 * sizeof(half), streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                       (half*)device_xqkv,
                                                       (half*)tensor_dropout.device_data(), 
                                                       1.0f, randStates, handle1, handle1, false, NULL);
@@ -499,7 +500,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       handle1.producerOrConsumer_ = false;
       handle2.producerOrConsumer_ = true;
       // printf("498:\n");
-      selfAttnDotProdSoftmaxDropout<512, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, true><<<DIVUP(problem_size1.m(), SoftmaxRowTile), 512, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
+      selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, true><<<DIVUP(problem_size1.m(), SoftmaxRowTile), SoftmaxThreads, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
                                                                  (half*)device_xqkv,
                                                                  (half*)tensor_dropout.device_data(),
                                                                  1.0f,

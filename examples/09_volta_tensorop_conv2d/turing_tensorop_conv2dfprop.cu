@@ -192,10 +192,10 @@ using MMAOp = cutlass::arch::OpClassTensorOp;
 using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
-using ThreadblockShape = cutlass::gemm::GemmShape<64, 64, 32>;  // Threadblock tile shape
+using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;  // Threadblock tile shape
 
 // This code section describes tile size a warp will compute
-using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;         // Warp tile shape
+using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;         // Warp tile shape
 
 // This code section describes the size of MMA op
 using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;    // TensorCore instruction shape
@@ -572,7 +572,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       double start = getCurrentTime();
       args1.overlap_handle.producerOrConsumer_ = true;
       auto status = implicit_gemm_op1(args1, true, options.rowSyncOrTileSync, kernelExecuted, workspace1.get(), streams[0]);
-      waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
+     waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
 
       CUTLASS_CHECK(status);
       // cudaDeviceSynchronize();

@@ -156,12 +156,12 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
 
     for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
       if (enableOverlap) {
-        if (!rowSyncOrTileSync) {
+        if (!rowSyncOrTileSync && ti == 0) {
           handle1.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
         }
       }
       T xq = XQKV[ROW * 3 * N + COL];
-      if (enableOverlap) {
+      if (enableOverlap  && ti == 0) {
         if (rowSyncOrTileSync) {
 
         } else {
@@ -189,7 +189,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
     // }
     for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
       float r = curand_uniform(localRandState);
-      if (enableOverlap) {
+      if (enableOverlap && ti == 0) {
         if (rowSyncOrTileSync) {
 
         } else {

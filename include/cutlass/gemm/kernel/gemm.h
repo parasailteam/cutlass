@@ -42,6 +42,8 @@
 #include "cutlass/semaphore.h"
 #include "cutlass/arch/arch.h"
 
+#include "cutlass/overlap_handle.h"
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -70,6 +72,7 @@ struct Gemm {
 
   /// Parameters structure
   struct Params {
+    OverlapHandle overlap_handle;
     cutlass::gemm::GemmCoord problem_size;
     cutlass::gemm::GemmCoord grid_tiled_shape;
     int swizzle_log_tile;
@@ -98,6 +101,7 @@ struct Gemm {
 
     CUTLASS_HOST_DEVICE
     Params(
+      OverlapHandle overlap_handle,
       cutlass::gemm::GemmCoord const & problem_size,
       cutlass::gemm::GemmCoord const & grid_tiled_shape,
       typename Mma::IteratorA::TensorRef ref_A,
@@ -110,6 +114,7 @@ struct Gemm {
       int const *gather_B_indices = nullptr,
       int const *scatter_D_indices = nullptr
     ):
+      overlap_handle(overlap_handle),
       problem_size(problem_size),
       grid_tiled_shape(grid_tiled_shape),
       swizzle_log_tile(ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
@@ -201,6 +206,179 @@ struct Gemm {
   /// Executes one GEMM
   CUTLASS_DEVICE
   void operator()(Params const &params, SharedStorage &shared_storage) {
+
+    // Compute threadblock location
+    ThreadblockSwizzle threadblock_swizzle;
+
+    cutlass::gemm::GemmCoord threadblock_tile_offset =
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+
+    // Early exit if CTA is out of range
+    if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
+      params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
+
+      return;
+    }
+
+    // Compute initial location in logical coordinates
+    cutlass::MatrixCoord tb_offset_A{
+      threadblock_tile_offset.m() * Mma::Shape::kM,
+      threadblock_tile_offset.k() * params.gemm_k_size,
+    };
+
+    cutlass::MatrixCoord tb_offset_B{
+      threadblock_tile_offset.k() * params.gemm_k_size,
+      threadblock_tile_offset.n() * Mma::Shape::kN
+    };
+
+    // Problem size is a function of threadblock index in the K dimension
+    int problem_size_k = min(
+      params.problem_size.k(), 
+      (threadblock_tile_offset.k() + 1) * params.gemm_k_size);
+
+    // Compute threadblock-scoped matrix multiply-add
+    int gemm_k_iterations = (problem_size_k - tb_offset_A.column() + Mma::Shape::kK - 1) / Mma::Shape::kK;
+
+    // Compute position within threadblock
+    int thread_idx = threadIdx.x;
+
+    // Construct iterators to A and B operands
+    typename Mma::IteratorA iterator_A(
+      params.params_A,
+      params.ref_A.data(),
+      {params.problem_size.m(), problem_size_k},
+      thread_idx,
+      tb_offset_A,
+      params.gather_A_indices);
+
+    typename Mma::IteratorB iterator_B(
+      params.params_B,
+      params.ref_B.data(),
+      {problem_size_k, params.problem_size.n()},
+      thread_idx,
+      tb_offset_B,
+      params.gather_B_indices);
+
+    // Broadcast the warp_id computed by lane 0 to ensure dependent code
+    // is compiled as warp-uniform.
+    int warp_idx = canonical_warp_idx();
+    int lane_idx = threadIdx.x % 32;
+
+    //
+    // Main loop
+    //
+
+    // Construct thread-scoped matrix multiply
+    Mma mma(shared_storage.main_loop, thread_idx, warp_idx, lane_idx);
+
+    typename Mma::FragmentC accumulators;
+
+    accumulators.clear();
+
+    if (!kSplitKSerial || gemm_k_iterations > 0) {
+      // Compute threadblock-scoped matrix multiply-add
+      mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
+    }
+
+    //
+    // Epilogue
+    //
+
+    OutputOp output_op(params.output_op);
+
+    //
+    // Masked tile iterators constructed from members
+    //
+
+    threadblock_tile_offset =
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+
+    //assume identity swizzle
+    MatrixCoord threadblock_offset(
+      threadblock_tile_offset.m() * Mma::Shape::kM,
+      threadblock_tile_offset.n() * Mma::Shape::kN
+    );
+
+    int block_idx = threadblock_tile_offset.m() + threadblock_tile_offset.n() * params.grid_tiled_shape.m();
+
+    // Construct the semaphore.
+    Semaphore semaphore(params.semaphore + block_idx, thread_idx);
+
+    // If performing a reduction via split-K, fetch the initial synchronization
+    if (kSplitKSerial && params.grid_tiled_shape.k() > 1) {
+      
+      // Fetch the synchronization lock initially but do not block.
+      semaphore.fetch();
+
+      // Indicate which position in a serial reduction the output operator is currently updating
+      output_op.set_k_partition(threadblock_tile_offset.k(), params.grid_tiled_shape.k());
+    }
+
+    // Tile iterator loading from source tensor.
+    typename Epilogue::OutputTileIterator iterator_C(
+      params.params_C,
+      params.ref_C.data(),
+      params.problem_size.mn(),
+      thread_idx,
+      threadblock_offset,
+      params.scatter_D_indices
+    );
+
+    // Tile iterator writing to destination tensor.
+    typename Epilogue::OutputTileIterator iterator_D(
+      params.params_D,
+      params.ref_D.data(),
+      params.problem_size.mn(),
+      thread_idx,
+      threadblock_offset,
+      params.scatter_D_indices
+    );
+
+    Epilogue epilogue(
+      shared_storage.epilogue, 
+      thread_idx, 
+      warp_idx, 
+      lane_idx);
+
+    // Wait on the semaphore - this latency may have been covered by iterator construction
+    if (kSplitKSerial && params.grid_tiled_shape.k() > 1) {
+        
+      // For subsequent threadblocks, the source matrix is held in the 'D' tensor.
+      if (threadblock_tile_offset.k()) {
+        iterator_C = iterator_D;
+      }
+
+      semaphore.wait(threadblock_tile_offset.k());
+
+    }
+
+    // Execute the epilogue operator to update the destination tensor.
+    epilogue(output_op, iterator_D, accumulators, iterator_C); 
+    
+    //
+    // Release the semaphore
+    //
+
+    if (kSplitKSerial && params.grid_tiled_shape.k() > 1) {
+      
+      int lock = 0;
+      if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
+
+        // The final threadblock resets the semaphore for subsequent grids.
+        lock = 0;
+      }
+      else {
+        // Otherwise, the semaphore is incremented
+        lock = threadblock_tile_offset.k() + 1;
+      }
+
+      semaphore.release(lock);
+    }
+  }
+
+  CUTLASS_DEVICE
+  void run_overlap_gemm(Params const &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
+                        bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
 
     // Compute threadblock location
     ThreadblockSwizzle threadblock_swizzle;

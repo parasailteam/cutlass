@@ -47,6 +47,8 @@
 
 #include "cutlass/layout/permute.h"
 
+#include "cutlass/overlap_handle.h"
+
 ////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -294,7 +296,7 @@ class Gemm {
     //
     // Data members
     //
-
+    OverlapHandle overlap_handle;
     GemmCoord problem_size;
     TensorRef<ElementA const, LayoutA> ref_A;
     TensorRef<ElementB const, LayoutB> ref_B;
@@ -320,6 +322,7 @@ class Gemm {
     /// Constructs an Arguments structure 
     CUTLASS_HOST_DEVICE
     Arguments(
+      OverlapHandle overlap_handle_,
       GemmCoord problem_size_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,
@@ -332,6 +335,7 @@ class Gemm {
       int const *gather_B_indices_ = nullptr,
       int const *scatter_D_indices_ = nullptr
     ):
+      overlap_handle(overlap_handle_),
       problem_size(problem_size_),
       ref_A(ref_A_),
       ref_B(ref_B_),
@@ -434,6 +438,7 @@ public:
 
     // Initialize the Params structure
     params_ = typename GemmKernel::Params{
+      args.overlap_handle,
       args.problem_size,
       grid_shape,
       args.ref_A.non_const_ref(),
@@ -499,6 +504,65 @@ public:
   }
 
   /// Runs the kernel using initialized state.
+  Status run(bool overlap, bool isRowSyncOrTileSync, int* kernelExecuted, cudaStream_t stream = nullptr) {
+
+    ThreadblockSwizzle threadblock_swizzle;
+    dim3 grid;
+    if (overlap) {
+      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+      grid = {grid.x*grid.y*grid.z, 1, 1};
+    } else {
+      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+    }
+
+    dim3 block(GemmKernel::kThreadCount, 1, 1);
+
+    cudaError_t result;
+
+    int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
+
+    if (smem_size >= (48 << 10)) {
+      result = cudaFuncSetAttribute(Kernel<GemmKernel>,
+                                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                    smem_size);
+
+      if (result != cudaSuccess) {
+        return Status::kErrorInternal;
+      }
+    }
+
+    if (overlap) {
+      if (params_.overlap_handle.isProducer())
+        if (isRowSyncOrTileSync) {
+          cutlass::KernelOverlapProducer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, (volatile uint*) kernelExecuted);
+        } else {
+          cutlass::KernelOverlapProducer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
+        }
+      else
+        if (isRowSyncOrTileSync) {
+          cutlass::KernelOverlapConsumer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
+        } else {
+          cutlass::KernelOverlapConsumer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
+          // void* args[] = {
+          //   &params_,
+          //   &kernelExecuted
+          // };
+          // auto err = cudaLaunchCooperativeKernel((const void*)cutlass::KernelOverlapConsumer<GemmKernel, false>, 
+          // grid, block, args, smem_size, stream);
+
+          // if (err != cudaSuccess) {
+          //   printf("device/gemm.h: 581 Error %s\n", cudaGetErrorString(err));
+          // }
+        }
+    }
+    else
+      cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
+
+    result = cudaGetLastError();
+
+    return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
+  }
+  /// Runs the kernel using initialized state.
   Status operator()(cudaStream_t stream = nullptr) {
     return run(stream);
   }
@@ -513,6 +577,23 @@ public:
     
     if (status == Status::kSuccess) {
       status = run(stream);
+    }
+
+    return status;
+  }
+
+  Status operator()(
+    Arguments const &args,
+    bool overlap,
+    bool rowSyncOrTileSync,
+    int* kernelExecuted,
+    void *workspace = nullptr, 
+    cudaStream_t stream = nullptr) {
+    
+    Status status = initialize(args, workspace);
+    
+    if (status == Status::kSuccess) {
+      status = run(overlap, rowSyncOrTileSync, kernelExecuted, stream);
     }
 
     return status;
@@ -638,7 +719,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     //
     // Data members
     //
-
+    OverlapHandle overlap_handle;
     GemmCoord problem_size;
     TensorRef<ElementA const, LayoutA> ref_A;
     TensorRef<ElementB const, LayoutB> ref_B;
@@ -662,6 +743,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     /// Constructs an Arguments structure 
     CUTLASS_HOST_DEVICE
     Arguments(
+      OverlapHandle overlap_handle_,
       GemmCoord problem_size_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,
@@ -674,6 +756,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
       int *gather_B_indices_ = nullptr,
       int *scatter_D_indices_ = nullptr
     ):
+      overlap_handle(overlap_handle_),
       problem_size(problem_size_),
       ref_A(ref_A_),
       ref_B(ref_B_),
@@ -698,6 +781,7 @@ public:
   /// Helper to construct a transposed equivalent for the underying GEMM operator
   static UnderlyingArguments to_underlying_arguments(Arguments const &args) {
     return UnderlyingArguments(
+      args.overlap_handle,
       {args.problem_size.n(), args.problem_size.m(), args.problem_size.k()},
       {args.ref_B.data(), args.ref_B.stride(0)},
       {args.ref_A.data(), args.ref_A.stride(0)},
@@ -756,6 +840,22 @@ public:
     
     if (status == Status::kSuccess) {
       status = run(stream);
+    }
+
+    return status;
+  }
+
+    /// Runs the kernel using initialized state.
+  Status operator()(
+    Arguments const &args,
+    bool overlap, 
+    void *workspace = nullptr, 
+    cudaStream_t stream = nullptr) {
+    
+    Status status = initialize(args, workspace, stream);
+    
+    if (status == Status::kSuccess) {
+      status = run(overlap, stream);
     }
 
     return status;

@@ -279,7 +279,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       
       handle.producerOrConsumer_ = true;
       double start = timeInMicroSeconds();
-      status = gemm_op1(args1, false, workspace1.get(), producer_stream);
+      status = gemm_op1(args1, workspace1.get(), producer_stream);
       CUTLASS_CHECK(status);
       
       if (status != cutlass::Status::kSuccess) {
@@ -293,7 +293,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       handle.producerOrConsumer_ = false;
       // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
 
-      status = gemm_op2(args2, false, workspace2.get(), consumer_stream);
+      status = gemm_op2(args2, workspace2.get(), consumer_stream);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {

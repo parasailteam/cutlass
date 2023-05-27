@@ -185,6 +185,17 @@ struct GemmHorizontalThreadblockSwizzle {
     return dim3(tiled_shape.n(), tiled_shape.m(), tiled_shape.k());
   }
 
+  CUTLASS_DEVICE
+  GemmCoord get_tile_offset(int log_tile) const {
+    int block_idx_x = RematerializeBlockIdxX();
+    int block_idx_y = RematerializeBlockIdxY();
+    int block_idx_z = RematerializeBlockIdxZ();
+
+    return GemmCoord{(block_idx_y >> log_tile),  //
+                     (block_idx_x << log_tile) + ((block_idx_y) & ((1 << (log_tile)) - 1)),
+                     block_idx_z};
+  }
+
   /// Calculates optimal swizzle width
   CUTLASS_HOST_DEVICE
   int get_log_tile(GemmCoord tiled_shape) const {

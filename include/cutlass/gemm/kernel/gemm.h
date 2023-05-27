@@ -142,6 +142,12 @@ struct Gemm {
 
   /// Shared memory storage structure
   union SharedStorage {
+    struct {
+      int linear_id;
+      int block_idx_x;
+      int block_idx_y;
+      int block_idx_z;
+    } tbInfo;
     typename Mma::SharedStorage main_loop;
     typename Epilogue::SharedStorage epilogue;
   };
@@ -380,11 +386,83 @@ struct Gemm {
   void run_overlap_gemm(Params const &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
                         bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
 
-    // Compute threadblock location
-    ThreadblockSwizzle threadblock_swizzle;
+    uint start_block_idx_y = 0;
+    uint start_block_idx_x = 0;
+    uint start_block_idx_z = 0;
 
+    if (threadIdx.x == 0) {
+      if (isProducerOrConsumer) {
+        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
+          *kernelAllocated = params.overlap_handle.iter;
+        }
+        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numProducerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y*gridDim.z;
+        shared_storage.tbInfo.block_idx_x = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
+        shared_storage.tbInfo.block_idx_y = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+        shared_storage.tbInfo.block_idx_z = params.overlap_handle.blockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+      } else {
+        // printf("441: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
+        shared_storage.tbInfo.linear_id = atomicAdd(params.overlap_handle.numConsumerTBs, 1) - (params.overlap_handle.iter-1)*gridDim.x*gridDim.y * gridDim.z;
+        shared_storage.tbInfo.block_idx_x = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
+        shared_storage.tbInfo.block_idx_y = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];
+        shared_storage.tbInfo.block_idx_z = params.overlap_handle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];
+      }
+
+      // printf("449: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
+    }
+
+    __syncthreads();
+    start_block_idx_x = shared_storage.tbInfo.block_idx_x;
+    start_block_idx_y = shared_storage.tbInfo.block_idx_y;
+    start_block_idx_z = shared_storage.tbInfo.block_idx_z;
+
+    uint block_idx_y = start_block_idx_y;
+    uint block_idx_x = start_block_idx_x;
+    const int remaining_block_idx = (gridDim.x/(3*80))*(3*80);
+    
+    // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
+    // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
+    const uint block_idx_z = start_block_idx_z;
+    ThreadblockSwizzle threadblock_swizzle;
+    // if (threadIdx.x == 0 && !isProducerOrConsumer) printf("476: rowSyncOrTileSync\n");
+
+    // Compute threadblock location
     cutlass::gemm::GemmCoord threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
+
+    // if (isProducerOrConsumer && threadIdx.x == 0 && params.overlap_handle.iter == 1) {
+    //   printf("grid_tiled_shape.m() %d grid_tiled_shape.n() %d tb.m() %d tb.n() %d blockIdx.x %d blockIdx.y %d\n", params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), threadblock_tile_offset.m(), threadblock_tile_offset.n(), blockIdx.x, blockIdx.y);
+    // }
+    // Early exit if CTA is out of range
+    // if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
+    //   params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
+
+    //   return;
+    // }
+    // if (isProducerOrConsumer && threadIdx.x == 0) {
+    //   printf("%d %d\n", start_block_idx_x, start_block_idx_y);
+    // }
+    // if (isProducerOrConsumer == false) {
+    //   // Wait for tile of this thread block to be processed by other kernel
+    //   // if (threadIdx.x == 0)
+    //   // if (threadIdx.x == 0)
+    //     // printf("Waiting %d %d %d\n", block_idx_y, block_idx_x, params.overlap_handle.isBlockRemaining[block_idx_y * gridDim.y + block_idx_x]);
+    //     // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1) 
+    //     {
+    //       // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
+    //         //TODO: Can combine all into one
+    //         if (rowSyncOrTileSync) {
+    //           //Row Sync
+    //           // if (threadIdx.x == 0 && blockIdx.x == 0)
+    //           //   printf("508: %d\n", params.overlap_handle.ySize/Mma::Shape::kN);
+    //           if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
+    //             params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN);
+    //           else
+    //             // #error "fix this"
+    //             params.overlap_handle.waitOnTilesWithSyncValue(block_idx_x, 0, 0, 1);//params.overlap_handle.ySize/Mma::Shape::kN);
+    //         }
+    //       // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
+    //     }
+    // }
 
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
@@ -464,7 +542,7 @@ struct Gemm {
     //
 
     threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
 
     //assume identity swizzle
     MatrixCoord threadblock_offset(

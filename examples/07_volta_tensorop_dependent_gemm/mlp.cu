@@ -356,8 +356,8 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
-      CUDA_CHECK(cudaDeviceSynchronize());
-      // waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
+      // CUDA_CHECK(cudaDeviceSynchronize());
+      waitKernel<<<1,1,0,consumer_stream>>>((uint*)kernelExecuted, handle.iter);
       status = gemm_op2(args2, true, rowSyncOrTileSync, (int*)kernelExecuted, workspace2.get(), consumer_stream);
       CUTLASS_CHECK(status);
 

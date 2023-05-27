@@ -382,8 +382,9 @@ struct Gemm {
     }
   }
 
+  //TODO: Had to make Params non-const, does that have any perf issue?
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params const &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
                         bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
 
     uint start_block_idx_y = 0;
@@ -417,7 +418,6 @@ struct Gemm {
 
     uint block_idx_y = start_block_idx_y;
     uint block_idx_x = start_block_idx_x;
-    const int remaining_block_idx = (gridDim.x/(3*80))*(3*80);
     
     // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
     // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
@@ -441,28 +441,19 @@ struct Gemm {
     // if (isProducerOrConsumer && threadIdx.x == 0) {
     //   printf("%d %d\n", start_block_idx_x, start_block_idx_y);
     // }
-    // if (isProducerOrConsumer == false) {
-    //   // Wait for tile of this thread block to be processed by other kernel
-    //   // if (threadIdx.x == 0)
-    //   // if (threadIdx.x == 0)
-    //     // printf("Waiting %d %d %d\n", block_idx_y, block_idx_x, params.overlap_handle.isBlockRemaining[block_idx_y * gridDim.y + block_idx_x]);
-    //     // if (params.overlap_handle.isBlockRemaining[block_idx_x] == 1) 
-    //     {
-    //       // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
-    //         //TODO: Can combine all into one
-    //         if (rowSyncOrTileSync) {
-    //           //Row Sync
-    //           // if (threadIdx.x == 0 && blockIdx.x == 0)
-    //           //   printf("508: %d\n", params.overlap_handle.ySize/Mma::Shape::kN);
-    //           if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-    //             params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN);
-    //           else
-    //             // #error "fix this"
-    //             params.overlap_handle.waitOnTilesWithSyncValue(block_idx_x, 0, 0, 1);//params.overlap_handle.ySize/Mma::Shape::kN);
-    //         }
-    //       // printf("426: Waiting %d %d\n", block_idx_y, block_idx_x);
-    //     }
-    // }
+    if (isProducerOrConsumer == false) {
+      // Wait for tile of this thread block to be processed by other kernel
+      // for (int col = 0; col < params.overlap_handle.xSize; col += 128)
+      //TODO: Can combine all into one
+      if (rowSyncOrTileSync) {
+        //Row Sync
+        if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
+          params.overlap_handle.waitOnTiles(block_idx_x, 0, 0, 1, params.overlap_handle.ySize/Mma::Shape::kN);
+        else
+          // #error "fix this"
+          params.overlap_handle.waitOnTilesWithSyncValue(block_idx_x, 0, 0, 1);//params.overlap_handle.ySize/Mma::Shape::kN);
+      }
+    }
 
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
@@ -625,6 +616,15 @@ struct Gemm {
 
       semaphore.release(lock);
     }
+
+    if (isProducerOrConsumer && !kSplitKSerial)
+      if (rowSyncOrTileSync) {
+        //Row sync
+        params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1, block_idx_x, block_idx_y);
+      } else {
+        //Tile sync
+        params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, 1);
+      }
   }
 };
 

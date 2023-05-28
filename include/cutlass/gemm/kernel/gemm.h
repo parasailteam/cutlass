@@ -519,7 +519,12 @@ struct Gemm {
 
     if (!kSplitKSerial || gemm_k_iterations > 0) {
       // Compute threadblock-scoped matrix multiply-add
-      mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
+      if (rowSyncOrTileSync || isProducerOrConsumer) {//Row sync or a producer
+        mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
+      } else if (!isProducerOrConsumer) {
+        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators,
+                          params.overlap_handle, rowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
+      }
     }
 
     //
@@ -605,7 +610,13 @@ struct Gemm {
       
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
-
+        if (isProducerOrConsumer) {
+          if (rowSyncOrTileSync) //Row sync
+            params.overlap_handle.setRowStatus(block_idx_x, 0, 0, 1);
+          else {//Tile sync
+            params.overlap_handle.setTileStatus(block_idx_x, block_idx_y, 0, params.overlap_handle.waitValue);
+          }
+        }
         // The final threadblock resets the semaphore for subsequent grids.
         lock = 0;
       }

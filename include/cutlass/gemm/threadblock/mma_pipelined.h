@@ -428,6 +428,214 @@ public:
     gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B);
   }
 
+  /// Perform the specified number of threadblock mainloop iterations of matrix
+  /// multiply-accumulate.  Assumes prologue has been initiated.
+  CUTLASS_DEVICE
+  void gemm_iters(
+    int gemm_k_iterations,        ///< number of threadblock mainloop iterations
+    FragmentC &accum,             ///< [in|out] accumulator tile
+    IteratorA &iterator_A,        ///< [in|out] iterator over A operand in global memory
+    IteratorB &iterator_B,        ///< [in|out] iterator over B operand in global memory
+    OverlapHandle& overlap_handle,
+    bool isRowSyncOrTileSync,
+    cutlass::MatrixCoord tb_offset_A,
+    cutlass::MatrixCoord tb_offset_B,
+    const uint block_idx_x, const uint block_idx_y) {
+    using WarpFragmentA = typename Operator::FragmentA;
+    using WarpFragmentB = typename Operator::FragmentB;
+
+    // Pair of fragments used to overlap shared memory loads and math instructions
+    WarpFragmentA warp_frag_A[2];
+    WarpFragmentB warp_frag_B[2];
+
+    // Load A fragment from shared A
+    this->warp_tile_iterator_A_.set_kgroup_index(0);
+    this->warp_tile_iterator_A_.load(warp_frag_A[0]);
+    ++this->warp_tile_iterator_A_;
+
+    // Load B fragment from shared B
+    this->warp_tile_iterator_B_.set_kgroup_index(0);
+    this->warp_tile_iterator_B_.load(warp_frag_B[0]);
+    ++this->warp_tile_iterator_B_;
+
+    // Pair of fragments used to overlap global memory loads and math instructions;
+    FragmentA tb_frag_A;
+    FragmentB tb_frag_B;
+
+    // Avoid reading out of bounds
+    iterator_A.clear_mask(gemm_k_iterations <= 1);
+    iterator_B.clear_mask(gemm_k_iterations <= 1);
+
+    //
+    // Mainloop
+    //
+    int total_gemm_k_iterations = gemm_k_iterations;
+    // Note: The main loop does not support Base::kWarpGemmIterations == 2.
+    CUTLASS_GEMM_LOOP
+    for (; gemm_k_iterations > 0; --gemm_k_iterations) {
+      //
+      // Loop over GEMM K dimension
+      //
+
+      CUTLASS_PRAGMA_UNROLL
+      for (int warp_mma_k = 0; warp_mma_k < Base::kWarpGemmIterations; ++warp_mma_k) {
+
+        // Load warp-level tiles from shared memory, wrapping to k offset if this is the last group
+        // as the case may be.
+
+        if (warp_mma_k == Base::kWarpGemmIterations - 1) {
+
+          // Write fragments to shared memory
+          this->smem_iterator_A_.store(transform_A_(tb_frag_A));
+
+          this->smem_iterator_B_.store(transform_B_(tb_frag_B));
+
+          // Wait until we have at least one completed global fetch stage
+          gmem_wait();
+
+          // Advance smem read and write stages
+          advance_smem_stages();
+        }
+
+        this->warp_tile_iterator_A_.set_kgroup_index((warp_mma_k + 1) % Base::kWarpGemmIterations);
+        this->warp_tile_iterator_B_.set_kgroup_index((warp_mma_k + 1) % Base::kWarpGemmIterations);
+
+        this->warp_tile_iterator_A_.load(warp_frag_A[(warp_mma_k + 1) % 2]);
+        this->warp_tile_iterator_B_.load(warp_frag_B[(warp_mma_k + 1) % 2]);
+
+        ++this->warp_tile_iterator_A_;
+        ++this->warp_tile_iterator_B_;
+
+        if (warp_mma_k == 0) {
+
+          if (isRowSyncOrTileSync) {
+            // Load fragment from global A
+            tb_frag_A.clear();
+            iterator_A.load(tb_frag_A);
+            ++iterator_A;
+
+            // Load fragment from global B
+            tb_frag_B.clear();
+            iterator_B.load(tb_frag_B);
+            ++iterator_B;
+          } else {
+            // Load fragment from global B
+            tb_frag_B.clear();
+            iterator_B.load(tb_frag_B);
+            ++iterator_B;
+
+            int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+            // if (threadIdx.x == 0 and block_idx_y == 0) {
+            //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d total_gemm_k_iterations %d gemm_k_iterations %d\n", 
+            //   tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK, total_gemm_k_iterations, gemm_k_iterations);
+            // }
+            if (startK%Shape::kN == 0) {
+              // if (block_idx_y == 0)
+              overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+              // g.sync();
+            }
+            // Load fragment from global A
+            tb_frag_A.clear();
+            iterator_A.load(tb_frag_A);
+            ++iterator_A;
+          }
+
+          // Avoid reading out of bounds if this was the last loop iteration
+          iterator_A.clear_mask(gemm_k_iterations <= 2);
+          iterator_B.clear_mask(gemm_k_iterations <= 2);
+        }
+
+        warp_mma(
+          accum,
+          warp_frag_A[warp_mma_k % 2],
+          warp_frag_B[warp_mma_k % 2],
+          accum);
+      }
+    }
+
+  }
+
+  CUTLASS_DEVICE
+  void prologue(
+    IteratorA &iterator_A,      ///< [in|out] iterator over A operand in global memory
+    IteratorB &iterator_B,      ///< [in|out] iterator over B operand in global memory
+    int &gemm_k_iterations,     ///< [in|out] number of threadblock mainloop iterations remaining
+    OverlapHandle& overlap_handle,
+    bool isRowSyncOrTileSync,
+    cutlass::MatrixCoord tb_offset_A,
+    cutlass::MatrixCoord tb_offset_B,
+    const uint block_idx_x, const uint block_idx_y) {
+    // The last kblock is loaded in the prolog
+
+    if (isRowSyncOrTileSync) {
+      // Load A fragment from global A
+      FragmentA tb_frag_A;
+      tb_frag_A.clear();
+      iterator_A.load(tb_frag_A);
+      ++iterator_A;
+
+      // Load B fragment from global B
+      FragmentB tb_frag_B;
+      tb_frag_B.clear();
+      iterator_B.load(tb_frag_B);
+      ++iterator_B;
+
+      // Store A and B fragments to shared
+      this->smem_iterator_A_.store(transform_A_(tb_frag_A));
+      this->smem_iterator_B_.store(transform_B_(tb_frag_B));
+    } else {
+      // Load B fragment from global B
+      FragmentB tb_frag_B;
+      tb_frag_B.clear();
+      iterator_B.load(tb_frag_B);
+      ++iterator_B;
+      this->smem_iterator_B_.store(transform_B_(tb_frag_B));
+
+      int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+      if (startK%Shape::kN == 0)
+          overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+
+      // Load A fragment from global A
+      FragmentA tb_frag_A;
+      tb_frag_A.clear();
+      iterator_A.load(tb_frag_A);
+      ++iterator_A;
+
+      // Store A and B fragments to shared
+      this->smem_iterator_A_.store(transform_A_(tb_frag_A));
+    }
+    // Advance write stage
+    advance_smem_write_stage();
+  }
+
+  /// Perform a threadblock-scoped matrix multiply-accumulate
+  CUTLASS_DEVICE
+  void doWithOverlap(
+    int gemm_k_iterations,                            ///< number of iterations of the mainloop
+    FragmentC &accum,                                 ///< destination accumulator tile
+    IteratorA iterator_A,                             ///< iterator over A operand in global memory
+    IteratorB iterator_B,                             ///< iterator over B operand in global memory
+    FragmentC const &src_accum,
+    OverlapHandle& overlap_handle,
+    bool isRowSyncOrTileSync,
+    cutlass::MatrixCoord tb_offset_A,
+    cutlass::MatrixCoord tb_offset_B,
+    const uint block_idx_x, const uint block_idx_y)
+  {
+    // Prologue
+    prologue(iterator_A, iterator_B, gemm_k_iterations, 
+             overlap_handle, isRowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
+
+    // Wait until we have at least one completed global fetch stage
+    gmem_wait();
+
+    // Perform accumulation in the 'd' output operand
+    accum = src_accum;
+
+    // Perform the MAC-iterations
+    gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B,
+               overlap_handle, isRowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
+  }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////

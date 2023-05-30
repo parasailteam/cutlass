@@ -421,7 +421,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       
       handle1.producerOrConsumer_ = true;
       double start = timeInMicroSeconds();
-      status = gemm_op1(args1, false, workspace1.get(), streams[0]);
+      status = gemm_op1(args1, workspace1.get(), streams[0]);
       CUTLASS_CHECK(status);
       
       if (status != cutlass::Status::kSuccess) {
@@ -442,7 +442,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       double middle2 = timeInMicroSeconds();
       double iterSoftmax = middle2-middle1;
       softmaxTime += iterSoftmax;
-      status = gemm_op2(args2, false, workspace2.get(), streams[0]);
+      status = gemm_op2(args2, workspace2.get(), streams[0]);
       CUTLASS_CHECK(status);
 
       if (status != cutlass::Status::kSuccess) {

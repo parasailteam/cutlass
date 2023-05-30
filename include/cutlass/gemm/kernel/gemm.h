@@ -406,6 +406,7 @@ struct Gemm {
         shared_storage.tbInfo.block_idx_x = params.syncHandle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
         shared_storage.tbInfo.block_idx_y = params.syncHandle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];
         shared_storage.tbInfo.block_idx_z = params.syncHandle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];
+        // printf("shared_storage.tbInfo.block_idx_x %d\n", shared_storage.tbInfo.block_idx_x);
       }
 
       // printf("449: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);

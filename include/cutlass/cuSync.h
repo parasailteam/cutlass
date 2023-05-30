@@ -52,23 +52,37 @@ struct CuSync {
   __device__ __host__ CuSync() {}
 
   CuSync(CuStage<RowMajor> prod, CuStage<RowMajor> cons): prod_(prod), cons_(cons) {
+    printf("prod.numTiles() %ld\n",prod.numTiles());
     CUDA_CHECK(cudaMalloc(&tileStatus, prod.numTiles() * sizeof(int)));
     CUDA_CHECK(cudaMemset((uint*)tileStatus, 0, prod.numTiles() * sizeof(int)));
-    iter = 1;
+    iter = 0;
   }
 
   __device__ void wait(dim3 tile, uint expectedInputStatusVal) {
     if (threadIdx.x == 0) {
       uint linearTileIdx = Sync().wait(tile);
-      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, waitBuffer[linearTileIdx], iter, expectedInputStatusVal, blockIdx.x);
-      while(tileStatus[linearTileIdx + threadIdx.x] < iter * expectedInputStatusVal);
+      // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
+
+      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
+      while(tileStatus[linearTileIdx] < iter * expectedInputStatusVal);
     }
 
     __syncthreads();
   }
 
   __device__ void post(dim3 tile, int value) {
+    __syncthreads();
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+      __threadfence_system();
+      // uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
+      uint linearTileIdx = Sync().wait(tile);
+      atomicAdd((int*)&tileStatus[linearTileIdx], value);
+      
+      // printf("tileStatus[%d] %d\n", linearTileIdx, tileStatus[linearTileIdx]);
+      // tileStatusMap[linearTileIdx] = iter;
+    }
 
+    __syncwarp();
   }
   
   DEVICE_FUNC HOST_FUNC bool isProducer() {return producerOrConsumer_;}

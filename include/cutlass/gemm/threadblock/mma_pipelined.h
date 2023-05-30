@@ -45,6 +45,7 @@
 #include "cutlass/gemm/gemm.h"
 #include "cutlass/gemm/threadblock/mma_base.h"
 
+#include "cutlass/cuSync.h"
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -436,7 +437,7 @@ public:
     FragmentC &accum,             ///< [in|out] accumulator tile
     IteratorA &iterator_A,        ///< [in|out] iterator over A operand in global memory
     IteratorB &iterator_B,        ///< [in|out] iterator over B operand in global memory
-    OverlapHandle& overlap_handle,
+    CuSync& syncHandle,
     bool isRowSyncOrTileSync,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
@@ -531,7 +532,7 @@ public:
             // }
             if (startK%Shape::kN == 0) {
               // if (block_idx_y == 0)
-              overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+              // syncHandle.wait(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, syncHandle.waitValue);
               // g.sync();
             }
             // Load fragment from global A
@@ -560,7 +561,7 @@ public:
     IteratorA &iterator_A,      ///< [in|out] iterator over A operand in global memory
     IteratorB &iterator_B,      ///< [in|out] iterator over B operand in global memory
     int &gemm_k_iterations,     ///< [in|out] number of threadblock mainloop iterations remaining
-    OverlapHandle& overlap_handle,
+    CuSync& syncHandle,
     bool isRowSyncOrTileSync,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
@@ -593,7 +594,7 @@ public:
 
       int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
       if (startK%Shape::kN == 0)
-          overlap_handle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, overlap_handle.waitValue);
+          ;// syncHandle.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, syncHandle.waitValue);
 
       // Load A fragment from global A
       FragmentA tb_frag_A;
@@ -616,7 +617,7 @@ public:
     IteratorA iterator_A,                             ///< iterator over A operand in global memory
     IteratorB iterator_B,                             ///< iterator over B operand in global memory
     FragmentC const &src_accum,
-    OverlapHandle& overlap_handle,
+    CuSync& syncHandle,
     bool isRowSyncOrTileSync,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
@@ -624,7 +625,7 @@ public:
   {
     // Prologue
     prologue(iterator_A, iterator_B, gemm_k_iterations, 
-             overlap_handle, isRowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
+             syncHandle, isRowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
 
     // Wait until we have at least one completed global fetch stage
     gmem_wait();
@@ -634,7 +635,7 @@ public:
 
     // Perform the MAC-iterations
     gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B,
-               overlap_handle, isRowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
+               syncHandle, isRowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
   }
 };
 

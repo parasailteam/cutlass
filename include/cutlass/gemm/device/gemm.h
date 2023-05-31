@@ -504,7 +504,7 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(bool overlap, bool isRowSyncOrTileSync, int* kernelExecuted, cudaStream_t stream = nullptr) {
+  Status run(bool overlap, int* kernelExecuted, cudaStream_t stream = nullptr) {
 
     ThreadblockSwizzle threadblock_swizzle;
     dim3 grid;
@@ -531,16 +531,9 @@ public:
 
     if (overlap) {
       if (params_.custage.isProducer())
-        if (isRowSyncOrTileSync) {
-          cutlass::KernelOverlapProducer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, (volatile uint*) kernelExecuted);
-        } else {
-          cutlass::KernelOverlapProducer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
-        }
+        cutlass::KernelOverlapProducer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, (volatile uint*) kernelExecuted);
       else
-        if (isRowSyncOrTileSync) {
-          cutlass::KernelOverlapConsumer<GemmKernel, true><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
-        } else {
-          cutlass::KernelOverlapConsumer<GemmKernel, false><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
+        cutlass::KernelOverlapConsumer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
           // void* args[] = {
           //   &params_,
           //   &kernelExecuted
@@ -551,7 +544,6 @@ public:
           // if (err != cudaSuccess) {
           //   printf("device/gemm.h: 581 Error %s\n", cudaGetErrorString(err));
           // }
-        }
     }
     else
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
@@ -584,7 +576,6 @@ public:
   Status operator()(
     Arguments const &args,
     bool overlap,
-    bool rowSyncOrTileSync,
     int* kernelExecuted,
     void *workspace = nullptr, 
     cudaStream_t stream = nullptr) {
@@ -592,7 +583,7 @@ public:
     Status status = initialize(args, workspace);
     
     if (status == Status::kSuccess) {
-      status = run(overlap, rowSyncOrTileSync, kernelExecuted, stream);
+      status = run(overlap, kernelExecuted, stream);
     }
 
     return status;

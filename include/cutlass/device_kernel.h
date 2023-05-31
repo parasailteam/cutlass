@@ -74,7 +74,7 @@ void Kernel(typename Operator::Params params) {
   op(params, *shared_storage);
 }
 
-template <typename Operator, bool rowOrTileSync>
+template <typename Operator>
 __global__
 void KernelOverlapProducer(typename Operator::Params params, volatile uint* kernelExecuted) {
   // Dynamic shared memory base pointer
@@ -85,10 +85,10 @@ void KernelOverlapProducer(typename Operator::Params params, volatile uint* kern
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, true, rowOrTileSync, kernelExecuted);
+  op.run_overlap_gemm(params, *shared_storage, true, kernelExecuted);
 }
 
-template <typename Operator, bool rowOrTileSync>
+template <typename Operator>
 __global__
 void KernelOverlapConsumer(typename Operator::Params params, volatile uint* kernelExecuted) {
   // Dynamic shared memory base pointer
@@ -99,7 +99,7 @@ void KernelOverlapConsumer(typename Operator::Params params, volatile uint* kern
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, false, rowOrTileSync, kernelExecuted);
+  op.run_overlap_gemm(params, *shared_storage, false, kernelExecuted);
 }
 
 /// Generic CUTLASS kernel template.

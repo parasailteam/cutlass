@@ -380,7 +380,7 @@ struct Gemm {
   //TODO: Had to make Params non-const, does that have any perf issue?
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
-                        bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
+                        volatile uint* kernelAllocated) {
     CuStageImpl& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
     dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
 
@@ -413,7 +413,7 @@ struct Gemm {
       // Wait for tile of this thread block to be processed by other kernel
       // for (int col = 0; col < params.syncHandle.xSize; col += 128)
       //TODO: Can combine all into one
-      if (rowSyncOrTileSync) {
+      {
         //Row Sync
         if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
           stage.wait({block_idx_x, block_idx_y, block_idx_z});
@@ -487,11 +487,11 @@ struct Gemm {
 
     if (!kSplitKSerial || gemm_k_iterations > 0) {
       // Compute threadblock-scoped matrix multiply-add
-      if (rowSyncOrTileSync || isProducerOrConsumer) {//Row sync or a producer
+      if (isProducerOrConsumer) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       } else if (!isProducerOrConsumer) {
-        // mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators,
-        //                   params.custage, rowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
+        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators,
+                          stage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
       }
     }
 
@@ -579,11 +579,7 @@ struct Gemm {
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
         if (isProducerOrConsumer) {
-          if (rowSyncOrTileSync) //Row sync
-            stage.post({block_idx_x, block_idx_y, block_idx_z});
-          else {//Tile sync
-            stage.post({block_idx_x, block_idx_y, block_idx_z});
-          }
+          stage.post({block_idx_x, block_idx_y, block_idx_z});
         }
         // The final threadblock resets the semaphore for subsequent grids.
         lock = 0;
@@ -597,11 +593,8 @@ struct Gemm {
     }
 
     if (isProducerOrConsumer && !kSplitKSerial)
-      if (rowSyncOrTileSync) //Row sync
-        stage.post({block_idx_x, block_idx_y, block_idx_z});
-      else {//Tile sync
-        stage.post({block_idx_x, block_idx_y, block_idx_z});
-      }
+       //Row sync
+      stage.post({block_idx_x, block_idx_y, block_idx_z});
   }
 };
 

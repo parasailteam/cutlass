@@ -121,6 +121,10 @@ In this example, we later on launch a reference gemm kernel (from CUTLASS utilit
 the output from CUTLASS kernel is same as reference GEMM kernel.
 */
 
+#include<cutlass/cuSync.h>
+
+using CuStageImpl = CuStage<RowMajor, RowSync>;
+
 #include "common.h"
 
 cudaError_t host_matmul(cutlass::gemm::GemmCoord problem_size1,
@@ -590,9 +594,12 @@ int run(int argc, char* arg[]) {
   
   dim3 gridDim = {DIVUP(problem_size1.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size1.n(), ShapeMMAThreadBlock::kN), split_k1};
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
-
-  CuStage<RowMajor> prod(gridDim, tileSize);
-  CuStage<RowMajor> cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), split_k2}, tileSize);
+  
+  RowSync rowSync(gridDim.y, 1);
+  CuStageImpl prod(gridDim, tileSize, rowSync);
+  CuStageImpl cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), 
+                    DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), 
+                    split_k2}, tileSize, rowSync);
   prod.iter = cons.iter = 0;
   CuSync cuSyncHandle(prod, cons);
   cudaError_t result;

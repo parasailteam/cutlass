@@ -296,7 +296,7 @@ class Gemm {
     //
     // Data members
     //
-    CuStage<RowMajor> custage;
+    CuStageImpl custage;
     GemmCoord problem_size;
     TensorRef<ElementA const, LayoutA> ref_A;
     TensorRef<ElementB const, LayoutB> ref_B;
@@ -322,7 +322,7 @@ class Gemm {
     /// Constructs an Arguments structure 
     CUTLASS_HOST_DEVICE
     Arguments(
-      CuStage<RowMajor> custage_,
+      CuStageImpl custage_,
       GemmCoord problem_size_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,
@@ -718,7 +718,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     //
     // Data members
     //
-    CuStage<RowMajor> custage;
+    CuStageImpl custage;
     GemmCoord problem_size;
     TensorRef<ElementA const, LayoutA> ref_A;
     TensorRef<ElementB const, LayoutB> ref_B;
@@ -742,7 +742,7 @@ class Gemm<ElementA_, LayoutA_, ElementB_, LayoutB_, ElementC_,
     /// Constructs an Arguments structure 
     CUTLASS_HOST_DEVICE
     Arguments(
-      CuStage<RowMajor> custage_,
+      CuStageImpl custage_,
       GemmCoord problem_size_,
       TensorRef<ElementA const, LayoutA> ref_A_,
       TensorRef<ElementB const, LayoutB> ref_B_,

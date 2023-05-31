@@ -28,6 +28,8 @@ struct RowMajor {
   }
 };
 
+template<typename Sched, typename Sync> struct CuStage;
+
 struct RowSync {
   uint waitValue_;
   uint postValue_;
@@ -40,12 +42,15 @@ struct RowSync {
     return waitValue_;
   }
 
-  __device__ uint waitTile(dim3 tile, dim3 grid) {
-    return tile.x;
+  template<typename Sched, typename Sync>
+  __device__ void wait(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
+    if (tile.y != 0) return;
+    stage.waitUntil(tile.x, waitValue());
   }
 
-  __device__ uint postTile(dim3 tile, dim3 grid) {
-    return tile.x;
+  template<typename Sched, typename Sync>
+  __device__ void post(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
+    stage.increment(tile.x, postValue());
   }
 
   __device__ uint postValue(dim3 tile, dim3 grid) {
@@ -93,37 +98,34 @@ struct CuStage {
     tileStatus_ = tileStatus;
   }
 
-  __device__ void wait(dim3 tile) {
-    if (isProducer()) return;
+  __device__ void waitUntil(uint tileIdx, uint value) {
     if (threadIdx.x == 0) {
-      if (tile.y == 0) {
-        uint linearTileIdx = syncPolicy_.waitTile(tile, prodGrid_);
-        uint waitValue = syncPolicy_.waitValue();
-        // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
+        // // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
+        // // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
+        while(tileStatus_[tileIdx] < iter * value);
+    }
+    
+    __syncthreads();
+  }
 
-        // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
-        while(tileStatus_[linearTileIdx] < iter * waitValue);
-      }
+  __device__ void increment(uint tileIdx, uint value) {
+    __syncthreads();
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+      __threadfence_system();
+      atomicAdd((int*)&tileStatus_[tileIdx], value);
     }
 
-    __syncthreads();
+    __syncwarp();
+  }
+
+  __device__ void wait(dim3 tile) {
+    if (isProducer()) return;
+    syncPolicy_.wait(*this, tile, prodGrid_);
   }
 
   __device__ void post(dim3 tile) {
     if (!isProducer()) return;
-    __syncthreads();
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-      __threadfence_system();
-      // uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
-      uint linearTileIdx = syncPolicy_.postTile(tile, grid_);
-      uint value = syncPolicy_.postValue(tile, grid_);
-      atomicAdd((int*)&tileStatus_[linearTileIdx], value);
-      
-      // printf("tileStatus[%d] %d\n", linearTileIdx, tileStatus[linearTileIdx]);
-      // tileStatusMap[linearTileIdx] = iter;
-    }
-
-    __syncwarp();
+    syncPolicy_.post(*this, tile, prodGrid_);
   }
 
   __device__ __host__ bool isProducer() {

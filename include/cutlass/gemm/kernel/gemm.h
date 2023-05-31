@@ -391,24 +391,21 @@ struct Gemm {
     uint start_block_idx_x = 0;
     uint start_block_idx_z = 0;
 
+    CuStage<RowMajor>& stage = (isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
+
     if (threadIdx.x == 0) {
       if (isProducerOrConsumer) {
         if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
           *kernelAllocated = params.syncHandle.iter;
         }
-        shared_storage.tbInfo.linear_id = atomicAdd(params.syncHandle.numProducerTBs, 1) - (params.syncHandle.iter-1)*gridDim.x*gridDim.y*gridDim.z;
-        shared_storage.tbInfo.block_idx_x = params.syncHandle.blockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
-        shared_storage.tbInfo.block_idx_y = params.syncHandle.blockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
-        shared_storage.tbInfo.block_idx_z = params.syncHandle.blockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
-      } else {
-        // printf("441: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
-        shared_storage.tbInfo.linear_id = atomicAdd(params.syncHandle.numConsumerTBs, 1) - (params.syncHandle.iter-1)*gridDim.x*gridDim.y * gridDim.z;
-        shared_storage.tbInfo.block_idx_x = params.syncHandle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3];//blockIdx.y;//params.grid_tiled_shape.m();
-        shared_storage.tbInfo.block_idx_y = params.syncHandle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 1];
-        shared_storage.tbInfo.block_idx_z = params.syncHandle.consumerBlockIndexOrder[shared_storage.tbInfo.linear_id*3 + 2];
-        // printf("shared_storage.tbInfo.block_idx_x %d\n", shared_storage.tbInfo.block_idx_x);
       }
-
+      // if (isProducerOrConsumer)
+      // printf("stage.tileCounter %p stage.tileOrder %p stage.iter %d\n", stage.tileCounter, stage.tileOrder, stage.iter);   
+      shared_storage.tbInfo.linear_id = atomicAdd(stage.tileCounter, 1) - (stage.iter-1)*stage.numTiles();
+      shared_storage.tbInfo.block_idx_x = stage.tileOrder[shared_storage.tbInfo.linear_id].x;//blockIdx.y;//params.grid_tiled_shape.m();
+      shared_storage.tbInfo.block_idx_y = stage.tileOrder[shared_storage.tbInfo.linear_id].y;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+      shared_storage.tbInfo.block_idx_z = stage.tileOrder[shared_storage.tbInfo.linear_id].z;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+      // if (isProducerOrConsumer) printf("id %d x %d y %d\n", shared_storage.tbInfo.linear_id, shared_storage.tbInfo.block_idx_x, shared_storage.tbInfo.block_idx_y);
       // printf("449: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
     }
 

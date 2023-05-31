@@ -257,7 +257,8 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
   if (!useCuSync) {
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
-      handle.iter += 1;
+      handle.prod().iter += 1;
+      handle.cons().iter += 1;
       
       typename GemmTy1::Arguments args1{handle,
         problem_size1,  // <- problem size of matrix multiplication
@@ -312,7 +313,8 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
   } else {
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
-      handle.iter += 1;
+      handle.prod().iter += 1;
+      handle.cons().iter += 1;
       handle.producerOrConsumer_ = true;
       typename GemmTy1::Arguments args1{handle,
         problem_size1,  // <- problem size of matrix multiplication
@@ -595,7 +597,7 @@ int run(int argc, char* arg[]) {
 
   CuStage<RowMajor> prod(gridDim, tileSize);
   CuStage<RowMajor> cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), split_k2}, tileSize);
-
+  prod.iter = cons.iter = 0;
   CuSync cuSyncHandle(prod, cons);
   cudaError_t result;
   int epochs = 20;
@@ -696,6 +698,7 @@ int run(int argc, char* arg[]) {
 
   double overlapTime = 0;
   cuSyncHandle.iter = 0;
+  cuSyncHandle.prod().iter = cuSyncHandle.cons().iter = 0;
   if (true) {
     result = runhgemm<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, kernelExecuted, rowSyncOrTileSync, overlapTime, matmul1Time, softmaxTime, matmul2Time, 1);
 

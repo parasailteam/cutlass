@@ -27,26 +27,84 @@ struct RowMajor {
   }
 };
 
-template<typename Sched>
-struct CuStage {
-  dim3 grid_;
-  dim3 tileSize_;
-  __device__ __host__ CuStage() {}
-
-  __device__ __host__ CuStage(dim3 grid, dim3 tileSize) : grid_(grid), tileSize_(tileSize) {}
-  size_t numTiles() {return grid_.x * grid_.y * grid_.z;}
-};
-
 struct RowSync {
   __device__ int wait(dim3 tile) {
     return tile.x;
   } 
 };
 
+template<typename Sched>
+struct CuStage {
+  dim3 grid_;
+  dim3 tileSize_;
+  uint* tileCounter;
+  dim3* tileOrder;
+  volatile uint* tileStatus_;
+  int iter;
+  using Sync = RowSync;
+
+  __device__ __host__ CuStage(): iter(0) {}
+
+  __device__ __host__ CuStage(dim3 grid, dim3 tileSize) : grid_(grid), tileSize_(tileSize), iter(0) {}
+  __host__ __device__ size_t numTiles() {return grid_.x * grid_.y * grid_.z;}
+
+  void buildScheduleBuffer(volatile uint* tileStatus) {
+    CUDA_CHECK(cudaMalloc(&tileCounter, sizeof(int)));
+    CUDA_CHECK(cudaMemset(tileCounter, 0, sizeof(int)));
+    printf("52: tileCounter %p\n", tileCounter);
+
+    CUDA_CHECK(cudaMalloc(&tileOrder, sizeof(*tileOrder) * numTiles()));
+    dim3* hTileOrder = new dim3[numTiles()];
+  
+    for (int x = 0; x < grid_.x; x++) {
+    for (int y = 0; y < grid_.y; y++) {
+    for (int z = 0; z < grid_.z; z++) {
+      size_t id = RowMajor().order(grid_, {x, y, z});
+      hTileOrder[id] = {x, y, z};
+    }}}
+
+    CUDA_CHECK(cudaMemcpy(tileOrder, hTileOrder, 
+                          sizeof(*tileOrder) * numTiles(),
+                          cudaMemcpyHostToDevice));
+    delete[] hTileOrder;
+    tileStatus_ = tileStatus;
+  }
+
+  __device__ void wait(dim3 tile, uint expectedInputStatusVal) {
+    if (threadIdx.x == 0) {
+      uint linearTileIdx = Sync().wait(tile);
+      // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
+
+      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
+      while(tileStatus_[linearTileIdx] < iter * expectedInputStatusVal);
+    }
+
+    __syncthreads();
+  }
+
+  __device__ void post(dim3 tile, int value) {
+    __syncthreads();
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+      __threadfence_system();
+      // uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
+      uint linearTileIdx = Sync().wait(tile);
+      atomicAdd((int*)&tileStatus_[linearTileIdx], value);
+      
+      // printf("tileStatus[%d] %d\n", linearTileIdx, tileStatus[linearTileIdx]);
+      // tileStatusMap[linearTileIdx] = iter;
+    }
+
+    __syncwarp();
+  }
+};
+
 // template<typename Sched1, typename Sched2, typename Sync>
 struct CuSync {
   CuStage<RowMajor> prod_;
+  __host__ __device__ CuStage<RowMajor>& prod() {return prod_;}
   CuStage<RowMajor> cons_;
+  __host__ __device__ CuStage<RowMajor>& cons() {return cons_;}
+
   using Sync = RowSync;
 
   volatile uint* tileStatus;
@@ -60,6 +118,8 @@ struct CuSync {
     CUDA_CHECK(cudaMemset((uint*)tileStatus, 0, prod.numTiles() * sizeof(int)));
     iter = 0;
     buildScheduleBuffer();
+    prod_.buildScheduleBuffer(tileStatus);
+    cons_.buildScheduleBuffer(tileStatus);
   }
 
   void buildScheduleBuffer() {

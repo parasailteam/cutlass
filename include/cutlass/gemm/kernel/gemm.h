@@ -382,26 +382,14 @@ struct Gemm {
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
                         bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
     CuStage<RowMajor>& stage = (isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
+    dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
 
-    if (threadIdx.x == 0) {
-      if (isProducerOrConsumer) {
-        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
-          *stage.kernelExecuted_ = stage.iter;
-        }
-      }
-      // if (isProducerOrConsumer)
-      // printf("stage.tileCounter %p stage.tileOrder %p stage.iter %d\n", stage.tileCounter, stage.tileOrder, stage.iter);   
-      uint linear_id = atomicAdd(stage.tileCounter, 1) - (stage.iter-1)*stage.numTiles();
-      shared_storage.tile_idx = stage.tileOrder[linear_id];
-    }
-
-    __syncthreads();
-    uint block_idx_y = shared_storage.tile_idx.y;
-    uint block_idx_x = shared_storage.tile_idx.x;
+    uint block_idx_y = new_block_idx.y;
+    uint block_idx_x = new_block_idx.x;
     
     // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
     // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
-    const uint block_idx_z = shared_storage.tile_idx.z;
+    const uint block_idx_z = new_block_idx.z;
     ThreadblockSwizzle threadblock_swizzle;
     // if (threadIdx.x == 0 && !isProducerOrConsumer) printf("476: rowSyncOrTileSync\n");
 

@@ -43,6 +43,7 @@ struct CuStage {
   int* kernelExecuted_;
   int iter;
   using Sync = RowSync;
+  bool producerOrConsumer_;
 
   __device__ __host__ CuStage(): iter(0) {}
 
@@ -97,6 +98,26 @@ struct CuStage {
 
     __syncwarp();
   }
+
+  __device__ dim3 init() {
+    
+  }
+  __device__ dim3 tile(dim3* shared_storage) {
+    if (threadIdx.x == 0) {
+      if (producerOrConsumer_) {
+        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
+          *kernelExecuted_ = iter;
+        }
+      }
+      // if (isProducerOrConsumer)
+      // printf("stage.tileCounter %p stage.tileOrder %p stage.iter %d\n", stage.tileCounter, stage.tileOrder, stage.iter);   
+      uint linear_id = atomicAdd(tileCounter, 1) - (iter-1)*numTiles();
+      *shared_storage = tileOrder[linear_id];
+    }
+
+    __syncthreads();
+    return *shared_storage;
+  }
 };
 
 __device__ inline uint glLoad(volatile uint* addr) {
@@ -139,6 +160,8 @@ struct CuSync {
     iter = 0;
     prod_.buildScheduleBuffer(tileStatus);
     cons_.buildScheduleBuffer(tileStatus);
+    prod_.producerOrConsumer_ = true;
+    cons_.producerOrConsumer_ = false;
     CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int)));
     CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(int)));
     prod_.kernelExecuted_ = kernelExecuted;

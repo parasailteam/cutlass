@@ -142,12 +142,7 @@ struct Gemm {
 
   /// Shared memory storage structure
   union SharedStorage {
-    struct {
-      int linear_id;
-      int block_idx_x;
-      int block_idx_y;
-      int block_idx_z;
-    } tbInfo;
+    dim3 tile_idx;
     typename Mma::SharedStorage main_loop;
     typename Epilogue::SharedStorage epilogue;
   };
@@ -401,25 +396,21 @@ struct Gemm {
       }
       // if (isProducerOrConsumer)
       // printf("stage.tileCounter %p stage.tileOrder %p stage.iter %d\n", stage.tileCounter, stage.tileOrder, stage.iter);   
-      shared_storage.tbInfo.linear_id = atomicAdd(stage.tileCounter, 1) - (stage.iter-1)*stage.numTiles();
-      shared_storage.tbInfo.block_idx_x = stage.tileOrder[shared_storage.tbInfo.linear_id].x;//blockIdx.y;//params.grid_tiled_shape.m();
-      shared_storage.tbInfo.block_idx_y = stage.tileOrder[shared_storage.tbInfo.linear_id].y;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
-      shared_storage.tbInfo.block_idx_z = stage.tileOrder[shared_storage.tbInfo.linear_id].z;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+      uint linear_id = atomicAdd(stage.tileCounter, 1) - (stage.iter-1)*stage.numTiles();
+      shared_storage.tile_idx = stage.tileOrder[linear_id];//blockIdx.y;//params.grid_tiled_shape.m();
+      // shared_storage.tbInfo.block_idx_y = stage.tileOrder[shared_storage.tbInfo.linear_id].y;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
+      // shared_storage.tbInfo.block_idx_z = stage.tileOrder[shared_storage.tbInfo.linear_id].z;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
       // if (isProducerOrConsumer) printf("id %d x %d y %d\n", shared_storage.tbInfo.linear_id, shared_storage.tbInfo.block_idx_x, shared_storage.tbInfo.block_idx_y);
       // printf("449: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
     }
 
     __syncthreads();
-    start_block_idx_x = shared_storage.tbInfo.block_idx_x;
-    start_block_idx_y = shared_storage.tbInfo.block_idx_y;
-    start_block_idx_z = shared_storage.tbInfo.block_idx_z;
-
-    uint block_idx_y = start_block_idx_y;
-    uint block_idx_x = start_block_idx_x;
+    uint block_idx_y = shared_storage.tile_idx.y;
+    uint block_idx_x = shared_storage.tile_idx.x;
     
     // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
     // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
-    const uint block_idx_z = start_block_idx_z;
+    const uint block_idx_z = shared_storage.tile_idx.z;
     ThreadblockSwizzle threadblock_swizzle;
     // if (threadIdx.x == 0 && !isProducerOrConsumer) printf("476: rowSyncOrTileSync\n");
 

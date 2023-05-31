@@ -94,19 +94,23 @@ struct CuStage {
   }
 
   __device__ void wait(dim3 tile) {
+    if (isProducer()) return;
     if (threadIdx.x == 0) {
-      uint linearTileIdx = syncPolicy_.waitTile(tile, prodGrid_);
-      uint waitValue = syncPolicy_.waitValue();
-      // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
+      if (tile.y == 0) {
+        uint linearTileIdx = syncPolicy_.waitTile(tile, prodGrid_);
+        uint waitValue = syncPolicy_.waitValue();
+        // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
 
-      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
-      while(tileStatus_[linearTileIdx] < iter * waitValue);
+        // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
+        while(tileStatus_[linearTileIdx] < iter * waitValue);
+      }
     }
 
     __syncthreads();
   }
 
   __device__ void post(dim3 tile) {
+    if (!isProducer()) return;
     __syncthreads();
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
       __threadfence_system();

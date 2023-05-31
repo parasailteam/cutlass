@@ -561,7 +561,7 @@ public:
 
     int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
     if (startK%Shape::kN == 0)
-        ;// custage.waitOnTile(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, custage.waitValue);
+        custage.wait({block_idx_x, block_idx_y, 0});
 
     // Load A fragment from global A
     FragmentA tb_frag_A;

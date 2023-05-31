@@ -409,19 +409,6 @@ struct Gemm {
     // if (isProducerOrConsumer && threadIdx.x == 0) {
     //   printf("%d %d\n", start_block_idx_x, start_block_idx_y);
     // }
-    if (isProducerOrConsumer == false) {
-      // Wait for tile of this thread block to be processed by other kernel
-      // for (int col = 0; col < params.syncHandle.xSize; col += 128)
-      //TODO: Can combine all into one
-      {
-        //Row Sync
-        if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-          stage.wait({block_idx_x, block_idx_y, block_idx_z});
-        else
-          // #error "fix this"
-          stage.wait({block_idx_x, block_idx_y, block_idx_z});
-      }
-    }
 
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||

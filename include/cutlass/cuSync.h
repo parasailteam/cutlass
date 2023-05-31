@@ -40,6 +40,7 @@ struct CuStage {
   uint* tileCounter;
   dim3* tileOrder;
   volatile uint* tileStatus_;
+  int* kernelExecuted_;
   int iter;
   using Sync = RowSync;
 
@@ -98,6 +99,21 @@ struct CuStage {
   }
 };
 
+__device__ inline uint glLoad(volatile uint* addr) {
+  uint val;
+  asm ("ld.volatile.global.u32 {%0}, [%1];" : "=r"(val) : "l"(addr));
+  return val;
+}
+
+__global__ void waitKernel(volatile uint* kernelExecuted, uint expectedValue) {
+  if (threadIdx.x == 0) {
+    uint v = glLoad(kernelExecuted);
+    while(v < expectedValue) {
+      v = glLoad(kernelExecuted);
+    }
+  }
+}
+
 // template<typename Sched1, typename Sched2, typename Sync>
 struct CuSync {
   CuStage<RowMajor> prod_;
@@ -108,9 +124,14 @@ struct CuSync {
   using Sync = RowSync;
 
   volatile uint* tileStatus;
+  int* kernelExecuted;
   int iter;
 
   __device__ __host__ CuSync() {}
+
+  void invokeWaitKernel(cudaStream_t stream) {
+    waitKernel<<<1,1,0,stream>>>((uint*)kernelExecuted, prod().iter);
+  }
 
   CuSync(CuStage<RowMajor> prod, CuStage<RowMajor> cons): prod_(prod), cons_(cons) {
     CUDA_CHECK(cudaMalloc(&tileStatus, prod.numTiles() * sizeof(int)));
@@ -118,8 +139,11 @@ struct CuSync {
     iter = 0;
     prod_.buildScheduleBuffer(tileStatus);
     cons_.buildScheduleBuffer(tileStatus);
+    CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int)));
+    CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(int)));
+    prod_.kernelExecuted_ = kernelExecuted;
   }
-  
+
   DEVICE_FUNC HOST_FUNC bool isProducer() {return producerOrConsumer_;}
   DEVICE_FUNC HOST_FUNC bool isConsumer() {return !producerOrConsumer_;}
 

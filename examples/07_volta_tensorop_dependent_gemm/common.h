@@ -393,22 +393,6 @@ __global__ void printKernel(size_t sz, T* data) {
   }
 }
 
-__device__ inline uint glLoad(volatile uint* addr) {
-  uint val;
-  asm ("ld.volatile.global.u32 {%0}, [%1];" : "=r"(val) : "l"(addr));
-  return val;
-}
-
-
-__global__ void waitKernel(volatile uint* kernelExecuted, uint expectedValue) {
-  if (threadIdx.x == 0) {
-    uint v = glLoad(kernelExecuted);
-    while(v < expectedValue) {
-      v = glLoad(kernelExecuted);
-    }
-  }
-}
-
 template<class T>
 void memset_value(T*f, T v, size_t nelems) 
 {

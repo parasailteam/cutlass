@@ -386,7 +386,7 @@ struct Gemm {
     if (threadIdx.x == 0) {
       if (isProducerOrConsumer) {
         if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
-          *kernelAllocated = params.syncHandle.iter;
+          *stage.kernelExecuted_ = stage.iter;
         }
       }
       // if (isProducerOrConsumer)

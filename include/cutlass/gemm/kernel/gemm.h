@@ -381,11 +381,6 @@ struct Gemm {
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
                         bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
-
-    uint start_block_idx_y = 0;
-    uint start_block_idx_x = 0;
-    uint start_block_idx_z = 0;
-
     CuStage<RowMajor>& stage = (isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
 
     if (threadIdx.x == 0) {
@@ -397,11 +392,7 @@ struct Gemm {
       // if (isProducerOrConsumer)
       // printf("stage.tileCounter %p stage.tileOrder %p stage.iter %d\n", stage.tileCounter, stage.tileOrder, stage.iter);   
       uint linear_id = atomicAdd(stage.tileCounter, 1) - (stage.iter-1)*stage.numTiles();
-      shared_storage.tile_idx = stage.tileOrder[linear_id];//blockIdx.y;//params.grid_tiled_shape.m();
-      // shared_storage.tbInfo.block_idx_y = stage.tileOrder[shared_storage.tbInfo.linear_id].y;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
-      // shared_storage.tbInfo.block_idx_z = stage.tileOrder[shared_storage.tbInfo.linear_id].z;//firstBlockIdxX + blockIdx.x;//blockIdx.x % params.grid_tiled_shape.m();
-      // if (isProducerOrConsumer) printf("id %d x %d y %d\n", shared_storage.tbInfo.linear_id, shared_storage.tbInfo.block_idx_x, shared_storage.tbInfo.block_idx_y);
-      // printf("449: rowSyncOrTileSync %d isProducerOrConsumer %d\n", rowSyncOrTileSync, isProducerOrConsumer);
+      shared_storage.tile_idx = stage.tileOrder[linear_id];
     }
 
     __syncthreads();
@@ -437,10 +428,10 @@ struct Gemm {
       if (rowSyncOrTileSync) {
         //Row Sync
         if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-          params.syncHandle.wait({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.prod_.grid_.y);
+          stage.wait({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.prod_.grid_.y);
         else
           // #error "fix this"
-          params.syncHandle.wait({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.prod_.grid_.y);
+          stage.wait({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.prod_.grid_.y);
       }
     }
 
@@ -601,9 +592,9 @@ struct Gemm {
       if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
         if (isProducerOrConsumer) {
           if (rowSyncOrTileSync) //Row sync
-            params.syncHandle.post({block_idx_x, block_idx_y, block_idx_z}, 1);
+            stage.post({block_idx_x, block_idx_y, block_idx_z}, 1);
           else {//Tile sync
-            params.syncHandle.post({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.waitValue);
+            stage.post({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.waitValue);
           }
         }
         // The final threadblock resets the semaphore for subsequent grids.
@@ -619,9 +610,9 @@ struct Gemm {
 
     if (isProducerOrConsumer && !kSplitKSerial)
       if (rowSyncOrTileSync) //Row sync
-        params.syncHandle.post({block_idx_x, block_idx_y, block_idx_z}, 1);
+        stage.post({block_idx_x, block_idx_y, block_idx_z}, 1);
       else {//Tile sync
-        params.syncHandle.post({block_idx_x, block_idx_y, block_idx_z}, 1);
+        stage.post({block_idx_x, block_idx_y, block_idx_z}, 1);
       }
   }
 };

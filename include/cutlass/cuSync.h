@@ -113,97 +113,19 @@ struct CuSync {
   __device__ __host__ CuSync() {}
 
   CuSync(CuStage<RowMajor> prod, CuStage<RowMajor> cons): prod_(prod), cons_(cons) {
-    printf("prod.numTiles() %ld\n",prod.numTiles());
     CUDA_CHECK(cudaMalloc(&tileStatus, prod.numTiles() * sizeof(int)));
     CUDA_CHECK(cudaMemset((uint*)tileStatus, 0, prod.numTiles() * sizeof(int)));
     iter = 0;
-    buildScheduleBuffer();
     prod_.buildScheduleBuffer(tileStatus);
     cons_.buildScheduleBuffer(tileStatus);
-  }
-
-  void buildScheduleBuffer() {
-    CUDA_CHECK(cudaMalloc(&numProducerTBs, sizeof(int)));
-    CUDA_CHECK(cudaMemset(numProducerTBs, 0, sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&numConsumerTBs, sizeof(int)));
-    CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int)));
-    
-    CUDA_CHECK(cudaMalloc(&blockIndexOrder, sizeof(int) * prod_.numTiles() * 3));
-    int* hBlockIndexOrder = new int[prod_.numTiles() * 3];
-  
-    for (int x = 0; x < prod_.grid_.x; x++) {
-    for (int y = 0; y < prod_.grid_.y; y++) {
-    for (int z = 0; z < prod_.grid_.z; z++) {
-      size_t id = RowMajor().order(prod_.grid_, {x, y, z});
-      hBlockIndexOrder[3*id] = x;
-      hBlockIndexOrder[3*id + 1] = y;
-      hBlockIndexOrder[3*id + 2] = z;
-    }}}
-
-    printf("blockIndexOrder %p\n", blockIndexOrder);
-    CUDA_CHECK(cudaMemcpy(blockIndexOrder, hBlockIndexOrder, 
-                   sizeof(int) * prod_.numTiles() * 3, cudaMemcpyHostToDevice));
-    delete[] hBlockIndexOrder;
-
-    CUDA_CHECK(cudaMalloc(&consumerBlockIndexOrder, sizeof(int) * cons_.numTiles() * 3));
-    CUDA_CHECK(cudaMemset(consumerBlockIndexOrder, 0, sizeof(int) * cons_.numTiles() * 3));
-  
-    printf("Number of first matmul TBs: %d\n", prod_.numTiles());
-    printf("Number of second matmul TBs: %d\n", cons_.numTiles());
-
-    hBlockIndexOrder = new int[cons_.numTiles() * 3];
-
-    for (int x = 0; x < cons_.grid_.x; x++) {
-    for (int z = 0; z < cons_.grid_.z; z++) {
-    for (int y = 0; y < cons_.grid_.y; y++) {
-      size_t id = RowMajor().order(cons_.grid_, {x, y, z});
-      hBlockIndexOrder[3*id] = x;
-      hBlockIndexOrder[3*id + 1] = y;
-      hBlockIndexOrder[3*id + 2] = z;
-    }}}
-
-    CUDA_CHECK(cudaMemcpy(consumerBlockIndexOrder, hBlockIndexOrder, sizeof(int) * cons_.numTiles() * 3, cudaMemcpyHostToDevice));
-  }
-
-  __device__ void wait(dim3 tile, uint expectedInputStatusVal) {
-    if (threadIdx.x == 0) {
-      uint linearTileIdx = Sync().wait(tile);
-      // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
-
-      // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
-      while(tileStatus[linearTileIdx] < iter * expectedInputStatusVal);
-    }
-
-    __syncthreads();
-  }
-
-  __device__ void post(dim3 tile, int value) {
-    __syncthreads();
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-      __threadfence_system();
-      // uint linearTileIdx = xTileIdx*yMaxTiles + yTileIdx;
-      uint linearTileIdx = Sync().wait(tile);
-      atomicAdd((int*)&tileStatus[linearTileIdx], value);
-      
-      // printf("tileStatus[%d] %d\n", linearTileIdx, tileStatus[linearTileIdx]);
-      // tileStatusMap[linearTileIdx] = iter;
-    }
-
-    __syncwarp();
   }
   
   DEVICE_FUNC HOST_FUNC bool isProducer() {return producerOrConsumer_;}
   DEVICE_FUNC HOST_FUNC bool isConsumer() {return !producerOrConsumer_;}
 
   uint waitValue;
-  bool enable_;
   uint tileBatch; 
 
-  int* isBlockRemaining;
-  int* numProducerTBs;
-  int* numConsumerTBs;
-  int* blockIndexOrder;
-  int* consumerBlockIndexOrder;
   //True for producer and false for consumer
   bool producerOrConsumer_;
 
@@ -227,7 +149,6 @@ struct CuSync {
   //   return xGridDim > 0 && yGridDim > 0 && zGridDim > 0;
   // }
 
-  DEVICE_FUNC HOST_FUNC bool enable() {return enable_;}
 
   // HOST_FUNC cudaError_t clearTileStatusMap() {
   //   if (tileStatus == NULL) return cudaErrorInvalidValue;

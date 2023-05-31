@@ -21,7 +21,10 @@ T divup(T x, T y) {
 }
 
 struct RowMajor {
-
+  //overload call operator ()
+  size_t order(dim3 grid, dim3 currTile) {
+    return currTile.x * grid.y * grid.z + currTile.y * grid.z + currTile.z;
+  }
 };
 
 template<typename Sched>
@@ -56,6 +59,50 @@ struct CuSync {
     CUDA_CHECK(cudaMalloc(&tileStatus, prod.numTiles() * sizeof(int)));
     CUDA_CHECK(cudaMemset((uint*)tileStatus, 0, prod.numTiles() * sizeof(int)));
     iter = 0;
+    buildScheduleBuffer();
+  }
+
+  void buildScheduleBuffer() {
+    CUDA_CHECK(cudaMalloc(&numProducerTBs, sizeof(int)));
+    CUDA_CHECK(cudaMemset(numProducerTBs, 0, sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&numConsumerTBs, sizeof(int)));
+    CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int)));
+    
+    CUDA_CHECK(cudaMalloc(&blockIndexOrder, sizeof(int) * prod_.numTiles() * 3));
+    int* hBlockIndexOrder = new int[prod_.numTiles() * 3];
+  
+    for (int x = 0; x < prod_.grid_.x; x++) {
+    for (int y = 0; y < prod_.grid_.y; y++) {
+    for (int z = 0; z < prod_.grid_.z; z++) {
+      size_t id = RowMajor().order(prod_.grid_, {x, y, z});
+      hBlockIndexOrder[3*id] = x;
+      hBlockIndexOrder[3*id + 1] = y;
+      hBlockIndexOrder[3*id + 2] = z;
+    }}}
+
+    printf("blockIndexOrder %p\n", blockIndexOrder);
+    CUDA_CHECK(cudaMemcpy(blockIndexOrder, hBlockIndexOrder, 
+                   sizeof(int) * prod_.numTiles() * 3, cudaMemcpyHostToDevice));
+    delete[] hBlockIndexOrder;
+
+    CUDA_CHECK(cudaMalloc(&consumerBlockIndexOrder, sizeof(int) * cons_.numTiles() * 3));
+    CUDA_CHECK(cudaMemset(consumerBlockIndexOrder, 0, sizeof(int) * cons_.numTiles() * 3));
+  
+    printf("Number of first matmul TBs: %d\n", prod_.numTiles());
+    printf("Number of second matmul TBs: %d\n", cons_.numTiles());
+
+    hBlockIndexOrder = new int[cons_.numTiles() * 3];
+
+    for (int x = 0; x < cons_.grid_.x; x++) {
+    for (int z = 0; z < cons_.grid_.z; z++) {
+    for (int y = 0; y < cons_.grid_.y; y++) {
+      size_t id = RowMajor().order(cons_.grid_, {x, y, z});
+      hBlockIndexOrder[3*id] = x;
+      hBlockIndexOrder[3*id + 1] = y;
+      hBlockIndexOrder[3*id + 2] = z;
+    }}}
+
+    CUDA_CHECK(cudaMemcpy(consumerBlockIndexOrder, hBlockIndexOrder, sizeof(int) * cons_.numTiles() * 3, cudaMemcpyHostToDevice));
   }
 
   __device__ void wait(dim3 tile, uint expectedInputStatusVal) {

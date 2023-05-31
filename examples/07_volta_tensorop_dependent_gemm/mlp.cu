@@ -594,7 +594,7 @@ int run(int argc, char* arg[]) {
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
 
   CuStage<RowMajor> prod(gridDim, tileSize);
-  CuStage<RowMajor> cons(gridDim, tileSize);
+  CuStage<RowMajor> cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), split_k2}, tileSize);
 
   CuSync cuSyncHandle(prod, cons);
   cudaError_t result;
@@ -691,169 +691,10 @@ int run(int argc, char* arg[]) {
   int* kernelExecuted;
   CUDA_CHECK(cudaMalloc(&kernelExecuted, sizeof(int)));
   CUDA_CHECK(cudaMemset(kernelExecuted, 0, sizeof(int)));
-  
-  int* numProducerTBs;
-  CUDA_CHECK(cudaMalloc(&numProducerTBs, sizeof(int)));
-  CUDA_CHECK(cudaMemset(numProducerTBs, 0, sizeof(int)));
-  cuSyncHandle.numProducerTBs = numProducerTBs;
-  int* numConsumerTBs;
-  CUDA_CHECK(cudaMalloc(&numConsumerTBs, sizeof(int) * 80));
-  CUDA_CHECK(cudaMemset(numConsumerTBs, 0, sizeof(int) * 80));
-  cuSyncHandle.numConsumerTBs = numConsumerTBs;
-  
-  double overlapTime = 0;
-  
-  int* dBlockIndexOrder;
-  CUDA_CHECK(cudaMalloc(&dBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3));
-  CUDA_CHECK(cudaMemset(dBlockIndexOrder, 0, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3));
   printf("gridDim.x %d gridDim.y %d\n", gridDim.x, gridDim.y);
-  int* hBlockIndexOrder = new int[gridDim.x * gridDim.y * gridDim.z * 3];
-  int linearid = 0;
-  int Ny = 1;
-
-  if (split_k1 > 1 && split_k2 > 1) {
-    for (int x = 0; x < gridDim.x; x++) {
-      // const int YBLOCK = gridDim.y;
-    // for (int yblock = 0; yblock < gridDim.y; yblock++) {
-      for (int z = 0; z < gridDim.z; z++) {
-      for (int y = 0; y < gridDim.y; y++) {
-        hBlockIndexOrder[linearid] = x;
-        hBlockIndexOrder[linearid + 1] = y;
-        hBlockIndexOrder[linearid + 2] = z;
-        // printf("linearid %d x %d y %d\n", linearid, x, y);
-        linearid += 3;
-      }
-    // }
-    }
-    }
-  } else {
-    // for (int x = 0; x < gridDim.x; x += 1) {
-    //   // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
-    //   //   for (int y = 0; y < N_Y; y++) {
-    //   //     hBlockIndexOrder[linearid] = xx;
-    //   //     hBlockIndexOrder[linearid + 1] = y;
-    //   //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
-    //   //     linearid += 2;
-    //   //   }
-    //   // }
-    //   for (int y = 0; y < gridDim.y; y += Ny) {
-    //     for (int z = 0; z < gridDim.z; z++) {
-    //       for (int yy = 0; yy < Ny && yy + y < gridDim.y; yy++) {
-    //         hBlockIndexOrder[linearid] = x;
-    //         hBlockIndexOrder[linearid + 1] = y + yy;
-    //         hBlockIndexOrder[linearid + 2] = z;
-    //         // printf("linearid %d x %d y %d\n", linearid, xx, y);
-    //         linearid += 3;
-    //       }
-    //     }
-    //   }
-    // }
-
-    for (int x = 0; x < gridDim.x; x++) {
-    for (int z = 0; z < gridDim.z; z++) {
-    for (int y = 0; y < gridDim.y; y++) {
-        hBlockIndexOrder[linearid] = x;
-        hBlockIndexOrder[linearid + 1] = y;
-        hBlockIndexOrder[linearid + 2] = z;
-        // printf("linearid %d x %d y %d\n", linearid, x, y);
-        linearid += 3;
-    }
-    }
-    }
-  }
-
-  printf("dBlockIndexOrder %p\n", dBlockIndexOrder);
-  CUDA_CHECK(cudaMemcpy(dBlockIndexOrder, hBlockIndexOrder, sizeof(int) * gridDim.x * gridDim.y * gridDim.z * 3, cudaMemcpyHostToDevice));
-  
   dim3 grid2Dim = {DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), split_k2};
-  int* dConsumerBlockIndexOrder;
-  CUDA_CHECK(cudaMalloc(&dConsumerBlockIndexOrder, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));
-  CUDA_CHECK(cudaMemset(dConsumerBlockIndexOrder, 0, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3));
-  printf("Number of first matmul TBs: %d\n", gridDim.x*gridDim.y*gridDim.z);
-  printf("Number of second matmul TBs: %d\n", grid2Dim.x*grid2Dim.y*grid2Dim.z);
 
-  hBlockIndexOrder = new int[grid2Dim.x * grid2Dim.y * grid2Dim.z * 3];
-  linearid = 0;
-
-  if (split_k1 > 1 && split_k2 > 1) {
-    for (int x = 0; x < grid2Dim.x; x++) {
-    for (int z = 0; z < grid2Dim.z; z++) {
-    for (int y = 0; y < grid2Dim.y; y++) {
-      hBlockIndexOrder[linearid] = x;
-      hBlockIndexOrder[linearid + 1] = y;
-      hBlockIndexOrder[linearid + 2] = z;
-      // printf("linearid %d x %d y %d\n", linearid, x, y);
-      linearid += 3;
-    }
-    }
-    }
-  } else {
-    // for (int x = 0; x < grid2Dim.x; x += 1) {
-    //   // for (int xx = x; xx < min(N_X, gridDim.x - x); xx++) {
-    //   //   for (int y = 0; y < N_Y; y++) {
-    //   //     hBlockIndexOrder[linearid] = xx;
-    //   //     hBlockIndexOrder[linearid + 1] = y;
-    //   //     // printf("linearid %d x %d y %d\n", linearid, xx, 0);
-    //   //     linearid += 2;
-    //   //   }
-    //   // }
-    //   for (int y = 0; y < grid2Dim.y; y += Ny) {
-    //     for (int z = 0; z < grid2Dim.z; z++) {
-    //       for (int yy = 0; yy < Ny && yy + y < grid2Dim.y; yy++) {
-    //         hBlockIndexOrder[linearid] = x;
-    //         hBlockIndexOrder[linearid + 1] = y + yy;
-    //         hBlockIndexOrder[linearid + 2] = z;
-    //         // printf("linearid %d x %d y %d z %d\n", linearid, x, y + yy, z);
-    //         linearid += 3;
-    //       }
-    //     }
-    //   }
-    // }
-
-    for (int x = 0; x < grid2Dim.x; x++) {
-    for (int z = 0; z < grid2Dim.z; z++) {
-    for (int y = 0; y < grid2Dim.y; y++) {
-      hBlockIndexOrder[linearid] = x;
-      hBlockIndexOrder[linearid + 1] = y;
-      hBlockIndexOrder[linearid + 2] = z;
-      // printf("linearid %d x %d y %d\n", linearid, x, y);
-      linearid += 3;
-    }
-    }
-    }
-  }
-
-  // printf("803:\n");
-  CUDA_CHECK(cudaMemcpy(dConsumerBlockIndexOrder, hBlockIndexOrder, sizeof(int) * grid2Dim.x * grid2Dim.y * grid2Dim.z * 3, cudaMemcpyHostToDevice));
-
-  int* dIsRemainingBlock;
-  int* hIsRemainingBlock = new int[gridDim.x*gridDim.y];
-  CUDA_CHECK(cudaMalloc(&dIsRemainingBlock, sizeof(int)*gridDim.x*gridDim.y));
-  int totalBlocks = 0;
-  // const int startRemainingBlockId = ((gridDim.x*gridDim.y)/(3*80))*(3*80) + 1;
-  printf("Number of TBs: %d\n", gridDim.x*gridDim.y*gridDim.z);
-  // if ((gridDim.x*gridDim.y*gridDim.z)%80 == 0) {
-  //   printf("Invalid\n");
-  //   return 0;
-  // }
-  // printf("startRemainingBlockId %d to %d\n", startRemainingBlockId, gridDim.x*gridDim.y);
-  // for (int x = 0; x < gridDim.x; x++) {
-  //   for (int y = 0; y < gridDim.y; y++) {
-  //     if (totalBlocks >= startRemainingBlockId) {
-  //       hIsRemainingBlock[totalBlocks] = 1;
-  //     } else {
-  //       hIsRemainingBlock[totalBlocks] = 0;
-  //     }
-
-  //     totalBlocks++;
-  //   }
-  // }
-
-  CUDA_CHECK(cudaMemcpy(dIsRemainingBlock, hIsRemainingBlock, sizeof(int) * gridDim.x * gridDim.y, cudaMemcpyHostToDevice));
-
-  cuSyncHandle.isBlockRemaining = dIsRemainingBlock;
-  cuSyncHandle.blockIndexOrder = dBlockIndexOrder;
-  cuSyncHandle.consumerBlockIndexOrder = dConsumerBlockIndexOrder;
+  double overlapTime = 0;
   cuSyncHandle.iter = 0;
   if (true) {
     result = runhgemm<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, kernelExecuted, rowSyncOrTileSync, overlapTime, matmul1Time, softmaxTime, matmul2Time, 1);

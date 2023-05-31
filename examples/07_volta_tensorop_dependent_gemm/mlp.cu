@@ -205,7 +205,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
                      int iters = 100) {
   // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
   // instantiated CUTLASS kernel
-  typename GemmTy1::Arguments args1{handle,
+  typename GemmTy1::Arguments args1{handle.prod(),
                                      problem_size1,  // <- problem size of matrix multiplication
                                      tensor_a.device_ref(),  // <- reference to matrix A on device
                                      tensor_b.device_ref(),  // <- reference to matrix B on device
@@ -214,7 +214,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
                                      {alpha, beta},          // <- tuple of alpha and beta
                                      split_k1};        // <- k-dimension split factor
   
-  typename GemmTy2::Arguments args2{handle,
+  typename GemmTy2::Arguments args2{handle.cons(),
                                      problem_size2,  // <- problem size of matrix multiplication
                                      tensor_c.device_ref(),  // <- reference to matrix A on device
                                      tensor_d.device_ref(),  // <- reference to matrix B on device
@@ -259,7 +259,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       handle.prod().iter += 1;
       handle.cons().iter += 1;
       
-      typename GemmTy1::Arguments args1{handle,
+      typename GemmTy1::Arguments args1{handle.prod(),
         problem_size1,  // <- problem size of matrix multiplication
         tensor_a.device_ref(),  // <- reference to matrix A on device
         tensor_b.device_ref(),  // <- reference to matrix B on device
@@ -268,7 +268,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
         {alpha, beta},          // <- tuple of alpha and beta
         split_k1};        // <- k-dimension split factor
 
-      typename GemmTy2::Arguments args2{handle,
+      typename GemmTy2::Arguments args2{handle.cons(),
         problem_size2,  // <- problem size of matrix multiplication
         tensor_c.device_ref(),  // <- reference to matrix A on device
         tensor_d.device_ref(),  // <- reference to matrix B on device
@@ -310,12 +310,13 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       execTime += end-start;
     }
   } else {
+    printf("313\n");
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
       handle.prod().iter += 1;
       handle.cons().iter += 1;
       handle.producerOrConsumer_ = true;
-      typename GemmTy1::Arguments args1{handle,
+      typename GemmTy1::Arguments args1{handle.prod(),
         problem_size1,  // <- problem size of matrix multiplication
         tensor_a.device_ref(),  // <- reference to matrix A on device
         tensor_b.device_ref(),  // <- reference to matrix B on device
@@ -325,7 +326,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
         split_k1};        // <- k-dimension split factor
       
       handle.producerOrConsumer_ = false;
-      typename GemmTy2::Arguments args2{handle,
+      typename GemmTy2::Arguments args2{handle.cons(),
         problem_size2,  // <- problem size of matrix multiplication
         tensor_c.device_ref(),  // <- reference to matrix A on device
         tensor_d.device_ref(),  // <- reference to matrix B on device
@@ -335,13 +336,11 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
         split_k2};        // <- k-dimension split factor
       
       double start = timeInMicroSeconds();
-      // printf("337\n");
       // dim3 grid = {problem_size1.m()/128, 1, 1};
       // int lastBlockIdxX = (grid.x/80)*80;
       status = gemm_op1(args1, true, rowSyncOrTileSync, NULL, workspace1.get(), producer_stream);
       CUTLASS_CHECK(status);
 
-      
       if (status != cutlass::Status::kSuccess) {
         return cudaErrorUnknown;
       }
@@ -368,7 +367,6 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
         return cudaErrorUnknown;
       }
       CUDA_CHECK(cudaDeviceSynchronize());
-      // printf("370\n");
       // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
       double end = timeInMicroSeconds();

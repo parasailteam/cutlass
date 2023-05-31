@@ -72,7 +72,7 @@ struct CuStage {
     tileStatus_ = tileStatus;
   }
 
-  __device__ void wait(dim3 tile, uint expectedInputStatusVal) {
+  __device__ void wait(dim3 tile, uint expectedInputStatusVal = 48) {
     if (threadIdx.x == 0) {
       uint linearTileIdx = Sync().wait(tile);
       // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
@@ -97,6 +97,10 @@ struct CuStage {
     }
 
     __syncwarp();
+  }
+
+  __device__ __host__ bool isProducer() {
+    return producerOrConsumer_;
   }
 
   __device__ dim3 init() {

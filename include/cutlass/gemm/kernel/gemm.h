@@ -72,7 +72,7 @@ struct Gemm {
 
   /// Parameters structure
   struct Params {
-    CuSync syncHandle;
+    CuStage<RowMajor> custage;
     cutlass::gemm::GemmCoord problem_size;
     cutlass::gemm::GemmCoord grid_tiled_shape;
     int swizzle_log_tile;
@@ -97,11 +97,11 @@ struct Gemm {
     //
 
     CUTLASS_HOST_DEVICE
-    Params(): swizzle_log_tile(0), semaphore(0), gemm_k_size(0), syncHandle() { }
+    Params(): swizzle_log_tile(0), semaphore(0), gemm_k_size(0), custage() { }
 
     CUTLASS_HOST_DEVICE
     Params(
-      CuSync syncHandle,
+      CuStage<RowMajor> custage,
       cutlass::gemm::GemmCoord const & problem_size,
       cutlass::gemm::GemmCoord const & grid_tiled_shape,
       typename Mma::IteratorA::TensorRef ref_A,
@@ -114,7 +114,7 @@ struct Gemm {
       int const *gather_B_indices = nullptr,
       int const *scatter_D_indices = nullptr
     ):
-      syncHandle(syncHandle),
+      custage(custage),
       problem_size(problem_size),
       grid_tiled_shape(grid_tiled_shape),
       swizzle_log_tile(ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
@@ -381,7 +381,7 @@ struct Gemm {
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
                         bool rowSyncOrTileSync, volatile uint* kernelAllocated) {
-    CuStage<RowMajor>& stage = (isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
+    CuStage<RowMajor>& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
     dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
 
     uint block_idx_y = new_block_idx.y;
@@ -416,10 +416,10 @@ struct Gemm {
       if (rowSyncOrTileSync) {
         //Row Sync
         if (kSplitKSerial && params.grid_tiled_shape.k() > 1)
-          stage.wait({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.prod_.grid_.y);
+          stage.wait({block_idx_x, block_idx_y, block_idx_z});
         else
           // #error "fix this"
-          stage.wait({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.prod_.grid_.y);
+          stage.wait({block_idx_x, block_idx_y, block_idx_z});
       }
     }
 
@@ -490,8 +490,8 @@ struct Gemm {
       if (rowSyncOrTileSync || isProducerOrConsumer) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       } else if (!isProducerOrConsumer) {
-        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators,
-                          params.syncHandle, rowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
+        // mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators,
+        //                   params.custage, rowSyncOrTileSync, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
       }
     }
 
@@ -582,7 +582,7 @@ struct Gemm {
           if (rowSyncOrTileSync) //Row sync
             stage.post({block_idx_x, block_idx_y, block_idx_z}, 1);
           else {//Tile sync
-            stage.post({block_idx_x, block_idx_y, block_idx_z}, params.syncHandle.waitValue);
+            stage.post({block_idx_x, block_idx_y, block_idx_z}, 1);
           }
         }
         // The final threadblock resets the semaphore for subsequent grids.

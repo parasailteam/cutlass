@@ -437,6 +437,7 @@ public:
     FragmentC &accum,             ///< [in|out] accumulator tile
     IteratorA &iterator_A,        ///< [in|out] iterator over A operand in global memory
     IteratorB &iterator_B,        ///< [in|out] iterator over B operand in global memory
+    bool producerOrConsumer,
     CuStageImpl& custage,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
@@ -507,21 +508,21 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
-          // Load fragment from global B
-          tb_frag_B.clear();
-          iterator_B.load(tb_frag_B);
-          ++iterator_B;
-
+          
           int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
           // if (threadIdx.x == 0 and block_idx_y == 0) {
           //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d total_gemm_k_iterations %d gemm_k_iterations %d\n", 
           //   tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK, total_gemm_k_iterations, gemm_k_iterations);
           // }
-          if (startK%Shape::kN == 0) {
-            // if (block_idx_y == 0)
-            // custage.wait(tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0, custage.waitValue);
-            // g.sync();
+          if (!producerOrConsumer && startK%Shape::kN == 0) {
+            dim3 tile = {tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+            custage.wait(tile);
           }
+          // Load fragment from global B
+          tb_frag_B.clear();
+          iterator_B.load(tb_frag_B);
+          ++iterator_B;
+
           // Load fragment from global A
           tb_frag_A.clear();
           iterator_A.load(tb_frag_A);
@@ -547,22 +548,18 @@ public:
     IteratorA &iterator_A,      ///< [in|out] iterator over A operand in global memory
     IteratorB &iterator_B,      ///< [in|out] iterator over B operand in global memory
     int &gemm_k_iterations,     ///< [in|out] number of threadblock mainloop iterations remaining
+    bool producerOrConsumer,
     CuStageImpl& custage,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
     const uint block_idx_x, const uint block_idx_y) {
     // The last kblock is loaded in the prolog
-    // Load B fragment from global B
-    FragmentB tb_frag_B;
-    tb_frag_B.clear();
-    iterator_B.load(tb_frag_B);
-    ++iterator_B;
-    this->smem_iterator_B_.store(transform_B_(tb_frag_B));
-
+    
     int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-    if (startK%Shape::kN == 0)
-        custage.wait({block_idx_x, block_idx_y, 0});
-
+    if (!producerOrConsumer && startK%Shape::kN == 0) {
+      dim3 tile = {tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+      custage.wait(tile);
+    }
     // Load A fragment from global A
     FragmentA tb_frag_A;
     tb_frag_A.clear();
@@ -571,6 +568,13 @@ public:
 
     // Store A and B fragments to shared
     this->smem_iterator_A_.store(transform_A_(tb_frag_A));
+    // Load B fragment from global B
+    FragmentB tb_frag_B;
+    tb_frag_B.clear();
+    iterator_B.load(tb_frag_B);
+    ++iterator_B;
+    this->smem_iterator_B_.store(transform_B_(tb_frag_B));
+
     // Advance write stage
     advance_smem_write_stage();
   }
@@ -583,13 +587,14 @@ public:
     IteratorA iterator_A,                             ///< iterator over A operand in global memory
     IteratorB iterator_B,                             ///< iterator over B operand in global memory
     FragmentC const &src_accum,
+    bool producerOrConsumer,
     CuStageImpl& custage,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
     const uint block_idx_x, const uint block_idx_y)
   {
     // Prologue
-    prologue(iterator_A, iterator_B, gemm_k_iterations, 
+    prologue(iterator_A, iterator_B, gemm_k_iterations, producerOrConsumer,
              custage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
 
     // Wait until we have at least one completed global fetch stage
@@ -599,7 +604,7 @@ public:
     accum = src_accum;
 
     // Perform the MAC-iterations
-    gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B,
+    gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B, producerOrConsumer,
                custage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
   }
 };

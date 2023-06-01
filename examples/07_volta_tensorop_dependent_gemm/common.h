@@ -134,7 +134,6 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 #include "cutlass/util/reference/host/tensor_fill.h"
 #include "cutlass/util/tensor_view_io.h"
 #include "helper.h"
-#include "cutlass/overlap_handle.h"
 #include <curand_kernel.h>
 
 #include <time.h>

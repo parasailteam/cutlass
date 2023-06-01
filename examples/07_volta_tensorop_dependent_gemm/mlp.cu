@@ -123,7 +123,17 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 
 #include<cutlass/cuSync.h>
 
-using CuStageImpl = CuStage<RowMajor, RowSync>;
+#ifdef ROWSYNC 
+  using CuStageImpl = CuStage<RowMajor, RowSync>;
+  using Sync = RowSync;
+#elif TILESYNC
+  using CuStageImpl = CuStage<RowMajor, TileSync>;
+  using Sync = TileSync;
+#else
+  #error "Unknown Synchronization"
+#endif 
+
+using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
 
 #include "common.h"
 
@@ -198,7 +208,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
-                     CuSync& handle,
+                     CuSyncImpl& handle,
                      cudaStream_t producer_stream, cudaStream_t consumer_stream,
                      cudaEvent_t event,
                      double& execTime,
@@ -313,7 +323,6 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       execTime += end-start;
     }
   } else {
-    printf("313\n");
     // Launch initialized CUTLASS kernel
     for (int r = 0; r < iters; r++) {
       handle.prod().iter += 1;
@@ -395,7 +404,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
                      cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
-                     CuSync& handle,
+                     CuSyncImpl& handle,
                      cudaStream_t producer_stream, cudaStream_t consumer_stream,
                      cudaEvent_t event,
                      double& execTime,
@@ -593,13 +602,21 @@ int run(int argc, char* arg[]) {
   dim3 gridDim = {DIVUP(problem_size1.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size1.n(), ShapeMMAThreadBlock::kN), split_k1};
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
   
-  RowSync rowSync(gridDim.y, 1);
-  CuStageImpl prod(gridDim, tileSize, rowSync);
+#if ROWSYNC
+  using Sync = RowSync;
+  RowSync sync(gridDim.y, 1);
+#elif TILESYNC
+  using Sync = TileSync;
+  TileSync sync;
+#else
+  #error "Unknown Policy"
+#endif
+  CuStageImpl prod(gridDim, tileSize, sync);
   CuStageImpl cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), 
                     DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), 
-                    split_k2}, tileSize, rowSync);
+                    split_k2}, tileSize, sync);
   prod.iter = cons.iter = 0;
-  CuSync cuSyncHandle(prod, cons);
+  CuSyncImpl cuSyncHandle(prod, cons);
   cudaError_t result;
   int epochs = 20;
   int warmup = 10;

@@ -477,7 +477,7 @@ struct Gemm {
       if (isProducerOrConsumer) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       } else if (!isProducerOrConsumer) {
-        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators,
+        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, isProducerOrConsumer,
                           stage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
       }
     }
@@ -566,7 +566,8 @@ struct Gemm {
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
         if (isProducerOrConsumer) {
-          stage.post({block_idx_x, block_idx_y, block_idx_z});
+          dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
+          stage.post(tile);
         }
         // The final threadblock resets the semaphore for subsequent grids.
         lock = 0;
@@ -579,9 +580,10 @@ struct Gemm {
       semaphore.release(lock);
     }
 
-    if (isProducerOrConsumer && !kSplitKSerial)
-       //Row sync
-      stage.post({block_idx_x, block_idx_y, block_idx_z});
+    if (isProducerOrConsumer && !kSplitKSerial) {
+      dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
+      stage.post(tile);
+    }
   }
 };
 

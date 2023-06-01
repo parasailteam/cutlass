@@ -1,8 +1,8 @@
 #include <assert.h>
 #include <stdio.h>
 
-#ifndef __OVERLAP_HANDLE__
-#define __OVERLAP_HANDLE__
+#ifndef __CUSYNC__
+#define __CUSYNC__
 
 #define HOST_FUNC __host__
 #define DEVICE_FUNC __device__
@@ -29,6 +29,7 @@ struct RowMajor {
 };
 
 template<typename Sched, typename Sync> struct CuStage;
+//todo: make args constant
 
 struct RowSync {
   uint waitValue_;
@@ -43,18 +44,32 @@ struct RowSync {
   }
 
   template<typename Sched, typename Sync>
-  __device__ void wait(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
+  __device__ void wait(CuStage<Sched, Sync>& stage, dim3& tile, dim3& grid) {
     if (tile.y != 0) return;
     stage.waitUntil(tile.x, waitValue());
   }
 
   template<typename Sched, typename Sync>
-  __device__ void post(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
+  __device__ void post(CuStage<Sched, Sync>& stage, dim3& tile, dim3& grid) {
     stage.increment(tile.x, postValue());
   }
 
-  __device__ uint postValue(dim3 tile, dim3 grid) {
+  __device__ uint postValue(dim3& tile, dim3& grid) {
     return 1;
+  }
+};
+
+struct TileSync {
+  __device__ __host__ TileSync() {}
+
+  template<typename Sched, typename Sync>
+  __device__ void wait(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
+    stage.waitUntil(tile.y * grid.x + tile.x, 1);
+  }
+
+  template<typename Sched, typename Sync>
+  __device__ void post(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
+    stage.increment(tile.y * grid.x + tile.x, 1);
   }
 };
 
@@ -99,9 +114,10 @@ struct CuStage {
   }
 
   __device__ void waitUntil(uint tileIdx, uint value) {
-    if (threadIdx.x == 0) {
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
         // // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
         // // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
+        // printf("119: tileIdx %d tileStatus_[tileIdx] %d \n", tileIdx, tileStatus_[tileIdx]);
         while(tileStatus_[tileIdx] < iter * value);
     }
     
@@ -118,14 +134,14 @@ struct CuStage {
     __syncwarp();
   }
 
-  __device__ void wait(dim3 tile) {
+  __device__ void wait(dim3& tile) {
     if (isProducer()) return;
     syncPolicy_.wait(*this, tile, prodGrid_);
   }
 
-  __device__ void post(dim3 tile) {
-    if (!isProducer()) return;
-    syncPolicy_.post(*this, tile, prodGrid_);
+  __device__ void post(dim3& tile) {
+    // if (!isProducer()) return;
+    syncPolicy_.post(*this, tile, grid_);
   }
 
   __device__ __host__ bool isProducer() {
@@ -168,14 +184,12 @@ __global__ void waitKernel(volatile uint* kernelExecuted, uint expectedValue) {
   }
 }
 
-// template<typename Sched1, typename Sched2, typename Sync>
+template<typename Sched1, typename Sched2, typename Sync>
 struct CuSync {
-  CuStage<RowMajor, RowSync> prod_;
-  __host__ __device__ CuStage<RowMajor, RowSync>& prod() {return prod_;}
-  CuStage<RowMajor, RowSync> cons_;
-  __host__ __device__ CuStage<RowMajor, RowSync>& cons() {return cons_;}
-
-  using Sync = RowSync;
+  CuStage<Sched1, Sync> prod_;
+  __host__ __device__ CuStage<Sched1, Sync>& prod() {return prod_;}
+  CuStage<Sched2, Sync> cons_;
+  __host__ __device__ CuStage<Sched2, Sync>& cons() {return cons_;}
 
   volatile uint* tileStatus;
   int* kernelExecuted;
@@ -187,7 +201,7 @@ struct CuSync {
     waitKernel<<<1,1,0,stream>>>((uint*)kernelExecuted, prod().iter);
   }
 
-  CuSync(CuStage<RowMajor, RowSync> prod, CuStage<RowMajor, RowSync> cons): prod_(prod), cons_(cons) {
+  CuSync(CuStage<Sched1, Sync> prod, CuStage<Sched2, Sync> cons): prod_(prod), cons_(cons) {
     CUDA_CHECK(cudaMalloc(&tileStatus, prod.numTiles() * sizeof(int)));
     CUDA_CHECK(cudaMemset((uint*)tileStatus, 0, prod.numTiles() * sizeof(int)));
     iter = 0;

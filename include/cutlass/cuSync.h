@@ -33,28 +33,23 @@ template<typename Sched, typename Sync> struct CuStage;
 
 struct RowSync {
   uint waitValue_;
-  uint postValue_;
   __device__ __host__ uint waitValue() {return waitValue_;}
-  __device__ __host__ uint postValue() {return postValue_;}
-  __device__ __host__ RowSync()  : waitValue_(0), postValue_(0) {}
-  __device__ __host__ RowSync(uint waitValue, uint postValue) : waitValue_(waitValue), postValue_(postValue) {}
+  __device__ __host__ RowSync()  : waitValue_(0) {}
+  __device__ __host__ RowSync(uint waitValue) : waitValue_(waitValue) {}
   
-  __device__ uint waitValue(dim3 tile, dim3 grid) {
+  __device__ uint waitValue(const dim3& tile, const dim3& grid) {
     return waitValue_;
   }
 
-  template<typename Sched, typename Sync>
-  __device__ void wait(CuStage<Sched, Sync>& stage, dim3& tile, dim3& grid) {
-    if (tile.y != 0) return;
-    stage.waitUntil(tile.x, waitValue());
+  __device__ uint tileIndex(const dim3& tile, const dim3& grid) {
+    return tile.x;
   }
 
-  template<typename Sched, typename Sync>
-  __device__ void post(CuStage<Sched, Sync>& stage, dim3& tile, dim3& grid) {
-    stage.increment(tile.x, postValue());
+  __device__ bool isSync(const dim3& tile) {
+    return tile.y == 0;
   }
 
-  __device__ uint postValue(dim3& tile, dim3& grid) {
+  __device__ uint postValue(const dim3& tile, const dim3& grid) {
     return 1;
   }
 };
@@ -62,14 +57,15 @@ struct RowSync {
 struct TileSync {
   __device__ __host__ TileSync() {}
 
-  template<typename Sched, typename Sync>
-  __device__ void wait(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
-    stage.waitUntil(tile.y * grid.x + tile.x, 1);
+  __device__ __host__ uint waitValue() {return 1;}
+  __device__ __host__ uint postValue() {return 1;}
+
+  __device__ constexpr uint tileIndex(const dim3& tile, const dim3& grid) {
+    return tile.y * grid.x + tile.x;
   }
 
-  template<typename Sched, typename Sync>
-  __device__ void post(CuStage<Sched, Sync>& stage, dim3 tile, dim3 grid) {
-    stage.increment(tile.y * grid.x + tile.x, 1);
+  __device__ bool isSync(const dim3& tile) {
+    return true;
   }
 };
 
@@ -114,34 +110,36 @@ struct CuStage {
   }
 
   __device__ void waitUntil(uint tileIdx, uint value) {
+    
+  }
+
+  __device__ void increment(uint tileIdx, uint value) {
+    
+  }
+
+  __device__ void wait(const dim3& tile) {
+    if (isProducer()) return;
+    if (!syncPolicy_.isSync(tile)) return;
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
         // // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
         // // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
         // printf("119: tileIdx %d tileStatus_[tileIdx] %d \n", tileIdx, tileStatus_[tileIdx]);
-        while(tileStatus_[tileIdx] < iter * value);
+        uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
+        while(tileStatus_[idx] < iter * syncPolicy_.waitValue());
     }
     
     __syncthreads();
   }
 
-  __device__ void increment(uint tileIdx, uint value) {
+  __device__ void post(const dim3& tile) {
     __syncthreads();
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
       __threadfence_system();
-      atomicAdd((int*)&tileStatus_[tileIdx], value);
+      uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
+      atomicAdd((int*)&tileStatus_[idx], syncPolicy_.postValue(tile, prodGrid_));
     }
 
     __syncwarp();
-  }
-
-  __device__ void wait(dim3& tile) {
-    if (isProducer()) return;
-    syncPolicy_.wait(*this, tile, prodGrid_);
-  }
-
-  __device__ void post(dim3& tile) {
-    // if (!isProducer()) return;
-    syncPolicy_.post(*this, tile, grid_);
   }
 
   __device__ __host__ bool isProducer() {

@@ -604,7 +604,7 @@ int run(int argc, char* arg[]) {
   
 #if ROWSYNC
   using Sync = RowSync;
-  RowSync sync(gridDim.y, 1);
+  RowSync sync(gridDim.y);
 #elif TILESYNC
   using Sync = TileSync;
   TileSync sync;

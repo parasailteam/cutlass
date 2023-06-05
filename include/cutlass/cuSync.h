@@ -33,7 +33,6 @@ template<typename Sched, typename Sync> struct CuStage;
 
 struct RowSync {
   uint waitValue_;
-  __device__ __host__ uint waitValue() {return waitValue_;}
   __device__ __host__ RowSync()  : waitValue_(0) {}
   __device__ __host__ RowSync(uint waitValue) : waitValue_(waitValue) {}
   
@@ -57,11 +56,11 @@ struct RowSync {
 struct TileSync {
   __device__ __host__ TileSync() {}
 
-  __device__ __host__ uint waitValue() {return 1;}
-  __device__ __host__ uint postValue() {return 1;}
+  __device__ __host__ uint waitValue(const dim3& tile, const dim3& grid) {return 1;}
+  __device__ __host__ uint postValue(const dim3& tile, const dim3& grid) {return 1;}
 
   __device__ constexpr uint tileIndex(const dim3& tile, const dim3& grid) {
-    return tile.y * grid.x + tile.x;
+    return tile.x * grid.y + tile.y;
   }
 
   __device__ bool isSync(const dim3& tile) {
@@ -119,13 +118,12 @@ struct CuStage {
 
   __device__ void wait(const dim3& tile) {
     if (isProducer()) return;
+    
     if (!syncPolicy_.isSync(tile)) return;
+
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-        // // printf("%d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, iter, expectedInputStatusVal, tile.x);
-        // // printf("waitBuffer[%d] %d iter %d expectedInputStatusVal %d blockIdx.x %d\n", linearTileIdx, tileStatus[linearTileIdx], iter, expectedInputStatusVal, tile.x);
-        // printf("119: tileIdx %d tileStatus_[tileIdx] %d \n", tileIdx, tileStatus_[tileIdx]);
         uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
-        while(tileStatus_[idx] < iter * syncPolicy_.waitValue());
+        while(tileStatus_[idx] < iter * syncPolicy_.waitValue(tile, prodGrid_));
     }
     
     __syncthreads();
@@ -135,8 +133,8 @@ struct CuStage {
     __syncthreads();
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
       __threadfence_system();
-      uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
-      atomicAdd((int*)&tileStatus_[idx], syncPolicy_.postValue(tile, prodGrid_));
+      uint idx = syncPolicy_.tileIndex(tile, grid_);
+      atomicAdd((int*)&tileStatus_[idx], syncPolicy_.postValue(tile, grid_));
     }
 
     __syncwarp();

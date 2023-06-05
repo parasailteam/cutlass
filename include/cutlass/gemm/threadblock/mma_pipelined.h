@@ -508,16 +508,12 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
-          
           int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-          // if (threadIdx.x == 0 and block_idx_y == 0) {
-          //   printf("tb_offset_A.column() %d tb_offset_A.row() %d %d %d startK %d total_gemm_k_iterations %d gemm_k_iterations %d\n", 
-          //   tb_offset_A.column(), tb_offset_A.row(), tb_offset_B.column(), tb_offset_B.row(), startK, total_gemm_k_iterations, gemm_k_iterations);
-          // }
           if (!producerOrConsumer && startK%Shape::kN == 0) {
             dim3 tile = {tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
             custage.wait(tile);
           }
+
           // Load fragment from global B
           tb_frag_B.clear();
           iterator_B.load(tb_frag_B);

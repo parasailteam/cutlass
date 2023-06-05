@@ -123,6 +123,7 @@ struct CuStage {
 
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
         uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
+        // printf("126: idx %d tile {%d, %d, %d} %d\n", idx, tile.x, tile.y, tile.z, tileStatus_[idx]);
         while(tileStatus_[idx] < iter * syncPolicy_.waitValue(tile, prodGrid_));
     }
     
@@ -135,6 +136,7 @@ struct CuStage {
       __threadfence_system();
       uint idx = syncPolicy_.tileIndex(tile, grid_);
       atomicAdd((int*)&tileStatus_[idx], syncPolicy_.postValue(tile, grid_));
+      // printf("138: idx %d tile {%d, %d, %d} tileStatus_[idx] %d\n", idx, tile.x, tile.y, tile.z, tileStatus_[idx]);
     }
 
     __syncwarp();

@@ -433,7 +433,7 @@ public:
   /// multiply-accumulate.  Assumes prologue has been initiated.
   CUTLASS_DEVICE
   void gemm_iters(
-    int gemm_k_iterations,        ///< number of threadblock mainloop iterations
+    uint gemm_k_iterations,        ///< number of threadblock mainloop iterations
     FragmentC &accum,             ///< [in|out] accumulator tile
     IteratorA &iterator_A,        ///< [in|out] iterator over A operand in global memory
     IteratorB &iterator_B,        ///< [in|out] iterator over B operand in global memory
@@ -470,7 +470,7 @@ public:
     //
     // Mainloop
     //
-    int total_gemm_k_iterations = gemm_k_iterations;
+    uint total_gemm_k_iterations = gemm_k_iterations;
     // Note: The main loop does not support Base::kWarpGemmIterations == 2.
     CUTLASS_GEMM_LOOP
     for (; gemm_k_iterations > 0; --gemm_k_iterations) {
@@ -508,9 +508,9 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
-          int startK = tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+          uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
           if (!producerOrConsumer && startK%Shape::kN == 0) {
-            dim3 tile = {tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+            dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
             custage.wait(tile);
           }
 
@@ -551,9 +551,9 @@ public:
     const uint block_idx_x, const uint block_idx_y) {
     // The last kblock is loaded in the prolog
     
-    int startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+    uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
     if (!producerOrConsumer && startK%Shape::kN == 0) {
-      dim3 tile = {tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+      dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
       custage.wait(tile);
     }
     // Load A fragment from global A

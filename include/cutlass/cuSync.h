@@ -108,12 +108,12 @@ struct CuStage {
     tileStatus_ = tileStatus;
   }
 
-  __device__ void wait(const dim3& tile) {
+  __device__ void wait(const dim3& tile, uint waitingThread = 0) {
     if (isProducer()) return;
     
     if (!syncPolicy_.isSync(tile)) return;
 
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+    if (threadIdx.x == waitingThread && threadIdx.y == 0 && threadIdx.z == 0) {
         uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
         while(tileStatus_[idx] < iter * syncPolicy_.waitValue(tile, prodGrid_));
     }
@@ -121,10 +121,10 @@ struct CuStage {
     __syncthreads();
   }
 
-  __device__ void post(const dim3& tile) {
+  __device__ void post(const dim3& tile, uint postThread = 0) {
     if (!isProducer()) return;
     __syncthreads();
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+    if (threadIdx.x == postThread && threadIdx.y == 0 && threadIdx.z == 0) {
       __threadfence_system();
       uint idx = syncPolicy_.tileIndex(tile, grid_);
       atomicAdd((int*)&tileStatus_[idx], syncPolicy_.postValue(tile, grid_));

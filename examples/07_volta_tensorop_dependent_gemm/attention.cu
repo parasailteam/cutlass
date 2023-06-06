@@ -156,8 +156,10 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   if (enableOverlap) {
     // && tileM == 0) printf("TileM %d TileN %d ROW %d\n", TileM, TileN, ROW);
     // handle1.waitOnTilesWithSyncValue(tileM, 0, 0, 1);
-    // if (tileM < M/TileM)
-    //   handle1.waitOnTile(tileM + 1, 0, 0, (N*3)/TileN);
+    // if (tileM < M/TileM) {
+    //   {tileM + 1, 0, 0};
+    //   handle1.waitOnTile();
+    // }
   }
 
   for (uint ti = 0; ti < RowTile && ROW < M; ti++) {
@@ -170,16 +172,14 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
     for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
       if (enableOverlap) {
         if (ti == 0) {
-          // handle1.waitOnTile(tileM, COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
+          dim3 tile = {tileM, COL/TileN, 0};
+          cons1.wait(tile, (COL/TileN)%NTHREADS);
         }
       }
       T xq = XQKV[ROW * 3 * N + COL];
       if (enableOverlap  && ti == 0) {
-        // if (rowSyncOrTileSync) {
-
-        // } else {
-        //   handle1.waitOnTile(tileM, N/TileN + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
-        // }
+        dim3 tile = {tileM, N/TileN + COL/TileN, 0};
+        cons1.wait(tileM, (COL/TileN)%NTHREADS);
       }
       T xk = XQKV[ROW * 3 * N + (COL + N)];
       // if (enableOverlap) {
@@ -206,18 +206,20 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       //   if (rowSyncOrTileSync) {
 
       //   } else {
-      //     handle1.waitOnTile(tileM, N/TileN*2 + COL/TileN, 0, 1, (COL/TileN)%NTHREADS);
-      //   }
-      // }
+      if (enableOverlap && ti == 0) {
+        dim3 tile = {tileM, N/TileN*2 + COL/TileN, 0};
+        cons1.wait(tile, (COL/TileN)%NTHREADS);
+      }
       __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * (float)XQKV[ROW* 3 * N + (COL + 2 * N)]))/sum) : (__half)0.0f;
       // if (COL == 0 && blockIdx.x < 8) {
       //   printf("199: %f %f %f %f %f\n", r, p, (float)v, (float)xqkRows[COL], (float)XQKV[ROW*N + COL]);
       // }
       out[ROW * N + COL] = v;
-      // if (enableOverlap && !rowSyncOrTileSync) {
-      //   // printf("206: COL %d TileN %d threadIdx.x %d\n", COL, TileN, threadIdx.x);
-      //   handle2.setTiles(tileM, COL/TileN, 0, 1, ((COL/TileN)*TileN)%NTHREADS);
-      // }
+      if (enableOverlap) {
+        // printf("206: COL %d TileN %d threadIdx.x %d\n", COL, TileN, threadIdx.x);
+        dim3 tile = {tileM, COL/TileN, 0};
+        prod2.post(tile, ((COL/TileN)*TileN)%NTHREADS);
+      }
     }
     __syncthreads();
 
@@ -484,7 +486,8 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       status = gemm_op1(args1, true, NULL, workspace1.get(), streams[0]);
       CUTLASS_CHECK(status);
 
-      
+      CUDA_CHECK(cudaDeviceSynchronize());
+
       if (status != cutlass::Status::kSuccess) {
         return cudaErrorUnknown;
       }
@@ -501,7 +504,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
-      // CUDA_CHECK(cudaDeviceSynchronize());
+      CUDA_CHECK(cudaDeviceSynchronize());
       // waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], handle1.iter);
       // printf("498:\n");
       selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, true><<<DIVUP(problem_size1.m(), SoftmaxRowTile), SoftmaxThreads, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
@@ -510,7 +513,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                                                                  1.0f,
                                                                  randStates, 
                                                                  handle.cons(), handle2.prod());
-      // CUDA_CHECK(cudaDeviceSynchronize());
+      CUDA_CHECK(cudaDeviceSynchronize());
       // print_kernel<<<1, 32, 0, streams[1]>>>(tensor_dropout.device_data());
       handle2.producerOrConsumer_ = false;
       typename GemmTy2::Arguments args2{handle2.cons(),
@@ -870,17 +873,22 @@ int run(int argc, char* arg[]) {
   using Sync1 = TileSync;
   using Sync2 = Sync1;
   TileSync sync1;
-  TileSync sync2;
+  TileSync sync2; // sync value here is not one
 #else
   #error "Unknown Policy"
 #endif
   CuStageImpl prod1(gridDim1, tileSize, sync1);
   CuStageImpl cons1(gridDim2, {SoftmaxRowTile, 1, 1}, sync1);
   CuStageImpl prod2(gridDim2, {SoftmaxRowTile, 1, 1}, sync2);
-  CuStageImpl cons2(gridDim2, tileSize, sync2);
-  
+  CuStageImpl cons2(gridDim3, tileSize, sync2);
+
   CuSyncImpl handle1(prod1, cons1);
   CuSyncImpl handle2(prod2, cons2);
+  handle2.iter = 0;
+  handle1.iter = 0;
+  handle1.prod().iter = handle1.cons().iter = 0;
+  handle2.prod().iter = handle2.cons().iter = 0;
+  
   double overlapTime = 0;
   matmul1Time = 0;
   softmaxTime = 0;

@@ -508,11 +508,11 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
-          uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-          if (!producerOrConsumer && startK%Shape::kN == 0) {
-            dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
-            custage.wait(tile);
-          }
+          // uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+          // if (!producerOrConsumer && startK%Shape::kN == 0) {
+          //   dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+          //   custage.wait(tile);
+          // }
 
           // Load fragment from global B
           tb_frag_B.clear();
@@ -552,10 +552,10 @@ public:
     // The last kblock is loaded in the prolog
     
     uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-    if (!producerOrConsumer && startK%Shape::kN == 0) {
-      dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
-      custage.wait(tile);
-    }
+    // if (!producerOrConsumer && startK%Shape::kN == 0) {
+    //   dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+    //   custage.wait(tile);
+    // }
     // Load A fragment from global A
     FragmentA tb_frag_A;
     tb_frag_A.clear();

@@ -383,7 +383,7 @@ struct Gemm {
                         volatile uint* kernelAllocated) {
     CuStageImpl& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
     dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
-
+    
     uint block_idx_y = new_block_idx.y;
     uint block_idx_x = new_block_idx.x;
     

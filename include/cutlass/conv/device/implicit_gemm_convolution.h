@@ -276,6 +276,7 @@ public:
     params_.ptr_D = args.ref_D.data();
     params_.output_op = args.output_op;
     params_.semaphore = static_cast<int *>(workspace);
+    params_.custage = args.custage;
 
     return Status::kSuccess;
   }
@@ -299,6 +300,32 @@ public:
   }
 
   /// Runs the kernel using initialized state.
+  Status run(bool overlap, cudaStream_t stream = nullptr) {
+
+    ThreadblockSwizzle threadblock_swizzle;
+
+    dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+    dim3 block(32 * kWarpCount, 1, 1);
+
+    int smem_size = int(sizeof(typename UnderlyingKernel::SharedStorage));
+
+    if (overlap) {
+      if (params_.custage.isProducer()) {
+        cutlass::KernelOverlapProducer<UnderlyingKernel><<<grid, block, smem_size, stream>>>(params_);
+      } else {
+        cutlass::KernelOverlapConsumer<UnderlyingKernel><<<grid, block, smem_size, stream>>>(params_);
+      }
+    } else {
+      cutlass::Kernel<UnderlyingKernel><<<grid, block, smem_size, stream>>>(params_);
+    }
+
+    cudaError_t result = cudaGetLastError();
+
+    return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
+  }
+
+
+  /// Runs the kernel using initialized state.
   Status operator()(cudaStream_t stream = nullptr) {
     return run(stream);
   }
@@ -313,6 +340,20 @@ public:
     
     if (status == Status::kSuccess) {
       status = run(stream);
+    }
+
+    return status;
+  }
+  Status operator()(
+    Arguments const &args,
+    bool overlap,
+    void *workspace = nullptr, 
+    cudaStream_t stream = nullptr) {
+    
+    Status status = initialize(args, workspace, stream);
+    
+    if (status == Status::kSuccess) {
+      status = run(overlap, stream);
     }
 
     return status;

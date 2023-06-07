@@ -136,7 +136,7 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
 
 #include "common.h"
-const int SoftmaxRowTile = 1;
+const int SoftmaxRowTile = 4;
 
 
 template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, uint RowTile, bool enableOverlap>
@@ -153,6 +153,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   curandState* localRandState = &randStates[linearThreadId];
   // __shared__ shRandStates[sizeof(curandState) * NTHREADS];
   uint ROW = blockIdx.x * RowTile;
+  const uint tileRow = blockIdx.x;
   const uint tileM = ROW/TileM;
   if (enableOverlap) {
     // && tileM == 0) printf("TileM %d TileN %d ROW %d\n", TileM, TileN, ROW);
@@ -180,7 +181,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       T xq = XQKV[ROW * 3 * N + COL];
       if (enableOverlap  && ti == 0) {
         dim3 tile = {tileM, N/TileN + COL/TileN, 0};
-        cons1.wait(tileM, (COL/TileN)%NTHREADS);
+        cons1.wait(tile, (COL/TileN)%NTHREADS);
       }
       T xk = XQKV[ROW * 3 * N + (COL + N)];
       // if (enableOverlap) {
@@ -216,7 +217,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       //   printf("199: %f %f %f %f %f\n", r, p, (float)v, (float)xqkRows[COL], (float)XQKV[ROW*N + COL]);
       // }
       out[ROW * N + COL] = v;
-      if (enableOverlap) {
+      if (enableOverlap && ti == SoftmaxRowTile - 1) {
         // printf("206: COL %d TileN %d threadIdx.x %d\n", COL, TileN, threadIdx.x);
         dim3 tile = {tileM, COL/TileN, 0};
         prod2.post(tile, ((COL/TileN)*TileN)%NTHREADS);
@@ -416,7 +417,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
     status = gemm_op2.initialize(args2, workspace2.get());
     CUTLASS_CHECK(status);
   }
-  const int SoftmaxThreads = 256;
+  const int SoftmaxThreads = ShapeMMAThreadBlock::kN;
   execTime = 0;
   if (!useCuSync) {
     // Launch initialized CUTLASS kernel
@@ -519,7 +520,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       typename GemmTy2::Arguments args2{handle2.cons(),
         problem_size2,  // <- problem size of matrix multiplication
         tensor_dropout.device_ref(),  // <- reference to matrix A on device
-        tensor_w2.device_ref(),  // <- reference to matrix B on device
+        tensor_w2.device_ref(),  // <- reference toatrix m on device
         tensor_out.device_ref(),  // <- reference to matrix C on device
         tensor_out.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
@@ -868,13 +869,13 @@ int run(int argc, char* arg[]) {
 #if ROWSYNC
   using Sync1 = RowSync;
   RowSync sync1(gridDim1.y);
-  using Sync2 = BatchedRowSync;
-  Sync2 sync2(); 
+  using Sync2 = RowSync;
+  Sync2 sync2(ShapeMMAThreadBlock::kM, SoftmaxRowTile); 
 #elif TILESYNC
   using Sync1 = TileSync;
   using Sync2 = Sync1;
   TileSync sync1;
-  TileSync sync2(SoftmaxRowTile, 1); // sync value here is not one
+  TileSync sync2(SoftmaxRowTile, 1);
 #else
   #error "Unknown Policy"
 #endif

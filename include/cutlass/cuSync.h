@@ -33,8 +33,11 @@ template<typename Sched, typename Sync> struct CuStage;
 
 struct RowSync {
   uint waitValue_;
-  __device__ __host__ RowSync()  : waitValue_(0) {}
-  __device__ __host__ RowSync(uint waitValue) : waitValue_(waitValue) {}
+  uint postValue_;
+  __device__ __host__ RowSync()  : waitValue_(0), postValue_(0) {}
+  __device__ __host__ RowSync(uint waitValue) : waitValue_(waitValue), postValue_(1) {}
+  __device__ __host__ RowSync(uint waitValue, uint postValue) : 
+    waitValue_(waitValue), postValue_(postValue) {}
   
   __device__ uint waitValue(const dim3& tile, const dim3& grid) {
     return waitValue_;
@@ -49,7 +52,7 @@ struct RowSync {
   }
 
   __device__ uint postValue(const dim3& tile, const dim3& grid) {
-    return 1;
+    return postValue_;
   }
 };
 

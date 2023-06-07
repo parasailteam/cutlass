@@ -126,6 +126,7 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 #include <vector>
 
 #include "cutlass/cutlass.h"
+#include "cutlass/gemm/device/cusyncgemm.h"
 #include "cutlass/gemm/device/gemm.h"
 #include "cutlass/util/host_tensor.h"
 #include "cutlass/util/reference/device/gemm.h"
@@ -272,7 +273,7 @@ using GemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
                                          SwizzleThreadBlock,
                                          2, 8, 8, true>;
 
-using OverlapGemm1 = cutlass::gemm::device::Gemm<ElementInputA,
+using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
                                          LayoutInputA,
                                          ElementInputB,
                                          LayoutInputB,

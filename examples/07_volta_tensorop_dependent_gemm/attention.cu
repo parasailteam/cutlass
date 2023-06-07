@@ -146,8 +146,9 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
                                               CuStageImpl cons1, CuStageImpl prod2) {
   extern __shared__ half xqkRows[];
 
-  __syncwarp();
   __shared__ AT sum;
+  if (enableOverlap)
+    prod2.tile(nullptr);
   int linearThreadId = blockIdx.x * blockDim.x + threadIdx.x;
   curandState* localRandState = &randStates[linearThreadId];
   // __shared__ shRandStates[sizeof(curandState) * NTHREADS];
@@ -504,7 +505,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
       // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
-      CUDA_CHECK(cudaDeviceSynchronize());
+      handle.invokeWaitKernel(streams[1]);
       // waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], handle1.iter);
       // printf("498:\n");
       selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, true><<<DIVUP(problem_size1.m(), SoftmaxRowTile), SoftmaxThreads, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
@@ -513,7 +514,6 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                                                                  1.0f,
                                                                  randStates, 
                                                                  handle.cons(), handle2.prod());
-      CUDA_CHECK(cudaDeviceSynchronize());
       // print_kernel<<<1, 32, 0, streams[1]>>>(tensor_dropout.device_data());
       handle2.producerOrConsumer_ = false;
       typename GemmTy2::Arguments args2{handle2.cons(),
@@ -527,6 +527,7 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
     
       // waitKernel<<<1,1,0,streams[2]>>>((uint*)&kernelExecuted[1], handle2.iter);
       // CUDA_CHECK(cudaDeviceSynchronize());
+      handle2.invokeWaitKernel(streams[2]);
       status = gemm_op2(args2, true, NULL, workspace2.get(), streams[2]);
       CUTLASS_CHECK(status);
 
@@ -873,7 +874,7 @@ int run(int argc, char* arg[]) {
   using Sync1 = TileSync;
   using Sync2 = Sync1;
   TileSync sync1;
-  TileSync sync2; // sync value here is not one
+  TileSync sync2(SoftmaxRowTile, 1); // sync value here is not one
 #else
   #error "Unknown Policy"
 #endif

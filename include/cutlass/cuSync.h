@@ -54,10 +54,15 @@ struct RowSync {
 };
 
 struct TileSync {
-  __device__ __host__ TileSync() {}
+  uint waitValue_;
+  uint postValue_;
 
-  __device__ __host__ uint waitValue(const dim3& tile, const dim3& grid) {return 1;}
-  __device__ __host__ uint postValue(const dim3& tile, const dim3& grid) {return 1;}
+  __device__ __host__ TileSync(): waitValue_(1), postValue_(1) {}
+  __device__ __host__ TileSync(uint waitValue, uint postValue): 
+    waitValue_(waitValue), postValue_(postValue) {}
+  
+  __device__ __host__ uint waitValue(const dim3& tile, const dim3& grid) {return waitValue_;}
+  __device__ __host__ uint postValue(const dim3& tile, const dim3& grid) {return postValue_;}
 
   __device__ constexpr uint tileIndex(const dim3& tile, const dim3& grid) {
     return tile.x * grid.y + tile.y;
@@ -149,12 +154,14 @@ struct CuStage {
       }
       // if (isProducerOrConsumer)
       // printf("stage.tileCounter %p stage.tileOrder %p stage.iter %d\n", stage.tileCounter, stage.tileOrder, stage.iter);   
-      uint linear_id = atomicAdd(tileCounter, 1) - (iter-1)*numTiles();
-      *shared_storage = tileOrder[linear_id];
+      if (shared_storage) {
+        uint linear_id = atomicAdd(tileCounter, 1) - (iter-1)*numTiles();
+        *shared_storage = tileOrder[linear_id];
+      }
     }
 
     __syncthreads();
-    return *shared_storage;
+    return (shared_storage) ? *shared_storage : dim3{0,0,0};
   }
 };
 

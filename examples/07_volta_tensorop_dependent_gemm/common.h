@@ -273,39 +273,6 @@ using GemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
                                          SwizzleThreadBlock,
                                          2, 8, 8, true>;
 
-using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
-
-using OverlapGemm2 = OverlapGemm1;
-
-using OverlapGemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
-                                         2, 8, 8, true>;
-
 template<typename T, typename AT>
 __global__ void matrixMultiplicationKernel(uint32_t M, uint32_t N, uint32_t K,
                                            T* A, T* B, T* C) {

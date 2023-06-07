@@ -131,11 +131,44 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
   using Sync = TileSync;
 #else
   #error "Unknown Synchronization"
-#endif 
+#endif
+
+#include "common.h"
 
 using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
 
-#include "common.h"
+using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
+                                         LayoutInputA,
+                                         ElementInputB,
+                                         LayoutInputB,
+                                         ElementOutput,
+                                         LayoutOutput,
+                                         ElementAccumulator,
+                                         MMAOp,
+                                         SmArch,
+                                         ShapeMMAThreadBlock,
+                                         ShapeMMAWarp,
+                                         ShapeMMAOp,
+                                         EpilogueOp,
+                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
+
+using OverlapGemm2 = OverlapGemm1;
+
+using OverlapGemmSplitK = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
+                                         LayoutInputA,
+                                         ElementInputB,
+                                         LayoutInputB,
+                                         ElementOutput,
+                                         LayoutOutput,
+                                         ElementAccumulator,
+                                         MMAOp,
+                                         SmArch,
+                                         ShapeMMAThreadBlock,
+                                         ShapeMMAWarp,
+                                         ShapeMMAOp,
+                                         EpilogueOp,
+                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+                                         2, 8, 8, true>;
 
 cudaError_t host_matmul(cutlass::gemm::GemmCoord problem_size1,
   cutlass::gemm::GemmCoord problem_size2,

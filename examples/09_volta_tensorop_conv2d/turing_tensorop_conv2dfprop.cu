@@ -146,6 +146,8 @@ using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
 #include "cutlass/gemm/device/gemm.h"
 #include "cutlass/conv/kernel/default_conv2d_fprop.h"
 #include "cutlass/conv/device/implicit_gemm_convolution.h"
+#include "cutlass/conv/kernel/cusyncdefault_conv2d_fprop.h"
+#include "cutlass/conv/device/cusyncimplicit_gemm_convolution.h"
 #include "cutlass/conv/conv2d_problem_size.h"
 #include "cutlass/conv/convolution.h"
 
@@ -250,7 +252,26 @@ using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
 using ImplicitGemm1 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 using ImplicitGemm2 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 
+using CuSyncConv2dFpropKernel = typename cutlass::conv::kernel::CuSyncDefaultConv2dFprop<
+  CuStageImpl,
+  ElementInputA, LayoutInputA,
+  ElementInputB, LayoutInputB,
+  ElementOutput, LayoutOutput,
+  ElementAccumulator,
+  MMAOp,
+  SmArch,
+  ThreadblockShape,
+  WarpShape,
+  InstructionShape,
+  EpilogueOp,
+  SwizzleThreadBlock,
+  NumStages,
+  cutlass::arch::OpMultiplyAdd,
+  cutlass::conv::IteratorAlgorithm::kAnalytic
+>::Kernel;
 
+using CuSyncImplicitGemm1 = cutlass::conv::device::CuSyncImplicitGemmConvolution<CuSyncImpl, CuSyncConv2dFpropKernel>;
+using CuSyncImplicitGemm2 = cutlass::conv::device::CuSyncImplicitGemmConvolution<CuSyncImpl, CuSyncConv2dFpropKernel>;
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Command line options parsing
@@ -578,7 +599,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       args2.custage.producerOrConsumer_ = false;
       // double middle1 = getCurrentTime();
       // conv1Time += middle1 - start;
-      status = implicit_gemm_op2(args2, true, options, workspace2.get(), streams[1]);
+      status = implicit_gemm_op2(args2, true, workspace2.get(), streams[1]);
 
       CUTLASS_CHECK(status);
       cudaDeviceSynchronize();
@@ -776,12 +797,12 @@ Result profile_convolution(Options const &options) {
     }
   }
   if (true) {
-  runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
+  runConvolution<false, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
   elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
   printf("START-BASELINE:\n");
-  runConvolution<true, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
+  runConvolution<false, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
   
   printf("END-BASELINE: {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
   }
@@ -813,7 +834,7 @@ Result profile_convolution(Options const &options) {
   tensor_y1.sync_device();
   tensor_y2.sync_device();
 
-  runConvolution<true, ImplicitGemm1, ImplicitGemm2>
+  runConvolution<true, CuSyncImplicitGemm1, CuSyncImplicitGemm2>
     (problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, 1);
   
   if (options.reference_check) {
@@ -846,13 +867,13 @@ Result profile_convolution(Options const &options) {
     }
   }
 
-  runConvolution<false, ImplicitGemm1, ImplicitGemm2>
+  runConvolution<true, CuSyncImplicitGemm1, CuSyncImplicitGemm2>
     (problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
   elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
   printf("START-OVERLAP:\n");
-  runConvolution<false, ImplicitGemm1, ImplicitGemm2>
+  runConvolution<true, CuSyncImplicitGemm1, CuSyncImplicitGemm2>
     (problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
   printf("END-OVERLAP {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
 

@@ -208,10 +208,10 @@ using MMAOp = cutlass::arch::OpClassTensorOp;
 using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
-using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;  // Threadblock tile shape
+using ThreadblockShape = cutlass::gemm::GemmShape<64, 64, 32>;  // Threadblock tile shape
 
 // This code section describes tile size a warp will compute
-using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;         // Warp tile shape
+using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;         // Warp tile shape
 
 // This code section describes the size of MMA op
 using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;    // TensorCore instruction shape
@@ -627,8 +627,9 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
       args1.custage.producerOrConsumer_ = true;
       auto status = implicit_gemm_op1(args1, true, workspace1.get(), streams[0]);
     //  waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
-      CUDA_CHECK(cudaDeviceSynchronize());
-      CUTLASS_CHECK(status);
+      // CUDA_CHECK(cudaDeviceSynchronize());
+      // CUTLASS_CHECK(status);
+      handle.invokeWaitKernel(streams[1]);
       // cudaDeviceSynchronize();
       args2.custage.producerOrConsumer_ = false;
       // double middle1 = getCurrentTime();
@@ -840,7 +841,8 @@ Result profile_convolution(Options const &options) {
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
   printf("gemm problem size: {%d, %d, %d}\n", gemm_problem_size.m(), gemm_problem_size.n(), gemm_problem_size.k());
   printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN, options.split_k_slices);
-  dim3 gridDim = {gemm_problem_size.m(), gemm_problem_size.n(), 1};
+  dim3 gridDim = {(gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM, 
+      (gemm_problem_size.n() + ThreadblockShape::kN - 1)/ThreadblockShape::kN, 1};
   dim3 tileSize = {ThreadblockShape::kM, ThreadblockShape::kN, 1};
   
 #if ROWSYNC

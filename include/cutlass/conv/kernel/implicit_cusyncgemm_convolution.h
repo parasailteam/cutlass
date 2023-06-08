@@ -467,7 +467,8 @@ struct ImplicitCuSyncGemmConvolution {
     ThreadblockSwizzle threadblock_swizzle;
 
     cutlass::gemm::GemmCoord threadblock_tile_idx =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, 
+        block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
 
     // Early exit if CTA is out of range
     if (params.grid_tiled_shape.m() <= threadblock_tile_idx.m() ||
@@ -552,7 +553,8 @@ struct ImplicitCuSyncGemmConvolution {
     
     // Compute logical position within grid
     threadblock_tile_idx =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile,
+        block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
 
     // If performing a reduction via split-K, fetch the initial synchronization
     if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1) {

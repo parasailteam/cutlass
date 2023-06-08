@@ -160,6 +160,8 @@ struct CuStage {
       if (shared_storage) {
         uint linear_id = atomicAdd(tileCounter, 1) - (iter-1)*numTiles();
         *shared_storage = tileOrder[linear_id];
+        dim3 t = *shared_storage;
+        // printf("linear_id %d t %d, %d, %d\n", linear_id, t.x, t.y,t.z);
       }
     }
 

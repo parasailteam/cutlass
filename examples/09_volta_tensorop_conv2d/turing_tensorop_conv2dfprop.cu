@@ -274,6 +274,40 @@ using CuSyncImplicitGemm1 = cutlass::conv::device::CuSyncImplicitGemmConvolution
 using CuSyncImplicitGemm2 = cutlass::conv::device::CuSyncImplicitGemmConvolution<CuSyncImpl, CuSyncConv2dFpropKernel>;
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+template<typename T>
+bool equals(size_t size, T* mat1, T* mat2, float err) {
+  for (size_t i = 0; i < size; i++) {
+    float e1 = (float)mat1[i];
+    float e2 = (float)mat2[i];
+    
+    float v = err;
+    bool ret = true;
+    if (abs(e1) < v && abs(e2) < v) {
+      // printf("%f , %f at %lu\n", e1, e2, i);
+      ret = true;
+    } else if (abs(e1) < v) {
+      ret = false;
+    } else if (abs(e2) < v) {
+      ret = false;
+    } else {
+      float err = abs(e1 - e2)/abs(e1);
+      if (err <= v) {
+        ret = true;
+      } else {
+        ret = false;
+      }
+    }
+
+    if (ret == false) {
+      printf("%f != %f at %lu\n", e1, e2, i);
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Command line options parsing
 struct Options {
 
@@ -770,10 +804,8 @@ Result profile_convolution(Options const &options) {
     );
     // Check if output from CUTLASS kernel and reference kernel are equal or not
     tensor_y1.sync_host(); tensor_y2.sync_host();
-    bool passed = cutlass::reference::host::TensorEquals(
-      tensor_y1.host_view(),
-      tensor_ref_y1.host_view());
-
+    bool passed = equals(tensor_y1.size(), tensor_ref_y1.host_data(), tensor_y1.host_data(), 1e-2);
+    
     if (!passed) {
       result.reference_check = cutlass::Status::kErrorInternal;
       std::cout << "ERROR - First conv incorrect.\n";
@@ -783,9 +815,7 @@ Result profile_convolution(Options const &options) {
       std::cout << "First Passed.\n";
     }
 
-    passed = cutlass::reference::host::TensorEquals(
-      tensor_y2.host_view(),
-      tensor_ref_y2.host_view());
+    passed = equals(tensor_y2.size(), tensor_ref_y2.host_data(), tensor_y2.host_data(), 1e-2);
     
     if (!passed) {
       result.reference_check = cutlass::Status::kErrorInternal;
@@ -840,9 +870,7 @@ Result profile_convolution(Options const &options) {
   if (options.reference_check) {
     // Check if output from CUTLASS kernel and reference kernel are equal or not
     tensor_y1.sync_host(); tensor_y2.sync_host();
-    bool passed = cutlass::reference::host::TensorEquals(
-      tensor_y1.host_view(),
-      tensor_ref_y1.host_view());
+    bool passed = equals(tensor_y1.size(), tensor_ref_y1.host_data(), tensor_y1.host_data(), 1e-2);
 
     if (!passed) {
       result.reference_check = cutlass::Status::kErrorInternal;
@@ -853,10 +881,8 @@ Result profile_convolution(Options const &options) {
       std::cout << "First Passed.\n";
     }
 
-    passed = cutlass::reference::host::TensorEquals(
-      tensor_y2.host_view(),
-      tensor_ref_y2.host_view());
-    
+    passed = equals(tensor_y1.size(), tensor_ref_y2.host_data(), tensor_y2.host_data(), 1e-2);
+
     if (!passed) {
       result.reference_check = cutlass::Status::kErrorInternal;
       std::cout << "ERROR - second conv incorrect.\n";

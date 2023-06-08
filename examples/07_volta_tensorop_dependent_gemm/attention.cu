@@ -905,6 +905,7 @@ int run(int argc, char* arg[]) {
 #else
   #error "Unknown Policy"
 #endif
+
   CuStageImpl prod1(gridDim1, tileSize, sync1);
   CuStageImpl cons1(gridDim2, {SoftmaxRowTile, 1, 1}, sync1);
   CuStageImpl cons2(gridDim3, tileSize, sync2);
@@ -932,16 +933,16 @@ int run(int argc, char* arg[]) {
         return 1;
       }
     }
-  //   //warmup
-  result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-    tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, overlapTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    //warmup
+    result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, overlapTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
-  CUDA_CHECK(cudaDeviceSynchronize());
-  printf("START-OVERLAPPED\n");
-  result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-    tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, overlapTime, matmul1Time, softmaxTime, matmul2Time, epochs);
-  
-  printf("END-OVERLAPPED: {\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf} microseconds\n", overlapTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    printf("START-OVERLAPPED\n");
+    result = runAttention<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, overlapTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    
+    printf("END-OVERLAPPED: {\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf} microseconds\n", overlapTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
   }
 
   return 0;

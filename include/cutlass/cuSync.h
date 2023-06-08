@@ -140,28 +140,24 @@ struct CuStage {
 
   __device__ void wait(const dim3& tile, uint waitingThread = 0) {
     if (!isConsumer()) return;
-    
     if (!syncPolicy_.isSync(tile)) return;
-
+  
     if (threadIdx.x == waitingThread && threadIdx.y == 0 && threadIdx.z == 0) {
-        uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
-        // if (canPrint) printf("147: tileStatusRead_ %p tileStatusRead_[%d] = %d for tile {%d, %d, %d}\n", 
-        //         tileStatusRead_, idx, tileStatusRead_[idx], tile.x, tile.y, tile.z);
-        while(tileStatusRead_[idx] < iter * syncPolicy_.waitValue(tile, prodGrid_));
+      uint idx = syncPolicy_.tileIndex(tile, prodGrid_);
+      while(tileStatusRead_[idx] < iter * syncPolicy_.waitValue(tile, prodGrid_));
     }
-    
+
     __syncthreads();
   }
 
   __device__ void post(const dim3& tile, uint postThread = 0) {
     if (!isProducer()) return;
     __syncthreads();
+  
     if (threadIdx.x == postThread && threadIdx.y == 0 && threadIdx.z == 0) {
       __threadfence_system();
       uint idx = syncPolicy_.tileIndex(tile, grid_);
       atomicAdd((int*)&tileStatusWrite_[idx], syncPolicy_.postValue(tile, grid_));
-      // printf("161: tileStatusWrite_ %p tileStatusWrite_[%d] = %d for tile {%d, %d, %d}\n", 
-      //   tileStatusWrite_, idx, tileStatusWrite_[idx], tile.x, tile.y, tile.z); 
     }
 
     __syncwarp();
@@ -175,9 +171,8 @@ struct CuStage {
     return isConsumer_;
   }
 
-  __device__ dim3 init() {
-    
-  }
+  __device__ dim3 init() {}
+
   __device__ dim3 tile(dim3* shared_storage) {
     if (threadIdx.x == 0) {
       if (isProducer()) {
@@ -218,9 +213,9 @@ __global__ void waitKernel(volatile uint* kernelExecuted, uint expectedValue) {
 template<typename Sched1, typename Sched2, typename Sync>
 struct CuSync {
   CuStage<Sched1, Sync> prod_;
-  __host__ __device__ CuStage<Sched1, Sync>& prod() {return prod_;}
+  __host__ CuStage<Sched1, Sync>& prod() {return prod_;}
   CuStage<Sched2, Sync> cons_;
-  __host__ __device__ CuStage<Sched2, Sync>& cons() {return cons_;}
+  __host__ CuStage<Sched2, Sync>& cons() {return cons_;}
 
   volatile uint* tileStatus;
   int* kernelExecuted;

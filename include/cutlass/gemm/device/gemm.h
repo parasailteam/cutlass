@@ -531,9 +531,9 @@ public:
 
     if (overlap) {
       if (params_.custage.isProducer())
-        cutlass::KernelOverlapProducer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, (volatile uint*) kernelExecuted);
+        cutlass::KernelOverlapProducer<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
       else
-        cutlass::KernelOverlapConsumer<GemmKernel><<<grid, block, smem_size, stream>>>(params_, (volatile uint*)kernelExecuted);
+        cutlass::KernelOverlapConsumer<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
           // void* args[] = {
           //   &params_,
           //   &kernelExecuted

@@ -138,6 +138,38 @@ using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
 #include "common.h"
 const int SoftmaxRowTile = 4;
 
+using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
+                                         LayoutInputA,
+                                         ElementInputB,
+                                         LayoutInputB,
+                                         ElementOutput,
+                                         LayoutOutput,
+                                         ElementAccumulator,
+                                         MMAOp,
+                                         SmArch,
+                                         ShapeMMAThreadBlock,
+                                         ShapeMMAWarp,
+                                         ShapeMMAOp,
+                                         EpilogueOp,
+                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
+
+using OverlapGemm2 = OverlapGemm1;
+
+using OverlapGemmSplitK = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
+                                         LayoutInputA,
+                                         ElementInputB,
+                                         LayoutInputB,
+                                         ElementOutput,
+                                         LayoutOutput,
+                                         ElementAccumulator,
+                                         MMAOp,
+                                         SmArch,
+                                         ShapeMMAThreadBlock,
+                                         ShapeMMAWarp,
+                                         ShapeMMAOp,
+                                         EpilogueOp,
+                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+                                         2, 8, 8, true>;
 
 template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, uint RowTile, bool enableOverlap>
 __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
@@ -438,7 +470,6 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       double middle1 = timeInMicroSeconds();
       double iterMatMul1 = middle1-start;
       matmul1Time += iterMatMul1;
-      handle.producerOrConsumer_ = false;
       
       selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, false>
         <<<DIVUP(problem_size1.m(), SoftmaxRowTile), SoftmaxThreads, problem_size1.n()/3 * sizeof(half), streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
@@ -472,7 +503,6 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
       handle2.prod().iter += 1;
       handle2.cons().iter += 1;
 
-      handle.producerOrConsumer_ = true;
       typename GemmTy1::Arguments args1{handle.prod(),
                                      problem_size1,  // <- problem size of matrix multiplication
                                      tensor_x.device_ref(),  // <- reference to matrix A on device
@@ -481,14 +511,12 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                                      tensor_xqkv.device_ref(),  // <- reference to matrix C on device
                                      {alpha, beta},          // <- tuple of alpha and beta
                                      split_k1};        // <- k-dimension split factor
-      
       double start = timeInMicroSeconds();
       // dim3 grid = {problem_size1.m()/128, 1, 1};
       // int lastBlockIdxX = (grid.x/80)*80;
       status = gemm_op1(args1, true, NULL, workspace1.get(), streams[0]);
       CUTLASS_CHECK(status);
 
-      CUDA_CHECK(cudaDeviceSynchronize());
 
       if (status != cutlass::Status::kSuccess) {
         return cudaErrorUnknown;
@@ -516,7 +544,6 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
                                                                  randStates, 
                                                                  handle.cons(), handle2.prod());
       // print_kernel<<<1, 32, 0, streams[1]>>>(tensor_dropout.device_data());
-      handle2.producerOrConsumer_ = false;
       typename GemmTy2::Arguments args2{handle2.cons(),
         problem_size2,  // <- problem size of matrix multiplication
         tensor_dropout.device_ref(),  // <- reference to matrix A on device
@@ -525,7 +552,6 @@ cudaError_t runAttention(int split_k1, int split_k2, cutlass::gemm::GemmCoord pr
         tensor_out.device_ref(),  // <- reference to matrix C on device
         {alpha, beta},          // <- tuple of alpha and beta
         split_k2};        // <- k-dimension split factor
-    
       // waitKernel<<<1,1,0,streams[2]>>>((uint*)&kernelExecuted[1], handle2.iter);
       // CUDA_CHECK(cudaDeviceSynchronize());
       handle2.invokeWaitKernel(streams[2]);
@@ -774,7 +800,7 @@ int run(int argc, char* arg[]) {
   int warmup = 20;
 
   if (doChecking) {
-    result = host_attention(problem_size1, problem_size2, alpha, beta, 
+    result = host_attention(problem_size1, problem_size2, alpha, beta,
         tensor_x, tensor_qkv, tensor_ref_xqkv, tensor_ref_dropout, tensor_w2, tensor_ref_out);
     if (result != cudaSuccess) {
       return 1;
@@ -875,17 +901,16 @@ int run(int argc, char* arg[]) {
   using Sync1 = TileSync;
   using Sync2 = Sync1;
   TileSync sync1;
-  TileSync sync2(SoftmaxRowTile, 1);
+  TileSync sync2(ShapeMMAThreadBlock::kM/SoftmaxRowTile, 1);
 #else
   #error "Unknown Policy"
 #endif
   CuStageImpl prod1(gridDim1, tileSize, sync1);
   CuStageImpl cons1(gridDim2, {SoftmaxRowTile, 1, 1}, sync1);
-  CuStageImpl prod2(gridDim2, {SoftmaxRowTile, 1, 1}, sync2);
   CuStageImpl cons2(gridDim3, tileSize, sync2);
 
   CuSyncImpl handle1(prod1, cons1);
-  CuSyncImpl handle2(prod2, cons2);
+  CuSyncImpl handle2(cons1, cons2);
   handle2.iter = 0;
   handle1.iter = 0;
   handle1.prod().iter = handle1.cons().iter = 0;

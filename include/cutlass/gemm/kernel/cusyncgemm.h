@@ -210,8 +210,7 @@ struct CuSyncGemm {
 
   //TODO: Had to make Params non-const, does that have any perf issue?
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer, 
-                        volatile uint* kernelAllocated) {
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
     CuStageImpl& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
     dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
     

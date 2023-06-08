@@ -271,6 +271,7 @@ struct ImplicitCuSyncGemmConvolution {
 
   /// Shared memory storage structure
   union SharedStorage {
+    dim3 tile_idx;
     typename Mma::SharedStorage main_loop;
     typename Epilogue::SharedStorage epilogue;
   };
@@ -456,6 +457,12 @@ struct ImplicitCuSyncGemmConvolution {
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage,
             bool isProducerOrConsumer) {
+    CuStageImpl& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
+    dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
+    const uint block_idx_y = new_block_idx.y;
+    const uint block_idx_x = new_block_idx.x;
+    const uint block_idx_z = new_block_idx.z;
+    
     // Compute threadblock location
     ThreadblockSwizzle threadblock_swizzle;
 
@@ -483,16 +490,23 @@ struct ImplicitCuSyncGemmConvolution {
       }
     } 
 
+    cutlass::MatrixCoord tb_offset_A {
+      threadblock_tile_idx.m() * Mma::Shape::kM,
+      iterator_A_column_offset
+    };
+
+    cutlass::MatrixCoord tb_offset_B {
+      threadblock_tile_idx.k() * Mma::Shape::kK,
+      threadblock_tile_idx.n() * Mma::Shape::kN
+    };
+
     // Construct iterators to A and B operands
     typename Mma::IteratorA iterator_A(
       params.iterator_A,
       params.problem_size,
       params.ptr_A,
       thread_idx,
-      MatrixCoord(
-        threadblock_tile_idx.m() * Mma::Shape::kM,
-        iterator_A_column_offset
-      )
+      tb_offset_A
     );
     
     typename Mma::IteratorB iterator_B(
@@ -500,10 +514,7 @@ struct ImplicitCuSyncGemmConvolution {
       params.problem_size,
       params.ptr_B,
       thread_idx,
-      MatrixCoord(
-        threadblock_tile_idx.k() * Mma::Shape::kK,
-        threadblock_tile_idx.n() * Mma::Shape::kN
-      )
+      tb_offset_B
     );
 
     // Broadcast the warp_id computed by lane 0 to ensure dependent code
@@ -523,8 +534,11 @@ struct ImplicitCuSyncGemmConvolution {
     accumulators.clear();
 
     // Compute threadblock-scoped matrix multiply-add
-    mma(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.gemm_k_iterations_per_channel);
-
+    if (isProducerOrConsumer)
+      mma(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.gemm_k_iterations_per_channel);
+    else {
+      mma.doWithOverlap(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, isProducerOrConsumer, stage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y, params.gemm_k_iterations_per_channel);
+    }
     //
     // Epilogue
     //
@@ -609,7 +623,10 @@ struct ImplicitCuSyncGemmConvolution {
 
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_idx.k() + 1) {
-
+        if (isProducerOrConsumer) {
+          dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
+          stage.post(tile);
+        }
         // The final threadblock resets the semaphore for subsequent grids.
         lock = 0;
       }
@@ -619,6 +636,11 @@ struct ImplicitCuSyncGemmConvolution {
       }
       
       semaphore.release(lock);
+    } else {
+      if (isProducerOrConsumer) {
+        dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
+        stage.post(tile);
+      }
     }
   }
 };

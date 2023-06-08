@@ -849,6 +849,8 @@ Result profile_convolution(Options const &options) {
   using Sync = RowSync;
   RowSync sync(gridDim.y);
 #elif TILESYNC
+  using Sync = TileSync;
+  Sync sync;
 #else
   #error "Unkown Policy"
 #endif

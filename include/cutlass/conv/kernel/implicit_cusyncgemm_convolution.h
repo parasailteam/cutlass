@@ -456,7 +456,6 @@ struct ImplicitCuSyncGemmConvolution {
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage,
             bool isProducerOrConsumer) {
-
     // Compute threadblock location
     ThreadblockSwizzle threadblock_swizzle;
 

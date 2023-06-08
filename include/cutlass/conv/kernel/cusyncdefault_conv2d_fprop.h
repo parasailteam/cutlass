@@ -50,6 +50,7 @@
 #include "cutlass/conv/threadblock/conv2d_fprop_filter_tile_access_iterator_fixed_channels.h"
 #include "cutlass/conv/threadblock/conv2d_fprop_filter_tile_access_iterator_few_channels.h"
 
+#include "cutlass/conv/kernel/implicit_cusyncgemm_convolution.h"
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {
@@ -201,7 +202,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -324,7 +326,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -445,7 +448,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -568,7 +572,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -692,7 +697,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -817,7 +823,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -937,7 +944,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1064,7 +1072,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1190,7 +1199,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1307,7 +1317,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1429,7 +1440,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1546,7 +1558,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1659,7 +1672,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1774,7 +1788,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -1888,7 +1903,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,
@@ -2004,7 +2020,8 @@ struct CuSyncDefaultConv2dFprop <
   >::Epilogue;
 
   // Define the kernel
-  using Kernel = cutlass::conv::kernel::ImplicitGemmConvolution<
+  using Kernel = cutlass::conv::kernel::ImplicitCuSyncGemmConvolution<
+    CuSyncImpl,
     Mma,
     Epilogue,
     ThreadblockSwizzle,

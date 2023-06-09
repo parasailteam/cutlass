@@ -121,7 +121,7 @@ In this example, we later on launch a reference gemm kernel (from CUTLASS utilit
 the output from CUTLASS kernel is same as reference GEMM kernel.
 */
 
-#include<cutlass/cuSync.h>
+#include<cuSync.h>
 
 #ifdef ROWSYNC 
   using CuStageImpl = CuStage<RowMajor, RowSync>;
@@ -323,7 +323,6 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
         {alpha, beta},          // <- tuple of alpha and beta
         split_k2};        // <- k-dimension split factor
       
-      handle.producerOrConsumer_ = true;
       double start = timeInMicroSeconds();
       status = gemm_op1(args1, workspace1.get(), producer_stream);
       CUTLASS_CHECK(status);
@@ -336,7 +335,6 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
       double iterMatMul1 = middle1-start;
       matmul1Time += iterMatMul1;
 
-      handle.producerOrConsumer_ = false;
       // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
 
       status = gemm_op2(args2, workspace2.get(), consumer_stream);
@@ -360,7 +358,7 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
     for (int r = 0; r < iters; r++) {
       handle.prod().iter += 1;
       handle.cons().iter += 1;
-      handle.producerOrConsumer_ = true;
+
       typename GemmTy1::Arguments args1{handle.prod(),
         problem_size1,  // <- problem size of matrix multiplication
         tensor_a.device_ref(),  // <- reference to matrix A on device
@@ -370,7 +368,6 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
         {alpha, beta},          // <- tuple of alpha and beta
         split_k1};        // <- k-dimension split factor
       
-      handle.producerOrConsumer_ = false;
       typename GemmTy2::Arguments args2{handle.cons(),
         problem_size2,  // <- problem size of matrix multiplication
         tensor_c.device_ref(),  // <- reference to matrix A on device

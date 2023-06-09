@@ -45,7 +45,6 @@
 #include "cutlass/gemm/gemm.h"
 #include "cutlass/gemm/threadblock/mma_base.h"
 
-#include "cutlass/cuSync.h"
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace cutlass {

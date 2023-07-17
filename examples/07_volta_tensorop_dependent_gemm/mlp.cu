@@ -124,16 +124,20 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 #include<cuSync.h>
 
 #ifdef ROWSYNC 
-  using CuStageImpl = CuStage<RowMajor, RowSync>;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
   using Sync = RowSync;
 #elif TILEFIRSTTHENROW
-  using CuStageImpl = CuStage<RowMajor, TileFirstAndRowSync>;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileFirstAndRowSync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileFirstAndRowSync>;
   using Sync = TileFirstAndRowSync;
 #elif TILESYNC
-  using CuStageImpl = CuStage<RowMajor, TileSync>;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync>;
   using Sync = TileSync;
 #elif BATCHEDROW
-  using CuStageImpl = CuStage<RowMajor, BatchedRowSync>;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, BatchedRowSync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, BatchedRowSync>;
   using Sync = BatchedRowSync;
 #else
   #error "Unknown Synchronization"
@@ -141,9 +145,9 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 
 #include "common.h"
 
-using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
+using CuSyncImpl = CuSync<ProdCuStage, ConsCuStage>;
 
-using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
+using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<ProdCuStage, ElementInputA,
                                          LayoutInputA,
                                          ElementInputB,
                                          LayoutInputB,
@@ -157,10 +161,22 @@ using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInput
                                          ShapeMMAOp,
                                          EpilogueOp,
                                          cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
+using OverlapGemm2 = cutlass::gemm::device::CuSyncGemm<ConsCuStage, ElementInputA,
+                                        LayoutInputA,
+                                        ElementInputB,
+                                        LayoutInputB,
+                                        ElementOutput,
+                                        LayoutOutput,
+                                        ElementAccumulator,
+                                        MMAOp,
+                                        SmArch,
+                                        ShapeMMAThreadBlock,
+                                        ShapeMMAWarp,
+                                        ShapeMMAOp,
+                                        EpilogueOp,
+                                        cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
 
-using OverlapGemm2 = OverlapGemm1;
-
-using OverlapGemmSplitK = cutlass::gemm::device::CuSyncGemm<CuStageImpl, ElementInputA,
+using OverlapGemmSplitK1 = cutlass::gemm::device::CuSyncGemm<ProdCuStage, ElementInputA,
                                          LayoutInputA,
                                          ElementInputB,
                                          LayoutInputB,
@@ -175,7 +191,21 @@ using OverlapGemmSplitK = cutlass::gemm::device::CuSyncGemm<CuStageImpl, Element
                                          EpilogueOp,
                                          cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
                                          2, 8, 8, true>;
-
+using OverlapGemmSplitK2 = cutlass::gemm::device::CuSyncGemm<ConsCuStage, ElementInputA,
+                                         LayoutInputA,
+                                         ElementInputB,
+                                         LayoutInputB,
+                                         ElementOutput,
+                                         LayoutOutput,
+                                         ElementAccumulator,
+                                         MMAOp,
+                                         SmArch,
+                                         ShapeMMAThreadBlock,
+                                         ShapeMMAWarp,
+                                         ShapeMMAOp,
+                                         EpilogueOp,
+                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+                                         2, 8, 8, true>;
 cudaError_t host_matmul(cutlass::gemm::GemmCoord problem_size1,
   cutlass::gemm::GemmCoord problem_size2,
   ElementComputeEpilogue alpha,
@@ -237,8 +267,127 @@ cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
   return cudaSuccess;
 }
 
-template<typename GemmTy1, typename GemmTy2, bool useCuSync>
-cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
+template<typename GemmTy1, typename GemmTy2>
+cudaError_t runhgemmBaseline(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
+                     cutlass::gemm::GemmCoord problem_size2,
+                     ElementComputeEpilogue alpha,
+                     ElementComputeEpilogue beta,
+                     cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_a,
+                     cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_b,
+                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
+                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
+                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
+                     cudaStream_t producer_stream, cudaStream_t consumer_stream,
+                     cudaEvent_t event,
+                     double& execTime,
+                     double& matmul1Time,
+                     double& softmaxTime,
+                     double& matmul2Time,
+                     int iters = 100) {
+  // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
+  // instantiated CUTLASS kernel
+  typename GemmTy1::Arguments args1{problem_size1,  // <- problem size of matrix multiplication
+                                     tensor_a.device_ref(),  // <- reference to matrix A on device
+                                     tensor_b.device_ref(),  // <- reference to matrix B on device
+                                     tensor_c.device_ref(),  // <- reference to matrix C on device
+                                     tensor_c.device_ref(),  // <- reference to matrix C on device
+                                     {alpha, beta},          // <- tuple of alpha and beta
+                                     split_k1};        // <- k-dimension split factor
+  
+  typename GemmTy2::Arguments args2{ problem_size2,  // <- problem size of matrix multiplication
+                                     tensor_c.device_ref(),  // <- reference to matrix A on device
+                                     tensor_d.device_ref(),  // <- reference to matrix B on device
+                                     tensor_e.device_ref(),  // <- reference to matrix C on device
+                                     tensor_e.device_ref(),  // <- reference to matrix C on device
+                                     {alpha, beta},          // <- tuple of alpha and beta
+                                     split_k2};        // <- k-dimension split factor
+  // Using the arguments, query for extra workspace required for matrix multiplication computation
+  size_t workspace_size = GemmTy1::get_workspace_size(args1);
+
+  // Allocate workspace memory
+  cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
+
+  // Instantiate CUTLASS kernel depending on templates
+  GemmTy1 gemm_op1;
+
+  // Check the problem size is supported or not 
+  cutlass::Status status = gemm_op1.can_implement(args1);
+  CUTLASS_CHECK(status);
+
+  // Initialize CUTLASS kernel with arguments and workspace pointer
+  status = gemm_op1.initialize(args1, workspace1.get());
+  CUTLASS_CHECK(status);
+
+  GemmTy2 gemm_op2;
+  workspace_size = GemmTy2::get_workspace_size(args2);
+
+  // Allocate workspace memory
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+
+  // Check the problem size is supported or not 
+  status = gemm_op2.can_implement(args2);
+  CUTLASS_CHECK(status);
+
+  // Initialize CUTLASS kernel with arguments and workspace pointer
+  status = gemm_op2.initialize(args2, workspace2.get());
+  CUTLASS_CHECK(status);
+  execTime = 0;
+  // Launch initialized CUTLASS kernel
+  for (int r = 0; r < iters; r++) {    
+    typename GemmTy1::Arguments args1{
+      problem_size1,  // <- problem size of matrix multiplication
+      tensor_a.device_ref(),  // <- reference to matrix A on device
+      tensor_b.device_ref(),  // <- reference to matrix B on device
+      tensor_c.device_ref(),  // <- reference to matrix C on device
+      tensor_c.device_ref(),  // <- reference to matrix C on device
+      {alpha, beta},          // <- tuple of alpha and beta
+      split_k1};        // <- k-dimension split factor
+
+    typename GemmTy2::Arguments args2{
+      problem_size2,  // <- problem size of matrix multiplication
+      tensor_c.device_ref(),  // <- reference to matrix A on device
+      tensor_d.device_ref(),  // <- reference to matrix B on device
+      tensor_e.device_ref(),  // <- reference to matrix C on device
+      tensor_e.device_ref(),  // <- reference to matrix C on device
+      {alpha, beta},          // <- tuple of alpha and beta
+      split_k2};        // <- k-dimension split factor
+    
+    double start = timeInMicroSeconds();
+    status = gemm_op1(args1, workspace1.get(), producer_stream);
+    CUTLASS_CHECK(status);
+    
+    if (status != cutlass::Status::kSuccess) {
+      return cudaErrorUnknown;
+    }
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+    double middle1 = timeInMicroSeconds();
+    double iterMatMul1 = middle1-start;
+    matmul1Time += iterMatMul1;
+
+    // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+
+    status = gemm_op2(args2, workspace2.get(), consumer_stream);
+    CUTLASS_CHECK(status);
+
+    if (status != cutlass::Status::kSuccess) {
+      return cudaErrorUnknown;
+    }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+    double middle3 = timeInMicroSeconds();
+    double iterMatmul2 = middle3-middle1;
+    matmul2Time += iterMatmul2;
+    double end = timeInMicroSeconds();
+    if (iters > 10)
+      printf("{\"Total\": %lf, \"matmul1Time\": %lf, \"matmul2Time\": %lf}\n",end-start,iterMatMul1, iterMatmul2);
+    execTime += end-start;
+  }
+
+  return cudaSuccess;
+}
+
+template<typename GemmTy1, typename GemmTy2>
+cudaError_t runhgemmCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
                      cutlass::gemm::GemmCoord problem_size2,
                      ElementComputeEpilogue alpha,
                      ElementComputeEpilogue beta,
@@ -305,133 +454,78 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
   status = gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
   execTime = 0;
-  if (!useCuSync) {
-    // Launch initialized CUTLASS kernel
-    for (int r = 0; r < iters; r++) {
-      handle.prod().iter += 1;
-      handle.cons().iter += 1;
-      
-      typename GemmTy1::Arguments args1{handle.prod(),
-        problem_size1,  // <- problem size of matrix multiplication
-        tensor_a.device_ref(),  // <- reference to matrix A on device
-        tensor_b.device_ref(),  // <- reference to matrix B on device
-        tensor_c.device_ref(),  // <- reference to matrix C on device
-        tensor_c.device_ref(),  // <- reference to matrix C on device
-        {alpha, beta},          // <- tuple of alpha and beta
-        split_k1};        // <- k-dimension split factor
+  
+  // Launch initialized CUTLASS kernel
+  for (int r = 0; r < iters; r++) {
+    handle.prod().iter += 1;
+    handle.cons().iter += 1;
 
-      typename GemmTy2::Arguments args2{handle.cons(),
-        problem_size2,  // <- problem size of matrix multiplication
-        tensor_c.device_ref(),  // <- reference to matrix A on device
-        tensor_d.device_ref(),  // <- reference to matrix B on device
-        tensor_e.device_ref(),  // <- reference to matrix C on device
-        tensor_e.device_ref(),  // <- reference to matrix C on device
-        {alpha, beta},          // <- tuple of alpha and beta
-        split_k2};        // <- k-dimension split factor
-      
-      double start = timeInMicroSeconds();
-      status = gemm_op1(args1, workspace1.get(), producer_stream);
-      CUTLASS_CHECK(status);
-      
-      if (status != cutlass::Status::kSuccess) {
-        return cudaErrorUnknown;
-      }
-      CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-      double middle1 = timeInMicroSeconds();
-      double iterMatMul1 = middle1-start;
-      matmul1Time += iterMatMul1;
+    typename GemmTy1::Arguments args1{handle.prod(),
+      problem_size1,  // <- problem size of matrix multiplication
+      tensor_a.device_ref(),  // <- reference to matrix A on device
+      tensor_b.device_ref(),  // <- reference to matrix B on device
+      tensor_c.device_ref(),  // <- reference to matrix C on device
+      tensor_c.device_ref(),  // <- reference to matrix C on device
+      {alpha, beta},          // <- tuple of alpha and beta
+      split_k1};        // <- k-dimension split factor
+    
+    typename GemmTy2::Arguments args2{handle.cons(),
+      problem_size2,  // <- problem size of matrix multiplication
+      tensor_c.device_ref(),  // <- reference to matrix A on device
+      tensor_d.device_ref(),  // <- reference to matrix B on device
+      tensor_e.device_ref(),  // <- reference to matrix C on device
+      tensor_e.device_ref(),  // <- reference to matrix C on device
+      {alpha, beta},          // <- tuple of alpha and beta
+      split_k2};        // <- k-dimension split factor
+    
+    double start = timeInMicroSeconds();
+    // dim3 grid = {problem_size1.m()/128, 1, 1};
+    // int lastBlockIdxX = (grid.x/80)*80;
+    status = gemm_op1(args1, true, NULL, workspace1.get(), producer_stream);
+    CUTLASS_CHECK(status);
 
-      // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
-
-      status = gemm_op2(args2, workspace2.get(), consumer_stream);
-      CUTLASS_CHECK(status);
-
-      if (status != cutlass::Status::kSuccess) {
-        return cudaErrorUnknown;
-      }
-
-      CUDA_CHECK(cudaDeviceSynchronize());
-      double middle3 = timeInMicroSeconds();
-      double iterMatmul2 = middle3-middle1;
-      matmul2Time += iterMatmul2;
-      double end = timeInMicroSeconds();
-      if (iters > 10)
-        printf("{\"Total\": %lf, \"matmul1Time\": %lf, \"matmul2Time\": %lf}\n",end-start,iterMatMul1, iterMatmul2);
-      execTime += end-start;
+    if (status != cutlass::Status::kSuccess) {
+      return cudaErrorUnknown;
     }
-  } else {
-    // Launch initialized CUTLASS kernel
-    for (int r = 0; r < iters; r++) {
-      handle.prod().iter += 1;
-      handle.cons().iter += 1;
+    // printf("427: *kernelExecuted %d handle.iter %d\n", *kernelExecuted, handle.iter);
+    // {
+    //   double start = timeInMicroSeconds();
+    //   while(*kernelExecuted < handle.iter);
+    //   double end = timeInMicroSeconds();
+    //   printf("456: %lf microseconds\n", end-start);
+    // }
+    // printf("429: *kernelExecuted %d handle.iter %d\n", *kernelExecuted, handle.iter);
+    // cudaEventRecord(event, producer_stream);
+    // cudaStreamWaitEvent(consumer_stream, event, 0);
+    // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
-      typename GemmTy1::Arguments args1{handle.prod(),
-        problem_size1,  // <- problem size of matrix multiplication
-        tensor_a.device_ref(),  // <- reference to matrix A on device
-        tensor_b.device_ref(),  // <- reference to matrix B on device
-        tensor_c.device_ref(),  // <- reference to matrix C on device
-        tensor_c.device_ref(),  // <- reference to matrix C on device
-        {alpha, beta},          // <- tuple of alpha and beta
-        split_k1};        // <- k-dimension split factor
-      
-      typename GemmTy2::Arguments args2{handle.cons(),
-        problem_size2,  // <- problem size of matrix multiplication
-        tensor_c.device_ref(),  // <- reference to matrix A on device
-        tensor_d.device_ref(),  // <- reference to matrix B on device
-        tensor_e.device_ref(),  // <- reference to matrix C on device
-        tensor_e.device_ref(),  // <- reference to matrix C on device
-        {alpha, beta},          // <- tuple of alpha and beta
-        split_k2};        // <- k-dimension split factor
-      
-      double start = timeInMicroSeconds();
-      // dim3 grid = {problem_size1.m()/128, 1, 1};
-      // int lastBlockIdxX = (grid.x/80)*80;
-      status = gemm_op1(args1, true, NULL, workspace1.get(), producer_stream);
-      CUTLASS_CHECK(status);
+    // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
+    // CUDA_CHECK(cudaDeviceSynchronize());
+    // printf("338\n");
+    handle.invokeWaitKernel(consumer_stream);
+    status = gemm_op2(args2, true, NULL, workspace2.get(), consumer_stream);
+    CUTLASS_CHECK(status);
 
-      if (status != cutlass::Status::kSuccess) {
-        return cudaErrorUnknown;
-      }
-      // printf("427: *kernelExecuted %d handle.iter %d\n", *kernelExecuted, handle.iter);
-      // {
-      //   double start = timeInMicroSeconds();
-      //   while(*kernelExecuted < handle.iter);
-      //   double end = timeInMicroSeconds();
-      //   printf("456: %lf microseconds\n", end-start);
-      // }
-      // printf("429: *kernelExecuted %d handle.iter %d\n", *kernelExecuted, handle.iter);
-      // cudaEventRecord(event, producer_stream);
-      // cudaStreamWaitEvent(consumer_stream, event, 0);
-      // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-
-      // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
-      // CUDA_CHECK(cudaDeviceSynchronize());
-      // printf("338\n");
-      handle.invokeWaitKernel(consumer_stream);
-      status = gemm_op2(args2, true, NULL, workspace2.get(), consumer_stream);
-      CUTLASS_CHECK(status);
-
-      if (status != cutlass::Status::kSuccess) {
-        return cudaErrorUnknown;
-      }
-      CUDA_CHECK(cudaDeviceSynchronize());
-      // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
-      // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-      double end = timeInMicroSeconds();
-      if (iters > 10)
-        printf("{\"Total\": %lf, \"matmul1Time\": -1, \"matmul2Time\": -1}\n",end-start);
-      execTime += end-start;
-      matmul1Time = -1;
-      softmaxTime = -1;
-      matmul2Time = -1;
+    if (status != cutlass::Status::kSuccess) {
+      return cudaErrorUnknown;
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
+    // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
+    // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
+    double end = timeInMicroSeconds();
+    if (iters > 10)
+      printf("{\"Total\": %lf, \"matmul1Time\": -1, \"matmul2Time\": -1}\n",end-start);
+    execTime += end-start;
+    matmul1Time = -1;
+    softmaxTime = -1;
+    matmul2Time = -1;
   }
 
   return cudaSuccess;
 }
 
-template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2, bool useCuSync>
-cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
+template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
+cudaError_t runhgemmBaseline(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
                      cutlass::gemm::GemmCoord problem_size2,
                      ElementComputeEpilogue alpha,
                      ElementComputeEpilogue beta,
@@ -456,18 +550,61 @@ cudaError_t runhgemm(int split_k1, int split_k2, cutlass::gemm::GemmCoord proble
   matmul2Time = 0;
   if (split_k1 == 1 && split_k2 == 1) {
     #ifdef ENABLE_NORMAL_GEMM
-    result = runhgemm<GemmTy1, GemmTy2, useCuSync>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runhgemmBaseline<GemmTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
     #endif
   } else if (split_k1 > 1 && split_k2 == 1) {
     #ifdef ENABLE_NORMAL_GEMM
-    result = runhgemm<GemmSplitKTy1, GemmTy2, useCuSync>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runhgemmBaseline<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
     #endif
   } else if (split_k1 == 1 && split_k2 > 1) {
     #ifdef ENABLE_NORMAL_GEMM
-    result = runhgemm<GemmTy1, GemmSplitKTy2, useCuSync>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runhgemmBaseline<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
     #endif
   } else {
-    result = runhgemm<GemmSplitKTy1, GemmSplitKTy2, useCuSync>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runhgemmBaseline<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+  }
+
+  return result;
+}
+
+template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
+cudaError_t runhgemmCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
+                     cutlass::gemm::GemmCoord problem_size2,
+                     ElementComputeEpilogue alpha,
+                     ElementComputeEpilogue beta,
+                     cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_a,
+                     cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_b,
+                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
+                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
+                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
+                     CuSyncImpl& handle,
+                     cudaStream_t producer_stream, cudaStream_t consumer_stream,
+                     cudaEvent_t event,
+                     double& execTime,
+                     double& matmul1Time,
+                     double& softmaxTime,
+                     double& matmul2Time,
+                     int iters = 100) {
+  #define ENABLE_NORMAL_GEMM
+  cudaError_t result;
+  execTime = 0;
+  matmul1Time = 0;
+  softmaxTime = 0;
+  matmul2Time = 0;
+  if (split_k1 == 1 && split_k2 == 1) {
+    #ifdef ENABLE_NORMAL_GEMM
+    result = runhgemmCuSync<GemmTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    #endif
+  } else if (split_k1 > 1 && split_k2 == 1) {
+    #ifdef ENABLE_NORMAL_GEMM
+    result = runhgemmCuSync<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    #endif
+  } else if (split_k1 == 1 && split_k2 > 1) {
+    #ifdef ENABLE_NORMAL_GEMM
+    result = runhgemmCuSync<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    #endif
+  } else {
+    result = runhgemmCuSync<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, handle, producer_stream, consumer_stream, event, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   }
 
   return result;
@@ -649,12 +786,12 @@ int run(int argc, char* arg[]) {
   TileSync sync;
 #elif BATCHEDROW
   using Sync = BatchedRowSync;
-  BatchedRowSync sync;
+  BatchedRowSync sync(gridDim.y, 1);
 #else
   #error "Unknown Policy"
 #endif
-  CuStageImpl prod(gridDim, tileSize, sync);
-  CuStageImpl cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), 
+  ProdCuStage prod(gridDim, tileSize, sync);
+  ConsCuStage cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), 
                     DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), 
                     split_k2}, tileSize, sync);
   prod.iter = cons.iter = 0;
@@ -690,7 +827,7 @@ int run(int argc, char* arg[]) {
   #define ENABLE_NORMAL_GEMM
 
   if (true) {
-    result = runhgemm<Gemm, Gemm, GemmSplitK, GemmSplitK, false>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, event, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
+    result = runhgemmBaseline<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, event, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -701,12 +838,12 @@ int run(int argc, char* arg[]) {
       }
     }
 
-    result = runhgemm<Gemm, Gemm, GemmSplitK, GemmSplitK, false>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, event, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    result = runhgemmBaseline<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, event, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-BASELINE:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
-    result = runhgemm<Gemm, Gemm, GemmSplitK, GemmSplitK, false>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, event, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    result = runhgemmBaseline<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, event, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
 
     if (result != cudaSuccess) {
       std::cerr << "CUTLASS GEMM kernel failed: "
@@ -758,7 +895,7 @@ int run(int argc, char* arg[]) {
   cuSyncHandle.iter = 0;
   cuSyncHandle.prod().iter = cuSyncHandle.cons().iter = 0;
   if (true) {
-    result = runhgemm<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, overlapTime, matmul1Time, softmaxTime, matmul2Time, 1);
+    result = runhgemmCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, overlapTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     if (doChecking) {
@@ -768,12 +905,12 @@ int run(int argc, char* arg[]) {
       }
     }
     //warmup
-    result = runhgemm<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, overlapTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    result = runhgemmCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, overlapTime, matmul1Time, softmaxTime, matmul2Time, warmup);
     
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-OVERLAPPED:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());
-    result = runhgemm<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK, OverlapGemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, overlapTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    result = runhgemmCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, consumer_stream,  event, overlapTime, matmul1Time, softmaxTime, matmul2Time, epochs);
   
     printf("END-OVERLAPPED:\n");
     

@@ -430,6 +430,8 @@ public:
 
   /// Perform the specified number of threadblock mainloop iterations of matrix
   /// multiply-accumulate.  Assumes prologue has been initiated.
+  
+  template<typename CuStageImpl>
   CUTLASS_DEVICE
   void gemm_iters(
     uint gemm_k_iterations,        ///< number of threadblock mainloop iterations
@@ -537,7 +539,8 @@ public:
     }
 
   }
-
+  
+  template<typename CuStageImpl>
   CUTLASS_DEVICE
   void prologue(
     IteratorA &iterator_A,      ///< [in|out] iterator over A operand in global memory
@@ -575,6 +578,7 @@ public:
   }
 
   /// Perform a threadblock-scoped matrix multiply-accumulate
+  template<typename CuStageImpl>
   CUTLASS_DEVICE
   void doWithOverlap(
     int gemm_k_iterations,                            ///< number of iterations of the mainloop

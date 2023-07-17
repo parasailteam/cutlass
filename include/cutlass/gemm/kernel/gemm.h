@@ -70,7 +70,6 @@ struct Gemm {
 
   /// Parameters structure
   struct Params {
-    CuStageImpl custage;
     cutlass::gemm::GemmCoord problem_size;
     cutlass::gemm::GemmCoord grid_tiled_shape;
     int swizzle_log_tile;
@@ -95,11 +94,10 @@ struct Gemm {
     //
 
     CUTLASS_HOST_DEVICE
-    Params(): swizzle_log_tile(0), semaphore(0), gemm_k_size(0), custage() { }
+    Params(): swizzle_log_tile(0), semaphore(0), gemm_k_size(0) { }
 
     CUTLASS_HOST_DEVICE
     Params(
-      CuStageImpl custage,
       cutlass::gemm::GemmCoord const & problem_size,
       cutlass::gemm::GemmCoord const & grid_tiled_shape,
       typename Mma::IteratorA::TensorRef ref_A,
@@ -112,7 +110,6 @@ struct Gemm {
       int const *gather_B_indices = nullptr,
       int const *scatter_D_indices = nullptr
     ):
-      custage(custage),
       problem_size(problem_size),
       grid_tiled_shape(grid_tiled_shape),
       swizzle_log_tile(ThreadblockSwizzle().get_log_tile(grid_tiled_shape)),
@@ -378,6 +375,7 @@ struct Gemm {
   //TODO: Had to make Params non-const, does that have any perf issue?
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
+    #if 0
     CuStageImpl& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
     dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
     
@@ -581,6 +579,7 @@ struct Gemm {
       dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
       stage.post(tile);
     }
+    #endif
   }
 };
 

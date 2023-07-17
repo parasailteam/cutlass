@@ -172,7 +172,7 @@ using WarpShape = cutlass::gemm::GemmShape<64, 64, 128>;         // Warp tile sh
 using InstructionShape = cutlass::gemm::GemmShape<8, 8, 32>;    // TensorCore instruction shape
 
 // This code section describes how threadblocks are scheduled on GPU
-using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
+using SwizzleThreadBlock = cutlass::gemm::threadblock::ThreadblockSwizzleStreamK;
 
 // Number of pipelines you want to use
 constexpr int NumStages = 2;

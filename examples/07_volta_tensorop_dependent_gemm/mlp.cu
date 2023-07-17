@@ -126,9 +126,15 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
 #ifdef ROWSYNC 
   using CuStageImpl = CuStage<RowMajor, RowSync>;
   using Sync = RowSync;
+#elif TILEFIRSTTHENROW
+  using CuStageImpl = CuStage<RowMajor, TileFirstAndRowSync>;
+  using Sync = TileFirstAndRowSync;
 #elif TILESYNC
   using CuStageImpl = CuStage<RowMajor, TileSync>;
   using Sync = TileSync;
+#elif BATCHEDROW
+  using CuStageImpl = CuStage<RowMajor, BatchedRowSync>;
+  using Sync = BatchedRowSync;
 #else
   #error "Unknown Synchronization"
 #endif
@@ -635,9 +641,15 @@ int run(int argc, char* arg[]) {
 #if ROWSYNC
   using Sync = RowSync;
   RowSync sync(gridDim.y);
+#elif TILEFIRSTTHENROW
+  using Sync = TileFirstAndRowSync;
+  TileFirstAndRowSync sync(1, 1, gridDim.y);
 #elif TILESYNC
   using Sync = TileSync;
   TileSync sync;
+#elif BATCHEDROW
+  using Sync = BatchedRowSync;
+  BatchedRowSync sync;
 #else
   #error "Unknown Policy"
 #endif

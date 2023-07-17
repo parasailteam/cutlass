@@ -127,7 +127,7 @@ compare if the output from CUTLASS kernel is same as the reference implicit GEMM
 #include <fstream>
 #include <sstream>
 
-#include "cutlass/cuSync.h"
+#include <cuSync.h>
 
 #ifdef ROWSYNC 
   using CuStageImpl = CuStage<RowMajor, RowSync>;
@@ -243,7 +243,7 @@ using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
   WarpShape,
   InstructionShape,
   EpilogueOp,
-  SwizzleThreadBlock,
+  cutlass::gemm::threadblock::ThreadblockSwizzleStreamK,
   NumStages,
   cutlass::arch::OpMultiplyAdd,
   cutlass::conv::IteratorAlgorithm::kAnalytic

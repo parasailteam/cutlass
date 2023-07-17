@@ -513,15 +513,15 @@ public:
             custage.wait(tile);
           }
 
-          // Load fragment from global B
-          tb_frag_B.clear();
-          iterator_B.load(tb_frag_B);
-          ++iterator_B;
-
           // Load fragment from global A
           tb_frag_A.clear();
           iterator_A.load(tb_frag_A);
           ++iterator_A;
+
+          // Load fragment from global B
+          tb_frag_B.clear();
+          iterator_B.load(tb_frag_B);
+          ++iterator_B;
 
           // Avoid reading out of bounds if this was the last loop iteration
           iterator_A.clear_mask(gemm_k_iterations <= 2);

@@ -3,6 +3,7 @@ import re
 import sys
 
 attention_or_mlp = sys.argv[1]
+model = sys.argv[2]
 
 assert attention_or_mlp in ["attention", "mlp"]
 
@@ -158,6 +159,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks": [1,1]},
       10240: {"split_ks": [1,1]},
       12288: {"split_ks": [1,1]},
+      14336: {"split_ks": [1,1]},
       16384: {"split_ks": [1,1]},
       20480: {"split_ks": [1,1]},
       25600: {"split_ks": [1,1]},
@@ -167,6 +169,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks": [1,1]},
       10240: {"split_ks": [1,1]},
       12288: {"split_ks": [1,1]},
+      14336: {"split_ks": [1,1]},
       16384: {"split_ks": [1,1]},
       20480: {"split_ks": [1,1]},
       25600: {"split_ks": [1,1]},
@@ -176,6 +179,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [2,1]},
       10240: {"split_ks":  [2,1]},
       12288: {"split_ks":  [2,1]},
+      14336: {"split_ks":  [2,1]},
       16384: {"split_ks":  [2,1]},
       20480: {"split_ks":  [2,1]},
       25600: {"split_ks":  [2,1]},
@@ -185,6 +189,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1]},
       10240: {"split_ks":  [4,1]},
       12288: {"split_ks":  [4,1]},
+      14336: {"split_ks":  [4,1]},
       16384: {"split_ks":  [4,1]},
       20480: {"split_ks":  [4,1]},
       25600: {"split_ks":  [4,1]},
@@ -194,6 +199,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [12,3]},
       10240: {"split_ks":  [12,3]},
       12288: {"split_ks":  [12,3]},
+      14336: {"split_ks":  [12,3]},
       16384: {"split_ks":  [2,1]},
       20480: {"split_ks":  [12,3]},
       25600: {"split_ks":  [12,3]},},
@@ -202,6 +208,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1], "TileBatch": 4},
       10240: {"split_ks":  [12,3]},
       12288: {"split_ks":  [3,1], "TileBatch": 8},
+      14336: {"split_ks":  [3,1]},
       16384: {"split_ks":  [2,1], "TileBatch": 8},
       20480: {"split_ks":  [12,3]},
       25600: {"split_ks":  [12,3]}},
@@ -210,6 +217,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1], "TileBatch": 4},
       10240: {"split_ks":  [12,3]},
       12288: {"split_ks":  [3,1], "TileBatch": 8},
+      14336: {"split_ks":  [3,1]},
       16384: {"split_ks":  [2,1], "TileBatch": 8},
       20480: {"split_ks":  [12,3]},
       25600: {"split_ks":  [12,3]}},
@@ -219,6 +227,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1], "TileBatch": 4},
       10240: {"split_ks":  [4,1]},
       12288: {"split_ks":  [3,1], "TileBatch": 8},
+      14336: {"split_ks":  [3,1]},
       16384: {"split_ks":  [2,1], "TileBatch": 8},
       20480: {"split_ks":  [4,1]},
       25600: {"split_ks":  [4,1]}},
@@ -228,6 +237,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1], "TileBatch": 4},
       10240: {"split_ks":  [4,1]},
       12288: {"split_ks":  [3,1], "TileBatch": 8},
+      14336: {"split_ks":  [3,1]},
       16384: {"split_ks":  [2,1], "TileBatch": 8},
       20480: {"split_ks":  [4,1]},
       25600: {"split_ks":  [4,1]}},
@@ -237,6 +247,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1], "TileBatch": 4},
       10240: {"split_ks":  [4,1]},
       12288: {"split_ks":  [3,1], "TileBatch": 8},
+      14336: {"split_ks":  [3,1]},
       16384: {"split_ks":  [2,1], "TileBatch": 8},
       20480: {"split_ks":  [4,1]},
       25600: {"split_ks":  [4,1]}},
@@ -245,6 +256,7 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1], "TileBatch": 4},
       10240: {"split_ks":  [4,1]},
       12288: {"split_ks":  [3,1], "TileBatch": 8},
+      14336: {"split_ks":  [3,1]},
       16384: {"split_ks":  [2,1], "TileBatch": 8},
       20480: {"split_ks":  [4,1]},
       25600: {"split_ks":  [4,1]}},
@@ -253,31 +265,40 @@ elif attention_or_mlp == "mlp":
       8192: {"split_ks":   [4,1], "TileBatch": 4},
       10240: {"split_ks":  [4,1]},
       12288: {"split_ks":  [3,1], "TileBatch": 8}, #split_k: 3,1 64x256x32 32x128x32, tilebatch:8, load B before A
+      14336: {"split_ks":  [3,1]}, #TODO: Tile batch
       16384: {"split_ks":  [2,1], "TileBatch": 8},
       20480: {"split_ks":  [4,1]},
       25600: {"split_ks":  [4,1]}}
   }
 
-for h in [16384]:#[6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
-  for m in [1,2,4,8,16,32,64]: #[256, 512, 1024, 2048]: # 256, [1,2,4,8,16,32,64,128]:
+if model.lower() == "BLOOM".lower():
+  H = 14336
+elif model.lower() == "GPT-3".lower():
+  H = 12288
+else:
+  print ("No Hidden dim for ", model)
+  sys.exit(0)
+
+for h in [H]:#[6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
+  for m in [1,2,4,8,16,32,64,128]:#[256, 512, 1024, 2048]: # 256, [1,2,4,8,16,32,64,128]:
     if attention_or_mlp == "attention":
       (s, o) = subprocess.getstatusoutput(f"python3 torchAttention.py {m} {int(h/8)} {h} {h}")
     else:
       (s, o) = subprocess.getstatusoutput(f"python3 torchmlp.py {m} {int(4*h/8)} {h} {h}")
-
     if s == -1:
       print("error " + o)
     else:
       ctime = o
       cublasTimes[m] = ctime
 
-    for syncPolicy in ['Tile-Sync']:#'Row-Sync',
+    for syncPolicy in ['rowsync', 'tilesync']:#'Row-Sync',
       if attention_or_mlp == "mlp":
-        command = f"./mlp {m} {int(4*h/8)} {h} {h}"
+        command = f"./mlp-{syncPolicy} {m} {int(4*h/8)} {h} {h}"
       else:
         command = f"./attention {m} {int(h/8)} {h} {h}"
-      (s, o) = subprocess.getstatusoutput(command + f" check=false split_k1_slices={tiles[m][h]['split_ks'][0]} split_k2_slices={tiles[m][h]['split_ks'][1]} rowSyncOrTileSync={1 if syncPolicy == 'Row-Sync' else 0}")
+      (s, o) = subprocess.getstatusoutput(command + f" check=false split_k1_slices={tiles[m][h]['split_ks'][0]} split_k2_slices={tiles[m][h]['split_ks'][1]}")
       # print(o)
+      # print(s, o)
       if "Invalid" in o:
         pass
       elif s != 0:
@@ -286,8 +307,8 @@ for h in [16384]:#[6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 
         # print(o)
         baselinetimes = getAllTimes(o, 'START-BASELINE', 'END-BASELINE')
         overlaptimes  = getAllTimes(o, 'START-OVERLAPPED', 'END-OVERLAPPED')
-        matmul1TBs = int(re.findall(r"Number of first matmul TBs: (\d+)", o)[0])
-        matmul2TBs = int(re.findall(r"Number of second matmul TBs: (\d+)", o)[0])
+        matmul1TBs = 0 #int(re.findall(r"Number of first matmul TBs: (\d+)", o)[0])
+        matmul2TBs = 0 #int(re.findall(r"Number of second matmul TBs: (\d+)", o)[0])
         bTimeTotal = baselinetimes["Total"]
         bTimeMatmul1 = baselinetimes["matmul1Time"]
         bTimeMatmul2 = baselinetimes["matmul2Time"]

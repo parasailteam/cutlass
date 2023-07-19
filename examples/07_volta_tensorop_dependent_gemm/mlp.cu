@@ -127,14 +127,14 @@ the output from CUTLASS kernel is same as reference GEMM kernel.
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
   using Sync = RowSync;
-#elif TILEFIRSTTHENROW
-  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileFirstAndRowSync>;
-  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileFirstAndRowSync>;
-  using Sync = TileFirstAndRowSync;
+#elif TILEBATCH
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<8>>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<8>>;
+  using Sync = TileSync<8>;
 #elif TILESYNC
-  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync>;
-  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync>;
-  using Sync = TileSync;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<1>>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<1>>;
+  using Sync = TileSync<1>;
 #elif BATCHEDROW
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, BatchedRowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, BatchedRowSync>;
@@ -668,15 +668,15 @@ int run(int argc, char* arg[]) {
     abort();
   }
 
-  bool rowSyncOrTileSync;
-  if (strstr(arg[8], "rowSyncOrTileSync=") != NULL) {
-    int val = atoi(arg[8] + strlen("rowSyncOrTileSync="));
-    if (val == 0) rowSyncOrTileSync = false; else rowSyncOrTileSync = true;
-  } else {
-    printf("invalid arg[8] %s\n", arg[8]);
-    abort();
-  }
-  printf("rowSyncOrTileSync %d\n", rowSyncOrTileSync);
+  // bool rowSyncOrTileSync;
+  // if (strstr(arg[8], "rowSyncOrTileSync=") != NULL) {
+  //   int val = atoi(arg[8] + strlen("rowSyncOrTileSync="));
+  //   if (val == 0) rowSyncOrTileSync = false; else rowSyncOrTileSync = true;
+  // } else {
+  //   printf("invalid arg[8] %s\n", arg[8]);
+  //   abort();
+  // }
+  // printf("rowSyncOrTileSync %d\n", rowSyncOrTileSync);
   //
   // Run the CUTLASS GEMM test.
   //
@@ -778,12 +778,12 @@ int run(int argc, char* arg[]) {
 #if ROWSYNC
   using Sync = RowSync;
   RowSync sync(gridDim.y);
-#elif TILEFIRSTTHENROW
-  using Sync = TileFirstAndRowSync;
-  TileFirstAndRowSync sync(1, 1, gridDim.y);
+#elif TILEBATCH
+  using Sync = TileSync<8>;
+  Sync sync;
 #elif TILESYNC
-  using Sync = TileSync;
-  TileSync sync;
+  using Sync = TileSync<1>;
+  Sync sync;
 #elif BATCHEDROW
   using Sync = BatchedRowSync;
   BatchedRowSync sync(gridDim.y, 1);

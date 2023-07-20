@@ -348,11 +348,12 @@ class CuSyncGemm {
 
     }
   };
-
-private:
-
   /// Kernel parameters object
   typename GemmKernel::Params params_;
+  
+private:
+
+
 
 public:
 

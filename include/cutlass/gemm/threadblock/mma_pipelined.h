@@ -509,16 +509,17 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
-          // Load fragment from global B
-          tb_frag_B.clear();
-          iterator_B.load(tb_frag_B);
-          ++iterator_B;
-
           uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
           if (!producerOrConsumer && startK > Shape::kN && startK%Shape::kN == 0) {
             dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
             custage.wait(tile);
           }
+          // Load fragment from global B
+          tb_frag_B.clear();
+          iterator_B.load(tb_frag_B);
+          ++iterator_B;
+
+
 
           // Load fragment from global A
           tb_frag_A.clear();
@@ -558,6 +559,13 @@ public:
       dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
       custage.wait(tile);
     }
+    // Load B fragment from global B
+    FragmentB tb_frag_B;
+    tb_frag_B.clear();
+    iterator_B.load(tb_frag_B);
+    ++iterator_B;
+    this->smem_iterator_B_.store(transform_B_(tb_frag_B));
+    
     // Load A fragment from global A
     FragmentA tb_frag_A;
     tb_frag_A.clear();
@@ -566,12 +574,7 @@ public:
 
     // Store A and B fragments to shared
     this->smem_iterator_A_.store(transform_A_(tb_frag_A));
-    // Load B fragment from global B
-    FragmentB tb_frag_B;
-    tb_frag_B.clear();
-    iterator_B.load(tb_frag_B);
-    ++iterator_B;
-    this->smem_iterator_B_.store(transform_B_(tb_frag_B));
+    
 
     // Advance write stage
     advance_smem_write_stage();

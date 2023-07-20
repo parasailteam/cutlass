@@ -457,31 +457,13 @@ cudaError_t runhgemmCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCoord 
   
   // Launch initialized CUTLASS kernel
   for (int r = 0; r < iters; r++) {
-    handle.prod().iter += 1;
-    handle.cons().iter += 1;
-
-    typename GemmTy1::Arguments args1{handle.prod(),
-      problem_size1,  // <- problem size of matrix multiplication
-      tensor_a.device_ref(),  // <- reference to matrix A on device
-      tensor_b.device_ref(),  // <- reference to matrix B on device
-      tensor_c.device_ref(),  // <- reference to matrix C on device
-      tensor_c.device_ref(),  // <- reference to matrix C on device
-      {alpha, beta},          // <- tuple of alpha and beta
-      split_k1};        // <- k-dimension split factor
-    
-    typename GemmTy2::Arguments args2{handle.cons(),
-      problem_size2,  // <- problem size of matrix multiplication
-      tensor_c.device_ref(),  // <- reference to matrix A on device
-      tensor_d.device_ref(),  // <- reference to matrix B on device
-      tensor_e.device_ref(),  // <- reference to matrix C on device
-      tensor_e.device_ref(),  // <- reference to matrix C on device
-      {alpha, beta},          // <- tuple of alpha and beta
-      split_k2};        // <- k-dimension split factor
+    gemm_op2.params_.custage.iter += 1;
+    gemm_op1.params_.custage.iter += 1;
     
     double start = timeInMicroSeconds();
     // dim3 grid = {problem_size1.m()/128, 1, 1};
     // int lastBlockIdxX = (grid.x/80)*80;
-    status = gemm_op1(args1, true, NULL, workspace1.get(), producer_stream);
+    status = gemm_op1.run(true, NULL, producer_stream);
     CUTLASS_CHECK(status);
 
     if (status != cutlass::Status::kSuccess) {
@@ -503,7 +485,7 @@ cudaError_t runhgemmCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCoord 
     // CUDA_CHECK(cudaDeviceSynchronize());
     // printf("338\n");
     handle.invokeWaitKernel(consumer_stream);
-    status = gemm_op2(args2, true, NULL, workspace2.get(), consumer_stream);
+    status = gemm_op2.run(true, NULL, consumer_stream);
     CUTLASS_CHECK(status);
 
     if (status != cutlass::Status::kSuccess) {

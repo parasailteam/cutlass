@@ -408,7 +408,7 @@ struct CuSyncGemm {
       semaphore.release(lock);
     }
 
-    if (isProducerOrConsumer && !kSplitKSerial) {
+    if (isProducerOrConsumer && (!kSplitKSerial || (kSplitKSerial && params.grid_tiled_shape.k() == 1))) {
       dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
       stage.post(tile);
     }

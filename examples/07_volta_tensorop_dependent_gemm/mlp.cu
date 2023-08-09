@@ -187,6 +187,7 @@ cudaError_t checkMLPResults(cutlass::gemm::GemmCoord problem_size1,
   return cudaSuccess;
 }
 
+/*Baseline MLP*/
 template<typename GemmTy1, typename GemmTy2>
 cudaError_t runBaseline(int split_k1, int split_k2, 
                         cutlass::gemm::GemmCoord problem_size1,
@@ -198,73 +199,60 @@ cudaError_t runBaseline(int split_k1, int split_k2,
                         cudaStream_t producer_stream, cudaStream_t consumer_stream,
                         double& execTime, double& matmul1Time, double& softmaxTime, double& matmul2Time,
                         int iters = 100) {
-  // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
-  // instantiated CUTLASS kernel
-  typename GemmTy1::Arguments args1{problem_size1,  // <- problem size of matrix multiplication
-                                     tensor_a.device_ref(),  // <- reference to matrix A on device
-                                     tensor_b.device_ref(),  // <- reference to matrix B on device
-                                     tensor_c.device_ref(),  // <- reference to matrix C on device
-                                     tensor_c.device_ref(),  // <- reference to matrix C on device
-                                     {alpha, beta},          // <- tuple of alpha and beta
-                                     split_k1};        // <- k-dimension split factor
-  
-  typename GemmTy2::Arguments args2{ problem_size2,  // <- problem size of matrix multiplication
-                                     tensor_c.device_ref(),  // <- reference to matrix A on device
-                                     tensor_d.device_ref(),  // <- reference to matrix B on device
-                                     tensor_e.device_ref(),  // <- reference to matrix C on device
-                                     tensor_e.device_ref(),  // <- reference to matrix C on device
-                                     {alpha, beta},          // <- tuple of alpha and beta
-                                     split_k2};        // <- k-dimension split factor
-  // Using the arguments, query for extra workspace required for matrix multiplication computation
+  //Setup first GeMM
+  typename GemmTy1::Arguments args1{problem_size1,
+                                     tensor_a.device_ref(), 
+                                     tensor_b.device_ref(),
+                                     tensor_c.device_ref(),
+                                     tensor_c.device_ref(),
+                                     {alpha, beta},        
+                                     split_k1};
+
   size_t workspace_size = GemmTy1::get_workspace_size(args1);
-
-  // Allocate workspace memory
   cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
-
-  // Instantiate CUTLASS kernel depending on templates
   GemmTy1 gemm_op1;
-
-  // Check the problem size is supported or not 
   cutlass::Status status = gemm_op1.can_implement(args1);
   CUTLASS_CHECK(status);
-
-  // Initialize CUTLASS kernel with arguments and workspace pointer
   status = gemm_op1.initialize(args1, workspace1.get());
   CUTLASS_CHECK(status);
 
+  //Setup Second GeMM
+  typename GemmTy2::Arguments args2{ problem_size2, 
+                                     tensor_c.device_ref(), 
+                                     tensor_d.device_ref(), 
+                                     tensor_e.device_ref(), 
+                                     tensor_e.device_ref(), 
+                                     {alpha, beta},         
+                                     split_k2};
   GemmTy2 gemm_op2;
   workspace_size = GemmTy2::get_workspace_size(args2);
-
-  // Allocate workspace memory
   cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
-
-  // Check the problem size is supported or not 
   status = gemm_op2.can_implement(args2);
   CUTLASS_CHECK(status);
-
-  // Initialize CUTLASS kernel with arguments and workspace pointer
   status = gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
+  
   execTime = 0;
-  // Launch initialized CUTLASS kernel
+  
+  //Run kernels
   for (int r = 0; r < iters; r++) {    
     typename GemmTy1::Arguments args1{
-      problem_size1,  // <- problem size of matrix multiplication
-      tensor_a.device_ref(),  // <- reference to matrix A on device
-      tensor_b.device_ref(),  // <- reference to matrix B on device
-      tensor_c.device_ref(),  // <- reference to matrix C on device
-      tensor_c.device_ref(),  // <- reference to matrix C on device
-      {alpha, beta},          // <- tuple of alpha and beta
-      split_k1};        // <- k-dimension split factor
+      problem_size1,  
+      tensor_a.device_ref(),
+      tensor_b.device_ref(),
+      tensor_c.device_ref(), 
+      tensor_c.device_ref(), 
+      {alpha, beta},
+      split_k1};
 
     typename GemmTy2::Arguments args2{
-      problem_size2,  // <- problem size of matrix multiplication
-      tensor_c.device_ref(),  // <- reference to matrix A on device
-      tensor_d.device_ref(),  // <- reference to matrix B on device
-      tensor_e.device_ref(),  // <- reference to matrix C on device
-      tensor_e.device_ref(),  // <- reference to matrix C on device
-      {alpha, beta},          // <- tuple of alpha and beta
-      split_k2};        // <- k-dimension split factor
+      problem_size2, 
+      tensor_c.device_ref(), 
+      tensor_d.device_ref(), 
+      tensor_e.device_ref(), 
+      tensor_e.device_ref(), 
+      {alpha, beta},         
+      split_k2};
     
     double start = timeInMicroSeconds();
     status = gemm_op1(args1, workspace1.get(), producer_stream);
@@ -277,9 +265,6 @@ cudaError_t runBaseline(int split_k1, int split_k2,
     double middle1 = timeInMicroSeconds();
     double iterMatMul1 = middle1-start;
     matmul1Time += iterMatMul1;
-
-    // CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
-
     status = gemm_op2(args2, workspace2.get(), consumer_stream);
     CUTLASS_CHECK(status);
 
@@ -300,16 +285,45 @@ cudaError_t runBaseline(int split_k1, int split_k2,
   return cudaSuccess;
 }
 
+template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
+cudaError_t runBaseline(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
+                     cutlass::gemm::GemmCoord problem_size2,
+                     ElementComputeEpilogue alpha,
+                     ElementComputeEpilogue beta,
+                     HostTensor& tensor_a, HostTensor& tensor_b, HostTensor& tensor_c,
+                     HostTensor& tensor_d, HostTensor& tensor_e,
+                     cudaStream_t producer_stream, cudaStream_t consumer_stream,
+                     double& execTime,
+                     double& matmul1Time,
+                     double& softmaxTime,
+                     double& matmul2Time,
+                     int iters = 100) {
+  cudaError_t result;
+  execTime = 0;
+  matmul1Time = 0;
+  softmaxTime = 0;
+  matmul2Time = 0;
+  if (split_k1 == 1 && split_k2 == 1) {
+    result = runBaseline<GemmTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+  } else if (split_k1 > 1 && split_k2 == 1) {
+    result = runBaseline<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+  } else if (split_k1 == 1 && split_k2 > 1) {
+    result = runBaseline<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+  } else {
+    result = runBaseline<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+  }
+
+  return result;
+}
+
+/*CuSync GeMMs in MLP*/
 template<typename GemmTy1, typename GemmTy2>
 cudaError_t runhgemmCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
                      cutlass::gemm::GemmCoord problem_size2,
                      ElementComputeEpilogue alpha,
                      ElementComputeEpilogue beta,
-                     cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_a,
-                     cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_b,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
+                     HostTensor& tensor_a, HostTensor& tensor_b, HostTensor& tensor_c,
+                     HostTensor& tensor_d, HostTensor& tensor_e,
                      CuSyncImpl& handle,
                      cudaStream_t producer_stream, cudaStream_t consumer_stream,
                      cudaEvent_t event,
@@ -421,57 +435,12 @@ cudaError_t runhgemmCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCoord 
 }
 
 template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
-cudaError_t runBaseline(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
-                     cutlass::gemm::GemmCoord problem_size2,
-                     ElementComputeEpilogue alpha,
-                     ElementComputeEpilogue beta,
-                     cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_a,
-                     cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_b,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
-                     CuSyncImpl& handle,
-                     cudaStream_t producer_stream, cudaStream_t consumer_stream,
-                     double& execTime,
-                     double& matmul1Time,
-                     double& softmaxTime,
-                     double& matmul2Time,
-                     int iters = 100) {
-  #define ENABLE_NORMAL_GEMM
-  cudaError_t result;
-  execTime = 0;
-  matmul1Time = 0;
-  softmaxTime = 0;
-  matmul2Time = 0;
-  if (split_k1 == 1 && split_k2 == 1) {
-    #ifdef ENABLE_NORMAL_GEMM
-    result = runBaseline<GemmTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
-    #endif
-  } else if (split_k1 > 1 && split_k2 == 1) {
-    #ifdef ENABLE_NORMAL_GEMM
-    result = runBaseline<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
-    #endif
-  } else if (split_k1 == 1 && split_k2 > 1) {
-    #ifdef ENABLE_NORMAL_GEMM
-    result = runBaseline<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
-    #endif
-  } else {
-    result = runBaseline<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
-  }
-
-  return result;
-}
-
-template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
 cudaError_t runhgemmCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
                      cutlass::gemm::GemmCoord problem_size2,
                      ElementComputeEpilogue alpha,
                      ElementComputeEpilogue beta,
-                     cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_a,
-                     cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_b,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_c,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_d,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_e,
+                     HostTensor& tensor_a, HostTensor& tensor_b, HostTensor& tensor_c,
+                     HostTensor& tensor_d, HostTensor& tensor_e,   
                      CuSyncImpl& handle,
                      cudaStream_t producer_stream, cudaStream_t consumer_stream,
                      cudaEvent_t event,
@@ -722,7 +691,7 @@ int run(int argc, char* arg[]) {
   #define ENABLE_NORMAL_GEMM
 
   if (true) {
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
+    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -733,12 +702,12 @@ int run(int argc, char* arg[]) {
       }
     }
 
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-BASELINE:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, cuSyncHandle, producer_stream, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, producer_stream, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
 
     if (result != cudaSuccess) {
       std::cerr << "CUTLASS GEMM kernel failed: "

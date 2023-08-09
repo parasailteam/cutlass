@@ -228,16 +228,27 @@ using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, 
 // This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmHorizontalThreadblockSwizzle; //;  // <- ??
 
-// This code section describes ?
-using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-    ElementOutput,                                     // <- data type of output matrix
-    128 / cutlass::sizeof_bits<ElementOutput>::value,  // <- this is the number of elements per
-                                                       // vectorized memory access. For half
-                                                       // precision, it's 8 elements. This becomes
-                                                       // the vector width of math instructions in
-                                                       // epilogue too
-    ElementAccumulator,                                // <- data type of accumulator
-    ElementComputeEpilogue>;  // <- data type for alpha/beta in linear combination function
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationGELU<
+    ElementOutput,                                        // <- data type of output matrix
+    128 / cutlass::sizeof_bits<ElementOutput>::value,     // <- this is the number of elements per
+                                                          // vectorized memory access. For half
+                                                          // precision, it's 8 elements. This becomes
+                                                          // the vector width of math instructions in
+                                                          // epilogue too
+    ElementAccumulator,                                   // <- data type of accumulator
+    ElementComputeEpilogue,                               // <- data type for alpha in linear combination function
+    cutlass::epilogue::thread::ScaleType::NoBetaScaling>; // <- alpha x C + bias
+
+// // This code section describes ?
+// using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+//     ElementOutput,                                     // <- data type of output matrix
+//     128 / cutlass::sizeof_bits<ElementOutput>::value,  // <- this is the number of elements per
+//                                                        // vectorized memory access. For half
+//                                                        // precision, it's 8 elements. This becomes
+//                                                        // the vector width of math instructions in
+//                                                        // epilogue too
+//     ElementAccumulator,                                // <- data type of accumulator
+//     ElementComputeEpilogue>;  // <- data type for alpha/beta in linear combination function
 
 // Number of pipelines you want to use
 constexpr int NumStages = 1;

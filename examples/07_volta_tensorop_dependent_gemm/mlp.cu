@@ -124,11 +124,11 @@ class CuSyncMLPGemm : public cutlass::gemm::device::CuSyncGemm<CuStage, ElementI
                                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 
                                                         2, 8, 8, splitK> {};
 
-using OverlapGemm1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp2, false>;
-using OverlapGemm2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, false>;
+using CuSyncGemm1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp2, false>;
+using CuSyncGemm2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, false>;
 
-using OverlapGemmSplitK1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp2, true>;
-using OverlapGemmSplitK2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, true>;
+using CuSyncGemmSplitK1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp2, true>;
+using CuSyncGemmSplitK2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, true>;
 
 using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
 
@@ -198,7 +198,7 @@ struct MLPParameters {
 
 /** Reference MLP for correctness check **/
 cudaError_t referenceMLP(MLPParameters& mlpParams) {
-  gpumatmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size1.m(), 
+  ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size1.m(), 
                                                mlpParams.gemm_size1.n(), 
                                                mlpParams.gemm_size1.k(),
                                                mlpParams.a.device_data(), 
@@ -206,7 +206,7 @@ cudaError_t referenceMLP(MLPParameters& mlpParams) {
                                                mlpParams.ref_c.host_data());
   CUDA_CHECK(cudaMemcpy(mlpParams.ref_c.device_data(), mlpParams.ref_c.host_data(), 
              sizeof(ElementOutput) * mlpParams.ref_c.size(), cudaMemcpyHostToDevice));
-  gpumatmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size2.m(),
+  ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size2.m(),
                                                mlpParams.gemm_size2.n(),
                                                mlpParams.gemm_size2.k(), 
                                                mlpParams.ref_c.device_data(),
@@ -221,7 +221,7 @@ cudaError_t checkMLPResults(MLPParameters& mlpParams) {
                         mlpParams.c.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking first GeMM\n");
-  bool eq = equals(mlpParams.ref_c.size(), mlpParams.ref_c.host_data(), hostC, 1e-2);
+  bool eq = equals(mlpParams.ref_c.size(), mlpParams.ref_c.host_data(), hostC, 1e-2f);
   if (eq == false) {
     printf("First GeMM not correct\n");
     return cudaErrorUnknown;
@@ -232,7 +232,7 @@ cudaError_t checkMLPResults(MLPParameters& mlpParams) {
                         mlpParams.e.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking second GeMM\n");
-  eq = equals(mlpParams.ref_e.size(), mlpParams.ref_e.host_data(), hostE, 1e-1);
+  eq = equals(mlpParams.ref_e.size(), mlpParams.ref_e.host_data(), hostE, 1e-1f);
   if (eq == false) {
     printf("Second GeMM not correct \n");
     return cudaErrorUnknown;
@@ -293,21 +293,12 @@ cudaError_t runBaseline(int split_k1, int split_k2,
     double start = timeInMicroSeconds();
     status = gemm_op1(args1, workspace1.get(), stream);
     CUTLASS_CHECK(status);
-    
-    if (status != cutlass::Status::kSuccess) {
-      return cudaErrorUnknown;
-    }
     CUDA_CHECK(cudaStreamSynchronize(stream));
     double middle1 = timeInMicroSeconds();
     double iterMatMul1 = middle1-start;
     matmul1Time += iterMatMul1;
     status = gemm_op2(args2, workspace2.get(), stream);
     CUTLASS_CHECK(status);
-
-    if (status != cutlass::Status::kSuccess) {
-      return cudaErrorUnknown;
-    }
-
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle3 = timeInMicroSeconds();
     double iterMatmul2 = middle3-middle1;
@@ -321,7 +312,6 @@ cudaError_t runBaseline(int split_k1, int split_k2,
   return cudaSuccess;
 }
 
-template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
 cudaError_t runBaseline(int split_k1, int split_k2, 
                         MLPParameters& mlpParams,
                         cudaStream_t stream,
@@ -336,13 +326,13 @@ cudaError_t runBaseline(int split_k1, int split_k2,
   softmaxTime = 0;
   matmul2Time = 0;
   if (split_k1 == 1 && split_k2 == 1) {
-    result = runBaseline<GemmTy1, GemmTy2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaseline<Gemm1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   } else if (split_k1 > 1 && split_k2 == 1) {
-    result = runBaseline<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaseline<GemmSplitK1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   } else if (split_k1 == 1 && split_k2 > 1) {
-    result = runBaseline<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaseline<Gemm1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   } else {
-    result = runBaseline<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaseline<GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   }
 
   return result;
@@ -351,11 +341,12 @@ cudaError_t runBaseline(int split_k1, int split_k2,
 /*CuSync GeMMs in MLP*/
 template<typename GemmTy1, typename GemmTy2>
 cudaError_t runCuSync(int split_k1, int split_k2,
-                           MLPParameters& mlpParams,
-                           CuSyncImpl& handle,
-                           cudaStream_t producer_stream, cudaStream_t consumer_stream,
-                           double& execTime,
-                           int iters = 100) {
+                      MLPParameters& mlpParams,
+                      CuSyncImpl& handle,
+                      cudaStream_t producer_stream, 
+                      cudaStream_t consumer_stream,
+                      double& execTime,
+                      int iters = 100) {
   typename GemmTy1::Arguments args1{handle.prod(),
                                      mlpParams.gemm_size1,
                                      mlpParams.a.device_ref(),
@@ -413,7 +404,6 @@ cudaError_t runCuSync(int split_k1, int split_k2,
   return cudaSuccess;
 }
 
-template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
 cudaError_t runCuSync(int split_k1, int split_k2, MLPParameters& mlpParams,
                       CuSyncImpl& handle,
                       cudaStream_t producer_stream, cudaStream_t consumer_stream,
@@ -422,13 +412,13 @@ cudaError_t runCuSync(int split_k1, int split_k2, MLPParameters& mlpParams,
   execTime = 0;
 
   if (split_k1 == 1 && split_k2 == 1) {
-    result = runCuSync<GemmTy1, GemmTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
+    result = runCuSync<CuSyncGemm1, CuSyncGemm2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   } else if (split_k1 > 1 && split_k2 == 1) {
-    result = runCuSync<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
+    result = runCuSync<CuSyncGemmSplitK1, CuSyncGemm2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   } else if (split_k1 == 1 && split_k2 > 1) {
-    result = runCuSync<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
+    result = runCuSync<CuSyncGemm1, CuSyncGemmSplitK2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   } else {
-    result = runCuSync<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
+    result = runCuSync<CuSyncGemmSplitK1, CuSyncGemmSplitK2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   }
 
   return result;
@@ -458,10 +448,7 @@ int run(int argc, char* arg[]) {
     std::stringstream ss(arg[i]);
     ss >> problem[i - 1];
   }
-
-  // Scalars used for linear scaling the result of the matrix product.
-  float scalars[2] = { 1, 0 };
-
+  
   // for (int i = 5; i < argc && i < 7; ++i) {
   //   std::stringstream ss(arg[i]);
   //   ss >> scalars[i - 4];
@@ -476,8 +463,8 @@ int run(int argc, char* arg[]) {
     abort();
   }
 
-  int split_k1 = 1;
-  int split_k2 = 1;
+  uint split_k1 = 1;
+  uint split_k2 = 1;
   if (strstr(arg[6], "split_k1_slices=") != NULL) {
     split_k1 = atoi(arg[6] + strlen("split_k1_slices="));
   } else {
@@ -505,8 +492,8 @@ int run(int argc, char* arg[]) {
   mlpParams.initOuts();
   mlpParams.initRefs();
 
-  dim3 gridDim = {DIVUP(mlpParams.gemm_size1.m(), ShapeMMAThreadBlock::kM), 
-                  DIVUP(mlpParams.gemm_size1.n(), ShapeMMAThreadBlock::kN), 
+  dim3 gridDim = {(uint)DIVUP(mlpParams.gemm_size1.m(), ShapeMMAThreadBlock::kM), 
+                  (uint)DIVUP(mlpParams.gemm_size1.n(), ShapeMMAThreadBlock::kN), 
                   split_k1};
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
   
@@ -526,8 +513,8 @@ int run(int argc, char* arg[]) {
   #error "Unknown Policy"
 #endif
   ProdCuStage prod(gridDim, tileSize, sync);
-  ConsCuStage cons({DIVUP(mlpParams.gemm_size2.m(), ShapeMMAThreadBlock::kM), 
-                    DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN), 
+  ConsCuStage cons({(uint)DIVUP(mlpParams.gemm_size2.m(), ShapeMMAThreadBlock::kM), 
+                    (uint)DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN), 
                     split_k2}, tileSize, sync);
   prod.iter = cons.iter = 0;
   CuSyncImpl cuSyncHandle(prod, cons);
@@ -548,7 +535,7 @@ int run(int argc, char* arg[]) {
   double matmul2Time = 0;
 
   if (true) {
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
+    result = runBaseline(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -559,12 +546,12 @@ int run(int argc, char* arg[]) {
       }
     }
 
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    result = runBaseline(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-BASELINE:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    result = runBaseline(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
     CUDA_CHECK(result);
 
     printf("END-BASELINE:\n");
@@ -581,15 +568,16 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaStreamCreateWithPriority(&consumer_stream, 0, lowestPriority));
 
   printf("gridDim.x %d gridDim.y %d\n", gridDim.x, gridDim.y);
-  dim3 grid2Dim = {DIVUP(mlpParams.gemm_size2.m(), ShapeMMAThreadBlock::kM), 
-                   DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN),
+  dim3 grid2Dim = {(uint)DIVUP(mlpParams.gemm_size2.m(), ShapeMMAThreadBlock::kM), 
+                   (uint)DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN),
                    split_k2};
 
   double overlapTime = 0;
   cuSyncHandle.iter = 0;
   cuSyncHandle.prod().iter = cuSyncHandle.cons().iter = 0;
-  if (true) {
-    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, 1);
+  
+  {
+    result = runCuSync(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     if (doChecking) {
@@ -599,12 +587,12 @@ int run(int argc, char* arg[]) {
       }
     }
     //warmup
-    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, warmup);
+    result = runCuSync(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, warmup);
     
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-OVERLAPPED:\n");
     
-    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, epochs);
+    result = runCuSync(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, epochs);
     
     CUDA_CHECK(result);
     printf("END-OVERLAPPED:\n");

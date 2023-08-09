@@ -177,7 +177,7 @@ static double getCurrentTime() {
 } while(0)                                        
 
 template<typename T, typename AT>
-__global__ void matrixMultiplicationKernel(uint32_t M, uint32_t N, uint32_t K,
+__global__ void ref_cudamatmul(uint32_t M, uint32_t N, uint32_t K,
                                            T* A, T* B, T* C) {
     int ROW = blockIdx.y*blockDim.y+threadIdx.y;
     int COL = blockIdx.x*blockDim.x+threadIdx.x;
@@ -195,19 +195,18 @@ __global__ void matrixMultiplicationKernel(uint32_t M, uint32_t N, uint32_t K,
 }
 
 template<typename T, typename AT>
-void gpumatmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* host_res) {
+void ref_matmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* host_res) {
   T* dev_refC = NULL;
   CUDA_CHECK(cudaMalloc(&dev_refC, sizeof(T)*M*N));
   dim3 block = {32, 32, 1};
   dim3 grid = {N/block.y + 1, M/block.x + 1, 1};
-  matrixMultiplicationKernel<T,AT><<<grid, block>>>(M, N, K, mat1, mat2, dev_refC);
+  ref_cudamatmul<T,AT><<<grid, block>>>(M, N, K, mat1, mat2, dev_refC);
   CUDA_CHECK(cudaDeviceSynchronize());
-  printf("M*N %ld\n", M*N);
   CUDA_CHECK(cudaMemcpy(host_res, dev_refC, sizeof(T)*M*N, cudaMemcpyDeviceToHost));
 }
 
 template<typename T, typename AT>
-void matmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* res)
+void ref_cpumatmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* res)
 {
   uint32_t i, j, k;
     for (i = 0; i < M; i++) {

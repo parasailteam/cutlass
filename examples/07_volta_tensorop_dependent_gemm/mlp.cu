@@ -132,51 +132,71 @@ using OverlapGemmSplitK2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, true>;
 
 using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
 
+struct MLPParameters {
+  HostTensor& a;
+  HostTensor& b;
+  HostTensor& c;
+  HostTensor& d;
+  HostTensor& e;
+
+  HostTensor& ref_c;
+  HostTensor& ref_e;
+
+  cutlass::gemm::GemmCoord gemm_size1;
+  cutlass::gemm::GemmCoord gemm_size2;
+  ElementComputeEpilogue alpha;
+  ElementComputeEpilogue beta;
+
+  MLPParameters(HostTensor& a_, HostTensor& b_, HostTensor& c_,
+             HostTensor& d_, HostTensor& e_,
+             HostTensor& ref_c_, HostTensor& ref_e_, 
+             cutlass::gemm::GemmCoord gemm_size1_,
+             cutlass::gemm::GemmCoord gemm_size2_) :
+             a(a_), b(b_), c(c_), d(d_), e(e_), 
+             ref_c(ref_c_), ref_e(ref_e_),
+             gemm_size1(gemm_size1_), gemm_size2(gemm_size2_),
+             alpha(ElementComputeEpilogue(1.0)),
+             beta(ElementComputeEpilogue(0.0))
+             {} 
+};
+
 /** Reference MLP for correctness check **/
-cudaError_t referenceMLP(cutlass::gemm::GemmCoord problem_size1,
-                          cutlass::gemm::GemmCoord problem_size2,
-                          ElementComputeEpilogue alpha,
-                          ElementComputeEpilogue beta,
-                          HostTensor& tensor_a, HostTensor& tensor_b, 
-                          HostTensor& tensor_ref_c, HostTensor& tensor_d,
-                          HostTensor& tensor_ref_e, HostTensor& tensor_c,
-                          HostTensor& tensor_e) {
-  gpumatmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), 
-                                               tensor_a.device_data(), tensor_b.device_data(), 
-                                               tensor_ref_c.host_data());
-  CUDA_CHECK(cudaMemcpy(tensor_ref_c.device_data(), tensor_ref_c.host_data(), 
-             sizeof(ElementOutput) * tensor_ref_c.size(), cudaMemcpyHostToDevice));
-  gpumatmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), 
-                                               tensor_ref_c.device_data(), tensor_d.device_data(), 
-                                               tensor_ref_e.host_data());
+cudaError_t referenceMLP(MLPParameters& mlpParams) {
+  gpumatmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size1.m(), 
+                                               mlpParams.gemm_size1.n(), 
+                                               mlpParams.gemm_size1.k(),
+                                               mlpParams.a.device_data(), 
+                                               mlpParams.b.device_data(), 
+                                               mlpParams.ref_c.host_data());
+  CUDA_CHECK(cudaMemcpy(mlpParams.ref_c.device_data(), mlpParams.ref_c.host_data(), 
+             sizeof(ElementOutput) * mlpParams.ref_c.size(), cudaMemcpyHostToDevice));
+  gpumatmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size2.m(),
+                                               mlpParams.gemm_size2.n(),
+                                               mlpParams.gemm_size2.k(), 
+                                               mlpParams.ref_c.device_data(),
+                                               mlpParams.d.device_data(), 
+                                               mlpParams.ref_e.host_data());
   return cudaSuccess;
 }
 
-cudaError_t checkMLPResults(cutlass::gemm::GemmCoord problem_size1,
-                            cutlass::gemm::GemmCoord problem_size2,
-                            ElementComputeEpilogue alpha,
-                            ElementComputeEpilogue beta,
-                            HostTensor& tensor_a, HostTensor& tensor_b,
-                            HostTensor& tensor_ref_c, HostTensor& tensor_d,
-                            HostTensor& tensor_ref_e, HostTensor& tensor_c,
-                            HostTensor& tensor_e) {
-  ElementOutput* hostC = new ElementOutput[tensor_ref_c.size()];
-  CUDA_CHECK(cudaMemcpy(hostC, tensor_c.device_data(), 
-                        tensor_c.size() * sizeof(ElementOutput), 
+cudaError_t checkMLPResults(MLPParameters& mlpParams) {
+  ElementOutput* hostC = new ElementOutput[mlpParams.ref_c.size()];
+  CUDA_CHECK(cudaMemcpy(hostC, mlpParams.c.device_data(), 
+                        mlpParams.c.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking first GeMM\n");
-  bool eq = equals(tensor_ref_c.size(), tensor_ref_c.host_data(), hostC, 1e-2);
+  bool eq = equals(mlpParams.ref_c.size(), mlpParams.ref_c.host_data(), hostC, 1e-2);
   if (eq == false) {
     printf("First GeMM not correct\n");
     return cudaErrorUnknown;
   }
   printf("First GeMM passed\n");
-  ElementOutput* hostE = new ElementOutput[tensor_ref_e.size()];
-  CUDA_CHECK(cudaMemcpy(hostE, tensor_e.device_data(), 
-                        tensor_e.size() * sizeof(ElementOutput), 
+  ElementOutput* hostE = new ElementOutput[mlpParams.ref_e.size()];
+  CUDA_CHECK(cudaMemcpy(hostE, mlpParams.e.device_data(), 
+                        mlpParams.e.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking second GeMM\n");
-  eq = equals(tensor_ref_e.size(), tensor_ref_e.host_data(), hostE, 1e-1);
+  eq = equals(mlpParams.ref_e.size(), mlpParams.ref_e.host_data(), hostE, 1e-1);
   if (eq == false) {
     printf("Second GeMM not correct \n");
     return cudaErrorUnknown;
@@ -557,40 +577,18 @@ int run(int argc, char* arg[]) {
   cutlass::gemm::GemmCoord problem_size2(problem[0], problem[3], problem[1]);
 
   // Initialize tensors using CUTLASS helper functions
-  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_a(
-      problem_size1.mk());  // <- Create matrix A with dimensions M x K
-  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_b(
-      problem_size1.kn());  // <- Create matrix B with dimensions K x N
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_c(
-      problem_size1.mn());  // <- Create matrix C with dimensions M x N
-  
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_d(
-      problem_size2.kn());  // <- Create matrix D with dimensions M x N used to store output from
-                           // CUTLASS kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_e(
-      problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                        // CUTLASS kernel
-  
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_c(
-    problem_size1.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                           // reference kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_e(
-    problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                          // reference kernel
+  HostTensor tensor_a(problem_size1.mk());
+  HostTensor tensor_b(problem_size1.kn());
+  HostTensor tensor_c(problem_size1.mn());
+  HostTensor tensor_d(problem_size2.kn());
+  HostTensor tensor_e(problem_size2.mn());
+  HostTensor tensor_ref_c(problem_size1.mn());
+  HostTensor tensor_ref_e(problem_size2.mn());
 
-  // Fill input and output matrices on host using CUTLASS helper functions
-  // cutlass::reference::host::TensorFillRandomUniform(
-  //     tensor_a.host_view(),
-  //     1,
-  //     ElementInputA(2),
-  //     ElementInputA(-2),
-  //     0);  // <- Fill matrix A on host with uniform-distribution random data
-  // cutlass::reference::host::TensorFillRandomUniform(
-  //     tensor_b.host_view(),
-  //     1,
-  //     ElementInputB(2),
-  //     ElementInputB(-2),
-  //     0);  // <- Fill matrix B on host with uniform-distribution random data
+  MLPParameters mlpParams(tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, 
+                          tensor_ref_c, tensor_ref_e,
+                          problem_size1, problem_size2);
+
   if (doChecking) {
     memset_random2(tensor_a.host_data(), ElementOutput(0.05), ElementOutput(0.2), tensor_a.size());
     memset_random2(tensor_b.host_data(), ElementOutput(0.01), ElementOutput(0.2), tensor_b.size());
@@ -598,28 +596,23 @@ int run(int argc, char* arg[]) {
   } else {
     cutlass::reference::host::TensorFill(
       tensor_a.host_view(),
-      ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
+      ElementOutput(0.05));
     cutlass::reference::host::TensorFill(
       tensor_b.host_view(),
-      ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
+      ElementOutput(0.5));
     cutlass::reference::host::TensorFill(
       tensor_d.host_view(),
-      ElementOutput(0.01));  // <- Fill matrix B on host with uniform-distribution random data
+      ElementOutput(0.01));
   }
-  // cutlass::reference::host::TensorFill(
-  //   tensor_a.host_view());
-  // cutlass::reference::host::TensorFill(
-  //   tensor_b.host_view());
-  // cutlass::reference::host::TensorFill(
-  //   tensor_d.host_view());
+  
   cutlass::reference::host::TensorFill(
-      tensor_c.host_view());  // <- Fill matrix C on host with zeros
+      tensor_c.host_view());
   cutlass::reference::host::TensorFill(
-      tensor_ref_c.host_view());  // <- Fill matrix C on host with zeros
+      tensor_ref_c.host_view());
   cutlass::reference::host::TensorFill(
-      tensor_e.host_view());  // <- fill matrix E on host with zeros
+      tensor_e.host_view());
   cutlass::reference::host::TensorFill(
-    tensor_ref_e.host_view());  // <- fill matrix E on host with zeros
+    tensor_ref_e.host_view());
 
   // Copy data from host to GPU
   tensor_a.sync_device();
@@ -631,8 +624,7 @@ int run(int argc, char* arg[]) {
 
   tensor_e.sync_device();
   tensor_ref_e.sync_device();
-
-  // Initialize alpha and beta for dot product computation
+  
   ElementComputeEpilogue alpha = ElementComputeEpilogue(1);
   ElementComputeEpilogue beta = ElementComputeEpilogue(0);
   
@@ -672,7 +664,7 @@ int run(int argc, char* arg[]) {
   CUBLASCHECK(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
 
   if (doChecking) {
-    result = referenceMLP(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_ref_c, tensor_d, tensor_ref_e, tensor_c, tensor_e);
+    result = referenceMLP(mlpParams);
     if (result != cudaSuccess) {
       return 1;
     }
@@ -696,7 +688,7 @@ int run(int argc, char* arg[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if (doChecking) {
-      result = checkMLPResults(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_ref_c, tensor_d, tensor_ref_e, tensor_c, tensor_e);
+      result = checkMLPResults(mlpParams);
       if (result != cudaSuccess) {
         return 1;
       }
@@ -763,7 +755,7 @@ int run(int argc, char* arg[]) {
 
     CUDA_CHECK(cudaDeviceSynchronize());
     if (doChecking) {
-      result = checkMLPResults(problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_ref_c, tensor_d, tensor_ref_e, tensor_c, tensor_e);
+      result = checkMLPResults(mlpParams);
       if (result != cudaSuccess) {
         return 1;
       }

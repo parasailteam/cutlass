@@ -176,114 +176,6 @@ static double getCurrentTime() {
   }                                                 \
 } while(0)                                        
 
-// The code section below describes datatype for input, output matrices and computation between
-// elements in input matrices.
-using ElementAccumulator = float;                   // <- data type of accumulator
-using ElementInputA = cutlass::half_t;              // <- data type of elements in input matrix A
-using ElementInputB = cutlass::half_t;              // <- data type of elements in input matrix B
-using ElementOutput = cutlass::half_t;
-using ElementComputeEpilogue = cutlass::half_t;  // <- data type of epilogue operations
-
-                        // <- data type of elements in output matrix D
-
-// The code section below describes matrix layout of input and output matrices. Column Major for
-// Matrix A, Row Major for Matrix B and Row Major for Matrix C
-using LayoutInputA = cutlass::layout::RowMajor;
-using LayoutInputB = cutlass::layout::RowMajor;
-using LayoutOutput = cutlass::layout::RowMajor;
-
-// This code section describes whether you want to use tensor cores or regular SIMT cores on GPU SM
-using MMAOp = cutlass::arch::OpClassTensorOp;
-
-// This code section describes CUDA SM architecture number
-using SmArch = cutlass::arch::Sm70;
-
-/*
-For inference:
-using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<128, 64, 32>;
-// This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 32, 32>;
-
-Attention-inference-first matmul = 
-  cutlass::gemm::GemmShape<64, 128, 32>;
-  using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
-
-For training:
-using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<256, 128, 32>;
-// This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
-*/
-
-
-// This code section describes the tile size a thread block will compute
-using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
-// This code section describes tile size a warp will compute
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
-// This code section describes the size of MMA op
-using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
-
-// This code section describes how threadblocks are scheduled on GPU
-using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmHorizontalThreadblockSwizzle; //;  // <- ??
-
-using EpilogueOp = cutlass::epilogue::thread::LinearCombinationGELU<
-    ElementOutput,                                        // <- data type of output matrix
-    128 / cutlass::sizeof_bits<ElementOutput>::value,     // <- this is the number of elements per
-                                                          // vectorized memory access. For half
-                                                          // precision, it's 8 elements. This becomes
-                                                          // the vector width of math instructions in
-                                                          // epilogue too
-    ElementAccumulator,                                   // <- data type of accumulator
-    ElementComputeEpilogue,                               // <- data type for alpha in linear combination function
-    cutlass::epilogue::thread::ScaleType::NoBetaScaling>; // <- alpha x C + bias
-
-// // This code section describes ?
-// using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-//     ElementOutput,                                     // <- data type of output matrix
-//     128 / cutlass::sizeof_bits<ElementOutput>::value,  // <- this is the number of elements per
-//                                                        // vectorized memory access. For half
-//                                                        // precision, it's 8 elements. This becomes
-//                                                        // the vector width of math instructions in
-//                                                        // epilogue too
-//     ElementAccumulator,                                // <- data type of accumulator
-//     ElementComputeEpilogue>;  // <- data type for alpha/beta in linear combination function
-
-// Number of pipelines you want to use
-constexpr int NumStages = 1;
-
-using Gemm = cutlass::gemm::device::Gemm<ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         SwizzleThreadBlock, 2, 8, 8>;
-
-using GemmSplitK = cutlass::gemm::device::Gemm<ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         SwizzleThreadBlock,
-                                         2, 8, 8, true>;
-
 template<typename T, typename AT>
 __global__ void matrixMultiplicationKernel(uint32_t M, uint32_t N, uint32_t K,
                                            T* A, T* B, T* C) {
@@ -304,14 +196,14 @@ __global__ void matrixMultiplicationKernel(uint32_t M, uint32_t N, uint32_t K,
 
 template<typename T, typename AT>
 void gpumatmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* host_res) {
-  ElementOutput* dev_refC = NULL;
-  CUDA_CHECK(cudaMalloc(&dev_refC, sizeof(ElementOutput)*M*N));
+  T* dev_refC = NULL;
+  CUDA_CHECK(cudaMalloc(&dev_refC, sizeof(T)*M*N));
   dim3 block = {32, 32, 1};
   dim3 grid = {N/block.y + 1, M/block.x + 1, 1};
   matrixMultiplicationKernel<T,AT><<<grid, block>>>(M, N, K, mat1, mat2, dev_refC);
   CUDA_CHECK(cudaDeviceSynchronize());
   printf("M*N %ld\n", M*N);
-  CUDA_CHECK(cudaMemcpy(host_res, dev_refC, sizeof(ElementOutput)*M*N, cudaMemcpyDeviceToHost));
+  CUDA_CHECK(cudaMemcpy(host_res, dev_refC, sizeof(T)*M*N, cudaMemcpyDeviceToHost));
 }
 
 template<typename T, typename AT>
@@ -338,7 +230,7 @@ bool equals(size_t size, T* mat1, T* mat2, float err) {
     float v = err;
     bool ret = true;
     if (abs(e1) < v && abs(e2) < v) {
-      // printf("%f , %f at %lu\n", e1, e2, i);
+      // printf("233: %f , %f at %lu\n", e1, e2, i);
       ret = true;
     } else if (abs(e1) < v) {
       ret = false;
@@ -348,6 +240,7 @@ bool equals(size_t size, T* mat1, T* mat2, float err) {
       float err = abs(e1 - e2)/abs(e1);
       if (err <= v) {
         ret = true;
+      // printf("243: %f , %f at %lu\n", e1, e2, i);
       } else {
         ret = false;
       }

@@ -355,9 +355,6 @@ cudaError_t runCuSync(int split_k1, int split_k2,
                            CuSyncImpl& handle,
                            cudaStream_t producer_stream, cudaStream_t consumer_stream,
                            double& execTime,
-                           double& matmul1Time,
-                           double& softmaxTime,
-                           double& matmul2Time,
                            int iters = 100) {
   typename GemmTy1::Arguments args1{handle.prod(),
                                      mlpParams.gemm_size1,
@@ -409,11 +406,8 @@ cudaError_t runCuSync(int split_k1, int split_k2,
     CUDA_CHECK(cudaDeviceSynchronize());
     double end = timeInMicroSeconds();
     if (iters > 10)
-      printf("{\"Total\": %lf, \"matmul1Time\": -1, \"matmul2Time\": -1}\n",end-start);
+      printf("{\"Total\": %lf}\n",end-start);
     execTime += end-start;
-    matmul1Time = -1;
-    softmaxTime = -1;
-    matmul2Time = -1;
   }
 
   return cudaSuccess;
@@ -421,26 +415,20 @@ cudaError_t runCuSync(int split_k1, int split_k2,
 
 template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
 cudaError_t runCuSync(int split_k1, int split_k2, MLPParameters& mlpParams,
-                          CuSyncImpl& handle,
-                          cudaStream_t producer_stream, cudaStream_t consumer_stream,
-                          double& execTime,
-                          double& matmul1Time,
-                          double& softmaxTime,
-                          double& matmul2Time,
-                          int iters = 100) {
+                      CuSyncImpl& handle,
+                      cudaStream_t producer_stream, cudaStream_t consumer_stream,
+                      double& execTime, int iters = 100) {
   cudaError_t result;
   execTime = 0;
-  matmul1Time = 0;
-  softmaxTime = 0;
-  matmul2Time = 0;
+
   if (split_k1 == 1 && split_k2 == 1) {
-    result = runCuSync<GemmTy1, GemmTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runCuSync<GemmTy1, GemmTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   } else if (split_k1 > 1 && split_k2 == 1) {
-    result = runCuSync<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runCuSync<GemmSplitKTy1, GemmTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   } else if (split_k1 == 1 && split_k2 > 1) {
-    result = runCuSync<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runCuSync<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   } else {
-    result = runCuSync<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runCuSync<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, mlpParams, handle, producer_stream, consumer_stream, execTime, iters);
   }
 
   return result;
@@ -547,13 +535,6 @@ int run(int argc, char* arg[]) {
   int epochs = 20;
   int warmup = 10;
 
-  double cublasTime = 0;
-  
-  cublasHandle_t cublasHandle;
-  CUBLASCHECK(cublasCreate(&cublasHandle));
-  CUBLASCHECK(cublasSetStream(cublasHandle, producer_stream));
-  CUBLASCHECK(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
-
   if (doChecking) {
     result = referenceMLP(mlpParams);
     if (result != cudaSuccess) {
@@ -584,36 +565,12 @@ int run(int argc, char* arg[]) {
     printf("START-BASELINE:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
     result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    CUDA_CHECK(result);
 
-    if (result != cudaSuccess) {
-      std::cerr << "CUTLASS GEMM kernel failed: "
-        << cudaGetErrorString(result) << std::endl;
-      return result;
-    }
     printf("END-BASELINE:\n");
-    // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-    // double endTime = convertTimeValToDouble(getTimeOfDay());
-    // baselineTime = endTime - startTime;
     printf("cutlass-baseline elapsedtime %lf microseconds\n", baselineTime/(float)epochs);
   }
 
-  // double minimumTime = (1<<20);
-  // if (false) {
-  //   minimumTime = 0;
-  //   cudaStream_t consumer_stream;
-  //   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
-  //   result = runhgemm<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, minimumTime, epochs);
-
-  //   if (result != cudaSuccess) {
-  //     std::cerr << "CUTLASS GEMM kernel failed: "
-  //       << cudaGetErrorString(result) << std::endl;
-  //     return result;
-  //   }
-  //   // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-  //   // double endTime = convertTimeValToDouble(getTimeOfDay());
-  //   // baselineTime = endTime - startTime;
-  // }
-  // printf("minimum elapsedtime %lf microseconds\n", minimumTime/(float)epochs);
   if (doChecking) {
     mlpParams.initOuts();
   }
@@ -632,7 +589,7 @@ int run(int argc, char* arg[]) {
   cuSyncHandle.iter = 0;
   cuSyncHandle.prod().iter = cuSyncHandle.cons().iter = 0;
   if (true) {
-    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, matmul1Time, softmaxTime, matmul2Time, 1);
+    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     if (doChecking) {
@@ -642,20 +599,19 @@ int run(int argc, char* arg[]) {
       }
     }
     //warmup
-    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, warmup);
     
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-OVERLAPPED:\n");
-    // double startTime = convertTimeValToDouble(getTimeOfDay());
-    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, matmul1Time, softmaxTime, matmul2Time, epochs);
-  
+    
+    result = runCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, consumer_stream, overlapTime, epochs);
+    
+    CUDA_CHECK(result);
     printf("END-OVERLAPPED:\n");
     
     CUDA_CHECK(cudaStreamSynchronize(consumer_stream));
     CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-    // double endTime = convertTimeValToDouble(getTimeOfDay());
-    // overlapTime = endTime - startTime;
-
+    
     printf("overlapped elapsedtime %lf microseconds\n", overlapTime/(float)epochs);
   }
 

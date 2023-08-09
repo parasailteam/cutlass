@@ -133,31 +133,67 @@ using OverlapGemmSplitK2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, true>;
 using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
 
 struct MLPParameters {
-  HostTensor& a;
-  HostTensor& b;
-  HostTensor& c;
-  HostTensor& d;
-  HostTensor& e;
+  HostTensor a;
+  HostTensor b;
+  HostTensor c;
+  HostTensor d;
+  HostTensor e;
 
-  HostTensor& ref_c;
-  HostTensor& ref_e;
+  HostTensor ref_c;
+  HostTensor ref_e;
+  bool checkResults;
 
   cutlass::gemm::GemmCoord gemm_size1;
   cutlass::gemm::GemmCoord gemm_size2;
   ElementComputeEpilogue alpha;
   ElementComputeEpilogue beta;
 
-  MLPParameters(HostTensor& a_, HostTensor& b_, HostTensor& c_,
-             HostTensor& d_, HostTensor& e_,
-             HostTensor& ref_c_, HostTensor& ref_e_, 
-             cutlass::gemm::GemmCoord gemm_size1_,
-             cutlass::gemm::GemmCoord gemm_size2_) :
-             a(a_), b(b_), c(c_), d(d_), e(e_), 
-             ref_c(ref_c_), ref_e(ref_e_),
-             gemm_size1(gemm_size1_), gemm_size2(gemm_size2_),
-             alpha(ElementComputeEpilogue(1.0)),
-             beta(ElementComputeEpilogue(0.0))
-             {} 
+  MLPParameters(int problem[4], bool check) {
+    alpha = ElementComputeEpilogue(1.0);
+    beta = ElementComputeEpilogue(0.0);
+    gemm_size1 = cutlass::gemm::GemmCoord(problem[0], problem[1], problem[2]);
+    gemm_size2 = cutlass::gemm::GemmCoord(problem[0], problem[3], problem[1]);
+    a = HostTensor(gemm_size1.mk());
+    b = HostTensor(gemm_size1.kn());
+    c = HostTensor(gemm_size1.mn());
+    d = HostTensor(gemm_size2.kn());
+    e = HostTensor(gemm_size2.mn());
+    ref_c = HostTensor(gemm_size1.mn());
+    ref_e = HostTensor(gemm_size2.mn());
+    checkResults = check;
+  }
+
+  void initIns() {
+    if (checkResults) {
+      memset_random2(a.host_data(), ElementOutput(0.05), ElementOutput(0.2), a.size());
+      memset_random2(b.host_data(), ElementOutput(0.01), ElementOutput(0.2), b.size());
+      memset_random2(d.host_data(), ElementOutput(0.01), ElementOutput(0.05), d.size());
+    } else {
+      cutlass::reference::host::TensorFill(a.host_view(), ElementOutput(0.05));
+      cutlass::reference::host::TensorFill(b.host_view(), ElementOutput(0.5));
+      cutlass::reference::host::TensorFill(d.host_view(), ElementOutput(0.01));
+    }
+    // Copy data from host to GPU
+    a.sync_device();
+    b.sync_device();
+    d.sync_device();
+  }
+  
+  void initOuts() {
+    cutlass::reference::host::TensorFill(c.host_view());
+    cutlass::reference::host::TensorFill(e.host_view());
+      
+    c.sync_device();
+    e.sync_device();
+  }
+
+  void initRefs() {
+    cutlass::reference::host::TensorFill(ref_e.host_view());
+    cutlass::reference::host::TensorFill(ref_c.host_view());
+      
+    ref_e.sync_device();
+    ref_c.sync_device();
+  }
 };
 
 /** Reference MLP for correctness check **/
@@ -210,7 +246,7 @@ cudaError_t checkMLPResults(MLPParameters& mlpParams) {
 /*Baseline MLP*/
 template<typename GemmTy1, typename GemmTy2>
 cudaError_t runBaseline(int split_k1, int split_k2, 
-                        MLPParameters mlpParams,
+                        MLPParameters& mlpParams,
                         cudaStream_t stream,
                         double& execTime, double& matmul1Time, double& softmaxTime, double& matmul2Time,
                         int iters = 100) {
@@ -287,7 +323,7 @@ cudaError_t runBaseline(int split_k1, int split_k2,
 
 template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
 cudaError_t runBaseline(int split_k1, int split_k2, 
-                        MLPParameters mlpParams,
+                        MLPParameters& mlpParams,
                         cudaStream_t stream,
                         double& execTime,
                         double& matmul1Time,
@@ -315,7 +351,7 @@ cudaError_t runBaseline(int split_k1, int split_k2,
 /*CuSync GeMMs in MLP*/
 template<typename GemmTy1, typename GemmTy2>
 cudaError_t runCuSync(int split_k1, int split_k2,
-                           MLPParameters mlpParams,
+                           MLPParameters& mlpParams,
                            CuSyncImpl& handle,
                            cudaStream_t producer_stream, cudaStream_t consumer_stream,
                            double& execTime,
@@ -384,7 +420,7 @@ cudaError_t runCuSync(int split_k1, int split_k2,
 }
 
 template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
-cudaError_t runCuSync(int split_k1, int split_k2, MLPParameters mlpParams,
+cudaError_t runCuSync(int split_k1, int split_k2, MLPParameters& mlpParams,
                           CuSyncImpl& handle,
                           cudaStream_t producer_stream, cudaStream_t consumer_stream,
                           double& execTime,
@@ -468,19 +504,6 @@ int run(int argc, char* arg[]) {
     abort();
   }
 
-  // bool rowSyncOrTileSync;
-  // if (strstr(arg[8], "rowSyncOrTileSync=") != NULL) {
-  //   int val = atoi(arg[8] + strlen("rowSyncOrTileSync="));
-  //   if (val == 0) rowSyncOrTileSync = false; else rowSyncOrTileSync = true;
-  // } else {
-  //   printf("invalid arg[8] %s\n", arg[8]);
-  //   abort();
-  // }
-  // printf("rowSyncOrTileSync %d\n", rowSyncOrTileSync);
-  //
-  // Run the CUTLASS GEMM test.
-  //
-
   cudaStream_t producer_stream;
   cudaStream_t consumer_stream;
   CUDA_CHECK(cudaStreamCreate(&producer_stream));
@@ -488,63 +511,15 @@ int run(int argc, char* arg[]) {
   
   printf("problem[0] %d problem[1] %d problem[2] %d problem[3] %d\n", problem[0], problem[1], problem[2], problem[3]);
   printf("doChecking=%d split_k1_slices=%d split_k2_slices=%d\n", doChecking, split_k1, split_k2);
-  // Create a tuple of problem size for matrix multiplication
-  cutlass::gemm::GemmCoord problem_size1(problem[0], problem[1], problem[2]);
-  cutlass::gemm::GemmCoord problem_size2(problem[0], problem[3], problem[1]);
 
-  // Initialize tensors using CUTLASS helper functions
-  HostTensor tensor_a(problem_size1.mk());
-  HostTensor tensor_b(problem_size1.kn());
-  HostTensor tensor_c(problem_size1.mn());
-  HostTensor tensor_d(problem_size2.kn());
-  HostTensor tensor_e(problem_size2.mn());
-  HostTensor tensor_ref_c(problem_size1.mn());
-  HostTensor tensor_ref_e(problem_size2.mn());
+  MLPParameters mlpParams(problem, doChecking);
+  mlpParams.initIns();
+  mlpParams.initOuts();
+  mlpParams.initRefs();
 
-  MLPParameters mlpParams(tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, 
-                          tensor_ref_c, tensor_ref_e,
-                          problem_size1, problem_size2);
-
-  if (doChecking) {
-    memset_random2(tensor_a.host_data(), ElementOutput(0.05), ElementOutput(0.2), tensor_a.size());
-    memset_random2(tensor_b.host_data(), ElementOutput(0.01), ElementOutput(0.2), tensor_b.size());
-    memset_random2(tensor_d.host_data(), ElementOutput(0.01), ElementOutput(0.05), tensor_d.size());
-  } else {
-    cutlass::reference::host::TensorFill(
-      tensor_a.host_view(),
-      ElementOutput(0.05));
-    cutlass::reference::host::TensorFill(
-      tensor_b.host_view(),
-      ElementOutput(0.5));
-    cutlass::reference::host::TensorFill(
-      tensor_d.host_view(),
-      ElementOutput(0.01));
-  }
-  
-  cutlass::reference::host::TensorFill(
-      tensor_c.host_view());
-  cutlass::reference::host::TensorFill(
-      tensor_ref_c.host_view());
-  cutlass::reference::host::TensorFill(
-      tensor_e.host_view());
-  cutlass::reference::host::TensorFill(
-    tensor_ref_e.host_view());
-
-  // Copy data from host to GPU
-  tensor_a.sync_device();
-  tensor_b.sync_device();
-  tensor_d.sync_device();
-
-  tensor_c.sync_device();
-  tensor_ref_c.sync_device();
-
-  tensor_e.sync_device();
-  tensor_ref_e.sync_device();
-  
-  ElementComputeEpilogue alpha = ElementComputeEpilogue(1);
-  ElementComputeEpilogue beta = ElementComputeEpilogue(0);
-  
-  dim3 gridDim = {DIVUP(problem_size1.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size1.n(), ShapeMMAThreadBlock::kN), split_k1};
+  dim3 gridDim = {DIVUP(mlpParams.gemm_size1.m(), ShapeMMAThreadBlock::kM), 
+                  DIVUP(mlpParams.gemm_size1.n(), ShapeMMAThreadBlock::kN), 
+                  split_k1};
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
   
 #if ROWSYNC
@@ -563,8 +538,8 @@ int run(int argc, char* arg[]) {
   #error "Unknown Policy"
 #endif
   ProdCuStage prod(gridDim, tileSize, sync);
-  ConsCuStage cons({DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), 
-                    DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), 
+  ConsCuStage cons({DIVUP(mlpParams.gemm_size2.m(), ShapeMMAThreadBlock::kM), 
+                    DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN), 
                     split_k2}, tileSize, sync);
   prod.iter = cons.iter = 0;
   CuSyncImpl cuSyncHandle(prod, cons);
@@ -592,7 +567,7 @@ int run(int argc, char* arg[]) {
   double matmul2Time = 0;
 
   if (true) {
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams,producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
+    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -603,12 +578,12 @@ int run(int argc, char* arg[]) {
       }
     }
 
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams,producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-BASELINE:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
-    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams,producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    result = runBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, producer_stream, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
 
     if (result != cudaSuccess) {
       std::cerr << "CUTLASS GEMM kernel failed: "
@@ -639,14 +614,9 @@ int run(int argc, char* arg[]) {
   //   // baselineTime = endTime - startTime;
   // }
   // printf("minimum elapsedtime %lf microseconds\n", minimumTime/(float)epochs);
-
-  cutlass::reference::host::TensorFill(
-    tensor_c.host_view());  // <- Fill matrix C on host with zeros
-  cutlass::reference::host::TensorFill(
-    tensor_e.host_view());  // <- fill matrix E on host with zeros
-  
-  tensor_c.sync_device();
-  tensor_e.sync_device();
+  if (doChecking) {
+    mlpParams.initOuts();
+  }
   
   int highestPriority;
   int lowestPriority;
@@ -654,7 +624,9 @@ int run(int argc, char* arg[]) {
   CUDA_CHECK(cudaStreamCreateWithPriority(&consumer_stream, 0, lowestPriority));
 
   printf("gridDim.x %d gridDim.y %d\n", gridDim.x, gridDim.y);
-  dim3 grid2Dim = {DIVUP(problem_size2.m(), ShapeMMAThreadBlock::kM), DIVUP(problem_size2.n(), ShapeMMAThreadBlock::kN), split_k2};
+  dim3 grid2Dim = {DIVUP(mlpParams.gemm_size2.m(), ShapeMMAThreadBlock::kM), 
+                   DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN),
+                   split_k2};
 
   double overlapTime = 0;
   cuSyncHandle.iter = 0;

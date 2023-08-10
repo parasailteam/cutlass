@@ -239,11 +239,11 @@ struct CuSyncGemm {
     // }
 
     // Early exit if CTA is out of range
-    if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
-      params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
+    // if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
+    //   params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
 
-      return;
-    }
+    //   return;
+    // }
 
     // Compute initial location in logical coordinates
     cutlass::MatrixCoord tb_offset_A{
@@ -302,7 +302,7 @@ struct CuSyncGemm {
 
     if (!kSplitKSerial || gemm_k_iterations > 0) {
       // Compute threadblock-scoped matrix multiply-add
-      if (true|| isProducerOrConsumer) {//Row sync or a producer
+      if (isProducerOrConsumer) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       } else if (!isProducerOrConsumer) {
         mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, isProducerOrConsumer,

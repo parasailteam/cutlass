@@ -517,7 +517,7 @@ public:
               // printf("startK %d tile.y %d total_gemm_k_iterations %d gemm_k_iterations %d\n", 
               //   startK, tile.y, total_gemm_k_iterations, gemm_k_iterations);
             }
-            custage.wait(tile);
+            // custage.wait(tile);
           }
           // Load fragment from global B
           tb_frag_B.clear();

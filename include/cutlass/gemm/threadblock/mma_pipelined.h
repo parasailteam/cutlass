@@ -524,8 +524,6 @@ public:
           iterator_B.load(tb_frag_B);
           ++iterator_B;
 
-
-
           // Load fragment from global A
           tb_frag_A.clear();
           iterator_A.load(tb_frag_A);

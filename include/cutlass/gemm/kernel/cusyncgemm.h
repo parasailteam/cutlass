@@ -302,7 +302,7 @@ struct CuSyncGemm {
 
     if (!kSplitKSerial || gemm_k_iterations > 0) {
       // Compute threadblock-scoped matrix multiply-add
-      if (isProducerOrConsumer) {//Row sync or a producer
+      if (true|| isProducerOrConsumer) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       } else if (!isProducerOrConsumer) {
         mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, isProducerOrConsumer,

@@ -188,7 +188,7 @@ elif attention_or_mlp == "mlp":
       6144: {"split_ks":   [4,1]},
       8192: {"split_ks":   [4,1]},
       10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1]},
+      12288: {"split_ks":  [3,2]},
       14336: {"split_ks":  [4,1]},
       16384: {"split_ks":  [4,1]},
       20480: {"split_ks":  [4,1]},

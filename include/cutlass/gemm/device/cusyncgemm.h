@@ -451,6 +451,7 @@ public:
       args.gather_B_indices,
       args.scatter_D_indices
     };
+    printf("params size %ld\n", sizeof(params_));
 
     return Status::kSuccess;
   }

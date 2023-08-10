@@ -398,7 +398,7 @@ cudaError_t runCuSync(int split_k1, int split_k2,
     CUTLASS_CHECK(status);
 
     // CUDA_CHECK(cudaDeviceSynchronize());
-    handle.invokeWaitKernel(consumer_stream);
+    // handle.invokeWaitKernel(consumer_stream);
     status = gemm_op2.run(true, NULL, consumer_stream);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -501,7 +501,7 @@ int run(int argc, char* argv[]) {
     return 0;
   }
     
-  std::cout << "model=" << model << " batch=" << batch << "check="<<doChecking <<std::endl;
+  std::cout << "model=" << model << " batch=" << batch << " check="<<doChecking <<std::endl;
   int problem[4] = {0,0,0,0};
   problem[0] = batch;
   

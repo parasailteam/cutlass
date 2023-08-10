@@ -210,14 +210,32 @@ struct CuSyncGemm {
   CUTLASS_DEVICE
   void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
     CuStageImpl2& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
-    dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
-    
-    uint block_idx_y = new_block_idx.y;
-    uint block_idx_x = new_block_idx.x;
+
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+      if (isProducerOrConsumer) {
+        // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) {
+        //   *stage.kernelExecuted_ = stage.iter;
+        // }
+      }
+
+      uint linear_id = atomicAdd(stage.tileCounter, 1);// - (stage.iter-1)*gridDim.x*gridDim.y*gridDim.z;
+      dim3 t = stage.tileOrder[linear_id];
+      if (linear_id == gridDim.x - 1) {
+        *stage.tileCounter = 0;
+      }
+      shared_storage.tile_idx = t;
+      // printf("linear_id %d t {%d, %d, %d}\n", linear_id, t.x, t.y, t.z);
+      // *shared_storage = tileOrder[blockIdx.x];
+    }
+
+    __syncthreads();
+
+    uint block_idx_y = shared_storage.tile_idx.y;
+    uint block_idx_x = shared_storage.tile_idx.x;
     
     // for (uint block_idx_y = start_block_idx_y; block_idx_y < params.grid_tiled_shape.n(); block_idx_y += grid_dim_y) 
     // for (uint block_idx_x = start_block_idx_x; block_idx_x < lastBlockIdxX; block_idx_x += grid_dim_x) 
-    const uint block_idx_z = new_block_idx.z;
+    const uint block_idx_z = shared_storage.tile_idx.z;
     ThreadblockSwizzle threadblock_swizzle;
     // if (threadIdx.x == 0 && !isProducerOrConsumer) printf("476: rowSyncOrTileSync\n");
 
@@ -225,24 +243,13 @@ struct CuSyncGemm {
     cutlass::gemm::GemmCoord threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
 
-    // if (isProducerOrConsumer && threadIdx.x == 0 && params.syncHandle.iter == 1) {
-    //   printf("grid_tiled_shape.m() %d grid_tiled_shape.n() %d tb.m() %d tb.n() %d blockIdx.x %d blockIdx.y %d\n", params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), threadblock_tile_offset.m(), threadblock_tile_offset.n(), blockIdx.x, blockIdx.y);
+    // if (threadIdx.x == 0 && stage.iter == 1) {
+    //   printf("threadblock_tile_offset.m() %d n() %d\n", 
+    //     threadblock_tile_offset.m(), threadblock_tile_offset.n());
     // }
-    // Early exit if CTA is out of range
-    // if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
-    //   params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
-
-    //   return;
-    // }
-    // if (isProducerOrConsumer && threadIdx.x == 0) {
-    //   printf("%d %d\n", start_block_idx_x, start_block_idx_y);
-    // }
-
-    // Early exit if CTA is out of range
-    if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
-      params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
-
-      return;
+    if (!isProducerOrConsumer) {
+      // dim3 tile = {(uint)block_idx_x, 0, 0};
+      stage.wait((uint)block_idx_x);
     }
 
     // Compute initial location in logical coordinates
@@ -302,7 +309,7 @@ struct CuSyncGemm {
 
     if (!kSplitKSerial || gemm_k_iterations > 0) {
       // Compute threadblock-scoped matrix multiply-add
-      if (true|| isProducerOrConsumer) {//Row sync or a producer
+      if (true || isProducerOrConsumer) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
       } else if (!isProducerOrConsumer) {
         mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, isProducerOrConsumer,
@@ -394,7 +401,7 @@ struct CuSyncGemm {
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
         if (isProducerOrConsumer) {
-          dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
+          dim3 tile = {block_idx_x, block_idx_y, 0};
           stage.post(tile);
         }
         // The final threadblock resets the semaphore for subsequent grids.
@@ -408,10 +415,10 @@ struct CuSyncGemm {
       semaphore.release(lock);
     }
 
-    if (isProducerOrConsumer && (!kSplitKSerial || (kSplitKSerial && params.grid_tiled_shape.k() == 1))) {
-      dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
-      stage.post(tile);
-    }
+    if (isProducerOrConsumer) {//&& (!kSplitKSerial || (kSplitKSerial && params.grid_tiled_shape.k() == 1))) {
+      // dim3 tile = {block_idx_x, block_idx_y, 0};
+      stage.post(block_idx_x, block_idx_y);
+    } 
   }
 };
 

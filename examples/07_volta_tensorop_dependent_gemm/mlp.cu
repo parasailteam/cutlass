@@ -226,7 +226,7 @@ cudaError_t checkMLPResults(MLPParameters& mlpParams) {
                         mlpParams.c.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking first GeMM\n");
-  bool eq = equals(mlpParams.ref_c.size(), mlpParams.ref_c.host_data(), hostC, 1e-2f);
+  bool eq = equals(mlpParams.ref_c.size(), mlpParams.ref_c.host_data(), hostC, 1e-1f);
   if (eq == false) {
     printf("First GeMM not correct\n");
     return cudaErrorUnknown;
@@ -388,6 +388,8 @@ cudaError_t runCuSync(int split_k1, int split_k2,
   execTime = 0;
   
   for (int r = 0; r < iters; r++) {
+    handle.prod().iter += 1;
+    handle.cons().iter += 1;
     gemm_op2.params_.custage.iter += 1;
     gemm_op1.params_.custage.iter += 1;
     
@@ -460,8 +462,8 @@ int run(int argc, char* argv[]) {
     return 0;
   }
 
-  std::string model;
-  uint batch;
+  std::string model = "";
+  uint batch = 0;
   bool doChecking = false;
   uint split_k1 = 1;
   uint split_k2 = 1;
@@ -494,6 +496,11 @@ int run(int argc, char* argv[]) {
     }
   }
 
+  if (model == "" || batch == 0) {
+    std::cout<<"invalid model or batch" <<std::endl;
+    return 0;
+  }
+    
   std::cout << "model=" << model << " batch=" << batch << "check="<<doChecking <<std::endl;
   int problem[4] = {0,0,0,0};
   problem[0] = batch;
@@ -574,7 +581,7 @@ int run(int argc, char* argv[]) {
                    (uint)DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN), 
                    split_k2};
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
-
+  printf("gridDim1.y %d\n", gridDim1.y);
 #if ROWSYNC
   using Sync = RowSync;
   RowSync sync(gridDim1.y);

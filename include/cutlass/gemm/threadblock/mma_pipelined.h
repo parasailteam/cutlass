@@ -509,6 +509,11 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
+          // Load fragment from global B
+          tb_frag_B.clear();
+          iterator_B.load(tb_frag_B);
+          ++iterator_B;
+
           uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
           if (!producerOrConsumer && startK > Shape::kN && startK%Shape::kN == 0) {
             dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
@@ -517,12 +522,8 @@ public:
               // printf("startK %d tile.y %d total_gemm_k_iterations %d gemm_k_iterations %d\n", 
               //   startK, tile.y, total_gemm_k_iterations, gemm_k_iterations);
             }
-            // custage.wait(tile);
+            custage.wait(tile);
           }
-          // Load fragment from global B
-          tb_frag_B.clear();
-          iterator_B.load(tb_frag_B);
-          ++iterator_B;
 
           // Load fragment from global A
           tb_frag_A.clear();

@@ -55,8 +55,8 @@
 
 //Tile sizes of all GeMMs
 using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<256, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>; 
+    cutlass::gemm::GemmShape<64, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 32, 32>; 
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
 
 //Element types of A, B, and C

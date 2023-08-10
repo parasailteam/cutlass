@@ -152,37 +152,43 @@ if attention_or_mlp == "attention":
 
 elif attention_or_mlp == "mlp":
     # Dictionary of tile sizes for each M
-  tiles = {
+  tiles_GPT3 = {
     2048: {
       "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      6144: {"split_ks": [3,1]},
-      8192: {"split_ks": [1,1]},
-      10240: {"split_ks": [1,1]},
-      12288: {"split_ks": [1,1]},
-      14336: {"split_ks": [1,1]},
-      16384: {"split_ks": [1,1]},
-      20480: {"split_ks": [1,1]},
-      25600: {"split_ks": [1,1]},
+      "split_ks": {"baseline": [1,1],
+                   "cusync":   [1,1]},
     },
     1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      6144: {"split_ks": [3,1]},
-      8192: {"split_ks": [1,1]},
-      10240: {"split_ks": [1,1]},
-      12288: {"split_ks": [1,1]},
-      14336: {"split_ks": [1,1]},
-      16384: {"split_ks": [1,1]},
-      20480: {"split_ks": [1,1]},
-      25600: {"split_ks": [1,1]},
+      "split_ks": {"baseline": [2,2],
+                   "cusync": [1,1]},
     },
     512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      6144: {"split_ks":   [3,1]},
+      "split_ks": {"baseline": [2,2],
+                   "cusync": [4,2]},
+    },
+    256: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "split_ks": {"baseline": [4,2],
+                   "cusync": [4,2]},
+    },
+    128: {"TileSizes" : [128, 256, 32, 64, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "split_ks": {"baseline": [3,3],
+                   "cusync": [3,3]},
+    },
+  }
+
+  tiles1 = {
+    2048: {
+      "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "split_ks": {8192:  [1,1],
+                   12288: [1,1]},
+    },
+    1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      8192: {"split_ks": [1,1]},
+      12288: {"split_ks": [1,1]},
+    },
+    512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
       8192: {"split_ks":   [2,1]},
-      10240: {"split_ks":  [2,1]},
       12288: {"split_ks":  [2,1]},
-      14336: {"split_ks":  [2,1]},
-      16384: {"split_ks":  [2,1]},
-      20480: {"split_ks":  [2,1]},
-      25600: {"split_ks":  [2,1]},
     },
     256: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
       6144: {"split_ks":   [4,1]},
@@ -285,25 +291,24 @@ else:
   sys.exit(0)
 
 for h in [H]:#[6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 25600]:
-  for m in [256, 512, 1024, 2048]: #[1,2,4,8,16,32,64,128]:#: # 256, [1,2,4,8,16,32,64,128]:
+  for m in [512, 1024, 2048]: #[1,2,4,8,16,32,64,128]:#: # 256, [1,2,4,8,16,32,64,128]:
     if attention_or_mlp == "attention":
-      (s, o) = subprocess.getstatusoutput(f"python3 torchAttention.py {m} {int(h/8)} {h} {h}")
+      (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(h/8)} {h} {h}")
     else:
-      (s, o) = subprocess.getstatusoutput(f"python3 torchmlp.py {m} {int(FFN)} {h} {h}")
+      (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchmlp.py {m} {int(FFN)} {h} {h}")
     if s == -1:
       print("error " + o)
     else:
       ctime = o
       cublasTimes[m] = ctime
 
-    for syncPolicy in ['rowsync', 'tilesync']:#'Row-Sync',
+    for syncPolicy in ['rowsync']:#'Row-Sync',
       if attention_or_mlp == "mlp":
-        command = f"./mlp-{syncPolicy} {m} {int(FFN)} {h} {h}"
+        command = f"./mlp-{syncPolicy} --batch {m} --check false --model {model.lower()}"
       else:
         command = f"./attention {m} {int(h/8)} {h} {h}"
-      (s, o) = subprocess.getstatusoutput(command + f" check=false split_k1_slices={tiles[m][h]['split_ks'][0]} split_k2_slices={tiles[m][h]['split_ks'][1]}")
+      (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['split_ks']['baseline'][0]}" + f" --split-k2 {tiles_GPT3[m]['split_ks']['baseline'][1]}")
       # print(o)
-      # print(s, o)
       if "Invalid" in o:
         pass
       elif s != 0:
@@ -311,16 +316,22 @@ for h in [H]:#[6144,8192, 12288, 16384]: # , 20480, 25600]: #[10240, 20480, 2560
       else:
         # print(o)
         baselinetimes = getAllTimes(o, 'START-BASELINE', 'END-BASELINE')
-        overlaptimes  = getAllTimes(o, 'START-OVERLAPPED', 'END-OVERLAPPED')
-        matmul1TBs = 0 #int(re.findall(r"Number of first matmul TBs: (\d+)", o)[0])
-        matmul2TBs = 0 #int(re.findall(r"Number of second matmul TBs: (\d+)", o)[0])
         bTimeTotal = baselinetimes["Total"]
         bTimeMatmul1 = baselinetimes["matmul1Time"]
         bTimeMatmul2 = baselinetimes["matmul2Time"]
-        maxtbs = tiles[m]["MaxTBsPerSM"]
+
+      (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['split_ks']['cusync'][0]}" + f" --split-k2 {tiles_GPT3[m]['split_ks']['cusync'][1]}")
+      # print(o)
+      otime = -1
+      if "Invalid" in o:
+        pass
+      elif s != 0:
+        print("error " + o)
+      else:
+        overlaptimes  = getAllTimes(o, 'START-OVERLAPPED', 'END-OVERLAPPED')
         otime = overlaptimes["Total"]
 
-        print(f'{m} & {h} & {syncPolicy} & {"%.2f"%float(ctime)} & {"%.2f"%avg(bTimeTotal)} & {"%.2f"%stdev(bTimeTotal)} & {"%.2f"%avg(bTimeMatmul1)} & {"%.2f"%avg(bTimeMatmul2)} & {maxtbs} & {matmul1TBs} & {matmul2TBs} & {"%.2f"%avg(otime)} & {"%.2f"%stdev(otime)} & {"%.2f"%(100 - avg(otime)/avg(bTimeTotal)*100)}')
+      print(f'{m} & {h} & {syncPolicy} & {"%.2f"%float(ctime)} & {"%.2f"%avg(bTimeTotal)} & {"%.2f"%stdev(bTimeTotal)} & {"%.2f"%avg(bTimeMatmul1)} & {"%.2f"%avg(bTimeMatmul2)} & {"%.2f"%avg(otime)} & {"%.2f"%stdev(otime)} & {"%.2f"%(100 - avg(otime)/avg(bTimeTotal)*100)}')
         # btime = re.findall(r'START-BASELINE: ([\.\d]+)', o)
         # baselineTimes[m] = btime[0]
         # otime = re.findall(r'START-OVERLAPPED elapsedtime ([\.\d]+)', o)

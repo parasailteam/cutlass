@@ -486,7 +486,11 @@ public:
       uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
       if (!producerOrConsumer && startK > Shape::kN && startK%Shape::kN == 0) {
         dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
-        custage.wait(tile, 0, false);
+        #ifdef REORDER_TILE_LOADS
+          custage.wait(tile, 0, false);
+        #else
+          custage.wait(tile, 0, true);
+        #endif
       }
 
       CUTLASS_PRAGMA_UNROLL
@@ -519,7 +523,7 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
-
+        #ifdef REORDER_TILE_LOADS
           // Load fragment from global B
           tb_frag_B.clear();
           iterator_B.load(tb_frag_B);
@@ -529,6 +533,17 @@ public:
           tb_frag_A.clear();
           iterator_A.load(tb_frag_A);
           ++iterator_A;
+        #else
+          // Load fragment from global A
+          tb_frag_A.clear();
+          iterator_A.load(tb_frag_A);
+          ++iterator_A;
+
+          // Load fragment from global B
+          tb_frag_B.clear();
+          iterator_B.load(tb_frag_B);
+          ++iterator_B;
+        #endif
           
           // Avoid reading out of bounds if this was the last loop iteration
           iterator_A.clear_mask(gemm_k_iterations <= 2);

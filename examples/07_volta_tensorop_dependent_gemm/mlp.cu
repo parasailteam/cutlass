@@ -29,21 +29,24 @@
  *
  **************************************************************************************************/
 
+//<OPTIMIZATIONS>
+//</OPTIMIZATIONS>
+
 #include<cuSync.h>
 
-#ifdef ROWSYNC 
+#ifdef ROWSYNC
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
   using Sync = RowSync;
-#elif TILEBATCH
-  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<8>>;
-  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<8>>;
-  using Sync = TileSync<8>;
-#elif TILESYNC
+#elif defined(TILEBATCH)
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<2>>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<2>>;
+  using Sync = TileSync<2>;
+#elif defined(TILESYNC)
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<1>>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<1>>;
   using Sync = TileSync<1>;
-#elif BATCHEDROW
+#elif defined(BATCHEDROW)
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, BatchedRowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, BatchedRowSync>;
   using Sync = BatchedRowSync;
@@ -53,9 +56,17 @@
 
 #include "common.h"
 
+#ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>; 
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+#else
+//<eval tiles>
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+//</eval tiles>
+#endif
+
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
 
 //Element types of A, B, and C
@@ -397,7 +408,9 @@ cudaError_t runCuSync(int split_k1, int split_k2,
     CUTLASS_CHECK(status);
 
     // CUDA_CHECK(cudaDeviceSynchronize());
-    // handle.invokeWaitKernel(consumer_stream);
+  #ifndef AVOID_WAIT_KERNEL
+    handle.invokeWaitKernel(consumer_stream);
+  #endif  
     status = gemm_op2.run(true, NULL, consumer_stream);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -581,16 +594,16 @@ int run(int argc, char* argv[]) {
                    split_k2};
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
   printf("gridDim1.y %d\n", gridDim1.y);
-#if ROWSYNC
+#if defined(ROWSYNC)
   using Sync = RowSync;
   RowSync sync(gridDim1.y);
-#elif TILEBATCH
-  using Sync = TileSync<8>;
+#elif defined(TILEBATCH)
+  using Sync = TileSync<2>;
   Sync sync;
-#elif TILESYNC
+#elif defined(TILESYNC)
   using Sync = TileSync<1>;
   Sync sync;
-#elif BATCHEDROW
+#elif defined(BATCHEDROW)
   using Sync = BatchedRowSync;
   BatchedRowSync sync(gridDim1.y, 1);
 #else

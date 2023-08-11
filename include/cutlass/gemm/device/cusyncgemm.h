@@ -510,7 +510,7 @@ public:
     dim3 grid;
     if (overlap) {
       grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-      grid = {grid.x*grid.y*grid.z, 1, 1};
+      grid = {grid.x, grid.y, grid.z};
     } else {
       grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     }

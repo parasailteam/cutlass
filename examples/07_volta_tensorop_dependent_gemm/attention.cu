@@ -202,9 +202,10 @@ using GemmSplitK2 = BaseMLPGemm<true>;
 
 //CuSync GeMMs
 template<typename CuStage, bool splitK>
-class CuSyncAttentionGemm : public cutlass::gemm::device::CuSyncGemm<CuStage, ElementInputA, LayoutInputA, 
-                                                       ElementInputB, LayoutInputB,
-                                                       ElementOutput, LayoutOutput,
+class CuSyncAttentionGemm : public cutlass::gemm::device::CuSyncGemm<CuStage, 
+                                                        ElementInputA, LayoutInputA, 
+                                                        ElementInputB, LayoutInputB,
+                                                        ElementOutput, LayoutOutput,
                                                         ElementAccumulator, MMAOp,
                                                         SmArch, ShapeMMAThreadBlock,
                                                         ShapeMMAWarp, ShapeMMAOp,
@@ -229,7 +230,7 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
 
   __shared__ AT sum;
   if (enableOverlap)
-    prod2.tile(nullptr);
+    prod2.tile((dim3*)xqkRows);
   int linearThreadId = blockIdx.x * blockDim.x + threadIdx.x;
   curandState* localRandState = &randStates[linearThreadId];
   // __shared__ shRandStates[sizeof(curandState) * NTHREADS];
@@ -692,7 +693,11 @@ cudaError_t runAttentionCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCo
     // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
     // status = gemm_op1(args1, true, lastBlockIdxX, grid.x, NULL, producer_stream);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     handle1.invokeWaitKernel(streams[1]);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     // waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], handle1.iter);
     // printf("498:\n");
     selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, true><<<DIVUP(problem_size1.m(), SoftmaxRowTile), SoftmaxThreads, problem_size1.n()/3 * sizeof(half), streams[1]>>>(problem_size1.m(), problem_size1.n()/3, 
@@ -711,8 +716,10 @@ cudaError_t runAttentionCuSync(int split_k1, int split_k2, cutlass::gemm::GemmCo
       {alpha, beta},          // <- tuple of alpha and beta
       split_k2};        // <- k-dimension split factor
     // waitKernel<<<1,1,0,streams[2]>>>((uint*)&kernelExecuted[1], handle2.iter);
-    // CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaDeviceSynchronize());
     handle2.invokeWaitKernel(streams[2]);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     status = gemm_op2(args2, true, NULL, workspace2.get(), streams[2]);
     CUTLASS_CHECK(status);
 

@@ -505,16 +505,8 @@ public:
 
   /// Runs the kernel using initialized state.
   Status run(bool overlap, int* kernelExecuted, cudaStream_t stream = nullptr) {
-
     ThreadblockSwizzle threadblock_swizzle;
-    dim3 grid;
-    if (overlap) {
-      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-      grid = {grid.x, grid.y, grid.z};
-    } else {
-      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-    }
-
+    dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     dim3 block(GemmKernel::kThreadCount, 1, 1);
 
     cudaError_t result;
@@ -549,8 +541,6 @@ public:
       cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
 
     result = cudaGetLastError();
-    if (result != cudaSuccess) {
-    }
     return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
   }
   /// Runs the kernel using initialized state.

@@ -58,8 +58,8 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  

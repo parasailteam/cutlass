@@ -61,18 +61,19 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
   optimizationsStart = mlpFileContents.find("//<OPTIMIZATIONS>") + len("//<OPTIMIZATIONS>")
   optimizationsEnd = mlpFileContents.find("//</OPTIMIZATIONS>")
   optimizationsCode = ""
-  if batchInfo["AvoidCustomOrder"] == True:
-    optimizationsCode += "#define AVOID_CUSTOM_ORDER"+"\n"
-  else:
-    optimizationsCode += "#undef AVOID_CUSTOM_ORDER"+"\n"
-  if batchInfo["AvoidWaitKernel"] == True:
-    optimizationsCode += "#define AVOID_WAIT_KERNEL"+"\n"
-  else:
-    optimizationsCode += "#undef AVOID_WAIT_KERNEL"+"\n"
-  if batchInfo["ReorderTileLoads"] == True:
-    optimizationsCode += "#define REORDER_TILE_LOADS"+"\n"
-  else:
-    optimizationsCode += "#undef REORDER_TILE_LOADS"+"\n"
+  if syncPolicy != 'rowsync':
+    if batchInfo["AvoidCustomOrder"] == True:
+      optimizationsCode += "#define AVOID_CUSTOM_ORDER"+"\n"
+    else:
+      optimizationsCode += "#undef AVOID_CUSTOM_ORDER"+"\n"
+    if batchInfo["AvoidWaitKernel"] == True:
+      optimizationsCode += "#define AVOID_WAIT_KERNEL"+"\n"
+    else:
+      optimizationsCode += "#undef AVOID_WAIT_KERNEL"+"\n"
+    if batchInfo["ReorderTileLoads"] == True:
+      optimizationsCode += "#define REORDER_TILE_LOADS"+"\n"
+    else:
+      optimizationsCode += "#undef REORDER_TILE_LOADS"+"\n"
   optimizationsCode += "#define " + syncPolicy.upper() + "\n"
   optimizationsCode += "#define " + "EVAL_TILE_SIZES" + "\n"
   mlpFileContents = mlpFileContents[0:optimizationsStart] + "\n" + optimizationsCode + "\n" + mlpFileContents[optimizationsEnd:]

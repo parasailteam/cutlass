@@ -578,9 +578,14 @@ public:
       //   printf("563: %d\n", tb_offset_A.row());
       // }
       dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+      #ifdef REORDER_TILE_LOADS
       custage.wait(tile, 0, false);
+      #else
+      custage.wait(tile, 0, true);
+      #endif
     }
     
+    #ifdef REORDER_TILE_LOADS
     // Load B fragment from global B
     FragmentB tb_frag_B;
     tb_frag_B.clear();
@@ -593,6 +598,20 @@ public:
     tb_frag_A.clear();
     iterator_A.load(tb_frag_A);
     ++iterator_A;
+    #else
+    // Load A fragment from global A
+    FragmentA tb_frag_A;
+    tb_frag_A.clear();
+    iterator_A.load(tb_frag_A);
+    ++iterator_A;
+    
+    // Load B fragment from global B
+    FragmentB tb_frag_B;
+    tb_frag_B.clear();
+    iterator_B.load(tb_frag_B);
+    ++iterator_B;
+    this->smem_iterator_B_.store(transform_B_(tb_frag_B));
+    #endif
 
     // Store A and B fragments to shared
     this->smem_iterator_A_.store(transform_A_(tb_frag_A));

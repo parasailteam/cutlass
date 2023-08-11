@@ -473,11 +473,21 @@ public:
     //
     uint total_gemm_k_iterations = gemm_k_iterations;
     // Note: The main loop does not support Base::kWarpGemmIterations == 2.
+    // if (threadIdx.x == 0) {
+    //   printf("total_gemm_k_iterations %d Base::kWarpGemmIterations %d\n", 
+    //   total_gemm_k_iterations,
+    //   Base::kWarpGemmIterations);
+    // }
     CUTLASS_GEMM_LOOP
     for (; gemm_k_iterations > 0; --gemm_k_iterations) {
       //
       // Loop over GEMM K dimension
       //
+      uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+      if (!producerOrConsumer && startK > Shape::kN && startK%Shape::kN == 0) {
+        dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+        custage.wait(tile, 0, false);
+      }
 
       CUTLASS_PRAGMA_UNROLL
       for (int warp_mma_k = 0; warp_mma_k < Base::kWarpGemmIterations; ++warp_mma_k) {
@@ -509,21 +519,11 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
+
           // Load fragment from global B
           tb_frag_B.clear();
           iterator_B.load(tb_frag_B);
           ++iterator_B;
-
-          uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-          if (!producerOrConsumer && startK > Shape::kN && startK%Shape::kN == 0) {
-            dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
-            
-            if (threadIdx.x == 0) {
-              // printf("startK %d tile.y %d total_gemm_k_iterations %d gemm_k_iterations %d\n", 
-              //   startK, tile.y, total_gemm_k_iterations, gemm_k_iterations);
-            }
-            custage.wait(tile);
-          }
 
           // Load fragment from global A
           tb_frag_A.clear();
@@ -557,6 +557,14 @@ public:
     cutlass::MatrixCoord tb_offset_B,
     const uint block_idx_x, const uint block_idx_y) {
     // The last kblock is loaded in the prolog
+    uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+    if (!producerOrConsumer) {
+      // if (threadIdx.x == 0) {
+      //   printf("563: %d\n", tb_offset_A.row());
+      // }
+      dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
+      custage.wait(tile, 0, false);
+    }
     
     // Load B fragment from global B
     FragmentB tb_frag_B;
@@ -564,15 +572,6 @@ public:
     iterator_B.load(tb_frag_B);
     ++iterator_B;
     this->smem_iterator_B_.store(transform_B_(tb_frag_B));
-
-    uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-    if (!producerOrConsumer && startK%Shape::kN == 0) {
-      // if (threadIdx.x == 0) {
-      //   printf("563: %d\n", tb_offset_A.row());
-      // }
-      dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
-      custage.wait(tile);
-    }
 
     // Load A fragment from global A
     FragmentA tb_frag_A;

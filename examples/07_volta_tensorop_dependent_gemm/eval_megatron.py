@@ -174,6 +174,14 @@ elif attention_or_mlp == "mlp":
       "split_ks": {"baseline": [3,3],
                    "cusync": [3,3]},
     },
+    64: {"TileSizes" : [64, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "split_ks": {"baseline": [6,3],
+                   "cusync": [6,3]},
+    },
+    32: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "split_ks": {"baseline": [6,3],
+                   "cusync": [6,3]},
+    },
   }
 
   tiles1 = {

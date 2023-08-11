@@ -54,9 +54,8 @@
 #include "common.h"
 
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock =
-    cutlass::gemm::GemmShape<64, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 32, 32>; 
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>; 
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
 
 //Element types of A, B, and C
@@ -398,7 +397,7 @@ cudaError_t runCuSync(int split_k1, int split_k2,
     CUTLASS_CHECK(status);
 
     // CUDA_CHECK(cudaDeviceSynchronize());
-    handle.invokeWaitKernel(consumer_stream);
+    // handle.invokeWaitKernel(consumer_stream);
     status = gemm_op2.run(true, NULL, consumer_stream);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());

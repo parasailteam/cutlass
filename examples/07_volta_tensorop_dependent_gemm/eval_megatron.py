@@ -308,7 +308,7 @@ for m in [1,2,4,8,16,32,64,128,256, 512, 1024, 2048]:
     ctime = o
     cublasTimes[m] = ctime
 
-  for syncPolicy in ['rowsync','tilesync']:
+  for syncPolicy in ['tilesync']:
     genFilesAndMake(tiles_GPT3[m], syncPolicy)
 
     if attention_or_mlp == "mlp":

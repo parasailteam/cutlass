@@ -598,12 +598,19 @@ public:
     tb_frag_A.clear();
     iterator_A.load(tb_frag_A);
     ++iterator_A;
+    
+    // Store A and B fragments to shared
+    this->smem_iterator_A_.store(transform_A_(tb_frag_A));
+    
     #else
     // Load A fragment from global A
     FragmentA tb_frag_A;
     tb_frag_A.clear();
     iterator_A.load(tb_frag_A);
     ++iterator_A;
+
+    // Store A and B fragments to shared
+    this->smem_iterator_A_.store(transform_A_(tb_frag_A));
     
     // Load B fragment from global B
     FragmentB tb_frag_B;
@@ -613,9 +620,6 @@ public:
     this->smem_iterator_B_.store(transform_B_(tb_frag_B));
     #endif
 
-    // Store A and B fragments to shared
-    this->smem_iterator_A_.store(transform_A_(tb_frag_A));
-    
 
     // Advance write stage
     advance_smem_write_stage();

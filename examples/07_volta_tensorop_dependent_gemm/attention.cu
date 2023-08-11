@@ -141,67 +141,84 @@ using CuSyncImpl1 = CuSync<ProdCuStage, MiddleCuStage>;
 using CuSyncImpl2 = CuSync<MiddleCuStage, ConsCuStage>;
 
 #include "common.h"
+
+#ifndef EVAL_TILE_SIZES
+//Tile sizes of all GeMMs
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+#else
+//<eval tiles>
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+//</eval tiles>
+#endif
+
+using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
+
 const int SoftmaxRowTile = 4;
 
-using OverlapGemm1 = cutlass::gemm::device::CuSyncGemm<ProdCuStage, ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
-using OverlapGemm2 = cutlass::gemm::device::CuSyncGemm<ConsCuStage, ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
+//Element types of A, B, and C
+using ElementAccumulator = float;
+using ElementInputA = cutlass::half_t;
+using ElementInputB = cutlass::half_t;
+using ElementOutput = cutlass::half_t;
+using ElementComputeEpilogue = cutlass::half_t;
 
-using OverlapGemmSplitK1 = cutlass::gemm::device::CuSyncGemm<ProdCuStage, ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
-                                         2, 8, 8, true>;
-using OverlapGemmSplitK2 = cutlass::gemm::device::CuSyncGemm<ConsCuStage, ElementInputA,
-                                         LayoutInputA,
-                                         ElementInputB,
-                                         LayoutInputB,
-                                         ElementOutput,
-                                         LayoutOutput,
-                                         ElementAccumulator,
-                                         MMAOp,
-                                         SmArch,
-                                         ShapeMMAThreadBlock,
-                                         ShapeMMAWarp,
-                                         ShapeMMAOp,
-                                         EpilogueOp,
-                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
-                                         2, 8, 8, true>;
+//All matrices are in RowMajor
+using LayoutInputA = cutlass::layout::RowMajor;
+using LayoutInputB = cutlass::layout::RowMajor;
+using LayoutOutput = cutlass::layout::RowMajor;
+
+//Use FP-16 Tensor Cores
+using MMAOp = cutlass::arch::OpClassTensorOp;
+
+using SmArch = cutlass::arch::Sm70;
+
+//Second GeMM in MLP performs no extra fused computations 
+using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+    ElementOutput,                                        
+    128 / cutlass::sizeof_bits<ElementOutput>::value,     
+    ElementAccumulator,
+    ElementComputeEpilogue>;
+
+template<bool splitK>
+class BaseMLPGemm : public cutlass::gemm::device::Gemm<ElementInputA, LayoutInputA, 
+                                                        ElementInputB, LayoutInputB,
+                                                        ElementOutput, LayoutOutput,
+                                                        ElementAccumulator, MMAOp,
+                                                        SmArch, ShapeMMAThreadBlock,
+                                                        ShapeMMAWarp, ShapeMMAOp,
+                                                        EpilogueOp, 
+                                                        cutlass::gemm::threadblock::GemmHorizontalThreadblockSwizzle, 
+                                                        2, 8, 8, splitK> {};
+
+// Baseline GeMMs
+using Gemm1 = BaseMLPGemm<false>;
+using Gemm2 = BaseMLPGemm<false>;
+
+//Baseline GeMMs with SplitK enabled
+using GemmSplitK1 = BaseMLPGemm<true>;
+using GemmSplitK2 = BaseMLPGemm<true>;
+
+//CuSync GeMMs
+template<typename CuStage, bool splitK>
+class CuSyncAttentionGemm : public cutlass::gemm::device::CuSyncGemm<CuStage, ElementInputA, LayoutInputA, 
+                                                       ElementInputB, LayoutInputB,
+                                                       ElementOutput, LayoutOutput,
+                                                        ElementAccumulator, MMAOp,
+                                                        SmArch, ShapeMMAThreadBlock,
+                                                        ShapeMMAWarp, ShapeMMAOp,
+                                                        EpilogueOp, 
+                                                        cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 
+                                                        2, 8, 8, splitK> {};
+
+using CuSyncGemm1 = CuSyncAttentionGemm<ProdCuStage, false>;
+using CuSyncGemm2 = CuSyncAttentionGemm<ConsCuStage, false>;
+
+using CuSyncGemmSplitK1 = CuSyncAttentionGemm<ProdCuStage, true>;
+using CuSyncGemmSplitK2 = CuSyncAttentionGemm<ConsCuStage, true>;
+
+using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
 
 template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, uint RowTile, bool enableOverlap>
 __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
@@ -313,7 +330,7 @@ cudaError_t host_attention(cutlass::gemm::GemmCoord problem_size1,
   cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_w2,
   cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_out) {
   printf("Host C = A*B tensor_ref_xqkv.size() %d\n", tensor_ref_xqkv.size());
-  gpumatmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_x.device_data(), tensor_qkv.device_data(), tensor_ref_xqkv.host_data());
+  ref_matmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_x.device_data(), tensor_qkv.device_data(), tensor_ref_xqkv.host_data());
   // CUDA_CHECK(cudaMemcpy(tensor_ref_xqkv.device_data(), tensor_ref_xqkv.host_data(), sizeof(ElementOutput) * tensor_ref_xqkv.size(), cudaMemcpyHostToDevice));
   printf("Host Dropout(Softmax(XQ . XK))\n");
   size_t xq_size = tensor_ref_dropout.size();
@@ -348,7 +365,7 @@ cudaError_t host_attention(cutlass::gemm::GemmCoord problem_size1,
   
   tensor_ref_dropout.sync_device();
 
-  gpumatmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), 
+  ref_matmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), 
           tensor_ref_dropout.device_data(), tensor_w2.device_data(), tensor_out.host_data());
   
   return cudaSuccess;
@@ -959,7 +976,7 @@ int run(int argc, char* arg[]) {
   #define ENABLE_NORMAL_GEMM
 
   if (true) {
-    result = runAttentionBaseline<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -971,7 +988,7 @@ int run(int argc, char* arg[]) {
       }
     }
 
-    result = runAttentionBaseline<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -980,7 +997,7 @@ int run(int argc, char* arg[]) {
     matmul2Time = 0;
     printf("START-BASELINE:\n");
     // double startTime = convertTimeValToDouble(getTimeOfDay());    
-    result = runAttentionBaseline<Gemm, Gemm, GemmSplitK, GemmSplitK>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
 
     if (result != cudaSuccess) {
@@ -1061,7 +1078,7 @@ int run(int argc, char* arg[]) {
   softmaxTime = 0;
   matmul2Time = 0;
   if (true) {
-    result = runAttentionCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    result = runAttentionCuSync<CuSyncGemm1, CuSyncGemm2, CuSyncGemmSplitK1, CuSyncGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, overlapTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1073,12 +1090,12 @@ int run(int argc, char* arg[]) {
       }
     }
     //warmup
-    result = runAttentionCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    result = runAttentionCuSync<CuSyncGemm1, CuSyncGemm2, CuSyncGemmSplitK1, CuSyncGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, overlapTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-OVERLAPPED\n");
-    result = runAttentionCuSync<OverlapGemm1, OverlapGemm2, OverlapGemmSplitK1, OverlapGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
+    result = runAttentionCuSync<CuSyncGemm1, CuSyncGemm2, CuSyncGemmSplitK1, CuSyncGemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
       tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, handle1, handle2, streams, event, randStates, overlapTime, matmul1Time, softmaxTime, matmul2Time, epochs);
     
     printf("END-OVERLAPPED: {\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf} microseconds\n", overlapTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);

@@ -143,14 +143,16 @@ using CuSyncGemmSplitK2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, true>;
 using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
 
 struct MLPParameters {
-  HostTensor a;
-  HostTensor b;
-  HostTensor c;
-  HostTensor d;
-  HostTensor e;
+  HostTensor x; //[B, H]
+  HostTensor w1; //[H, 4H/8]
+  //xw1 = GeLU(x * w1)
+  HostTensor xw1; //[B, 4 H / 8]
+  HostTensor w2; //[4H/8, H]
+  //xw12 = xw1 * w2
+  HostTensor xw12; //[B, H]
 
-  HostTensor ref_c;
-  HostTensor ref_e;
+  HostTensor ref_xw1;
+  HostTensor ref_xw12;
   bool checkResults;
 
   cutlass::gemm::GemmCoord gemm_size1;

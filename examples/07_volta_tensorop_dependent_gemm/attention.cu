@@ -221,6 +221,85 @@ using CuSyncGemmSplitK2 = CuSyncAttentionGemm<ConsCuStage, true>;
 
 using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
 
+struct AttentionParams {
+  HostTensor x;
+  HostTensor qkv;
+  HostTensor xqkv;
+  HostTensor xdot;
+  HostTensor w2;
+  HostTensor xw12;
+
+  HostTensor ref_xqkv;
+  HostTensor ref_xdot;
+  HostTensor ref_xw12;
+
+  cutlass::gemm::GemmCoord gemm_size1, gemm_size2;
+  curandState* randStates;
+  bool refCheck;
+  ElementComputeEpilogue alpha;
+  ElementComputeEpilogue beta;
+
+  AttentionParams(int problem[4], bool check) {
+    gemm_size1 = cutlass::gemm::GemmCoord(problem[0], problem[1] * 3, problem[2]);
+    gemm_size2 = cutlass::gemm::GemmCoord(problem[0], problem[3], problem[1]);
+    alpha = ElementComputeEpilogue(1);
+    beta = ElementComputeEpilogue(0);
+  
+    x    = HostTensor(gemm_size1.mk());
+    qkv  = HostTensor(gemm_size1.kn());
+    xqkv = HostTensor(gemm_size1.mn());
+    xdot = HostTensor({gemm_size1.m(), gemm_size1.n()/3});
+    w2   = HostTensor(gemm_size2.kn());
+    xw12 = HostTensor(gemm_size2.mn());
+
+    ref_xdot = HostTensor({gemm_size1.m(), gemm_size1.n()/3});
+    ref_xqkv = HostTensor(gemm_size1.mn());
+    ref_xw12 = HostTensor(gemm_size2.mn());
+
+    size_t numRandStates = gemm_size1.m() * 1024;
+    CUDA_CHECK(cudaMalloc(&randStates, sizeof(curandState)*(numRandStates)));
+    init_curand_states<<<numRandStates/128, 128>>>(randStates, numRandStates);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    refCheck = check;
+  }
+
+  void initIns() {
+    if (refCheck) {
+      memset_random2(x.host_data(), ElementOutput(0.02), 
+                     ElementOutput(0.03), x.size());
+      memset_random2(qkv.host_data(), ElementOutput(0.01), 
+                     ElementOutput(0.035), qkv.size());
+      memset_random2(w2.host_data(), ElementOutput(0.01),
+                     ElementOutput(0.05), w2.size());
+    } else {
+      cutlass::reference::host::TensorFill(x.host_view(),
+                                           ElementOutput(0.05));
+      cutlass::reference::host::TensorFill(qkv.host_view(),
+                                           ElementOutput(0.5));
+      cutlass::reference::host::TensorFill(w2.host_view(),
+                                           ElementOutput(0.01));
+    }
+
+    // Copy data from host to GPU
+    x.sync_device();
+    qkv.sync_device();
+    w2.sync_device();
+  }
+
+  void initOuts() {
+    //Zeros all output tensors
+    cutlass::reference::host::TensorFill(xqkv.host_view());
+    cutlass::reference::host::TensorFill(xw12.host_view());
+    cutlass::reference::host::TensorFill(xdot.host_view());
+  }
+
+  void initRefs() {
+    cutlass::reference::host::TensorFill(ref_xqkv.host_view());
+    cutlass::reference::host::TensorFill(ref_xdot.host_view());
+    cutlass::reference::host::TensorFill(ref_xw12.host_view());
+  }
+};
+
 template<uint NTHREADS, typename T, typename AT, int TileM, int TileN, uint RowTile, bool enableOverlap>
 __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
                                               T* XQKV, T* out, float p,
@@ -320,98 +399,86 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
   // }
 }
 
-cudaError_t host_attention(cutlass::gemm::GemmCoord problem_size1,
-  cutlass::gemm::GemmCoord problem_size2,
-  ElementComputeEpilogue alpha,
-  ElementComputeEpilogue beta,
-  cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_x,
-  cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_qkv,
-  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_xqkv,
-  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_dropout,
-  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_w2,
-  cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_out) {
-  printf("Host C = A*B tensor_ref_xqkv.size() %d\n", tensor_ref_xqkv.size());
-  ref_matmul<ElementOutput, ElementAccumulator>(problem_size1.m(), problem_size1.n(), problem_size1.k(), tensor_x.device_data(), tensor_qkv.device_data(), tensor_ref_xqkv.host_data());
-  // CUDA_CHECK(cudaMemcpy(tensor_ref_xqkv.device_data(), tensor_ref_xqkv.host_data(), sizeof(ElementOutput) * tensor_ref_xqkv.size(), cudaMemcpyHostToDevice));
-  printf("Host Dropout(Softmax(XQ . XK))\n");
-  size_t xq_size = tensor_ref_dropout.size();
-  assert(tensor_ref_dropout.size() == problem_size1.m() * problem_size1.n()/3);
-  size_t N = problem_size1.n()/3;
-  ElementOutput* host_xqkv = tensor_ref_xqkv.host_data();
-  ElementOutput* host_dropout = tensor_ref_dropout.host_data();
+void attnRefMatmul(cutlass::gemm::GemmCoord size, ElementOutput* a, ElementOutput* b, ElementOutput* c) {
+  ref_matmul<ElementOutput, ElementAccumulator>(size.m(), size.n(), 
+                                                size.k(), a, b, c);
+}
 
-  for (size_t row = 0; row < problem_size1.m(); row++) {
-    for (size_t col = 0; col < problem_size1.n()/3; col++) {
+cudaError_t host_attention(AttentionParams& attnParams) {
+  attnRefMatmul(attnParams.gemm_size1, attnParams.x.device_data(), 
+                attnParams.qkv.device_data(), attnParams.ref_xqkv.host_data());
+  
+  size_t xq_size = attnParams.ref_xdot.size();
+  assert(attnParams.ref_xdot.size() == attnParams.gemm_size1.m() * attnParams.gemm_size1.n()/3);
+  size_t N = attnParams.gemm_size1.n()/3;
+  ElementOutput* host_xqkv = attnParams.ref_xqkv.host_data();
+  ElementOutput* host_xdot = attnParams.ref_xdot.host_data();
+
+  for (size_t row = 0; row < attnParams.gemm_size1.m(); row++) {
+    for (size_t col = 0; col < attnParams.gemm_size1.n()/3; col++) {
       ElementOutput xqk = host_xqkv[row * 3 * N + col] * host_xqkv[row * 3 * N + (col + N)];
-      host_dropout[row * N + col] = xqk;
+      host_xdot[row * N + col] = xqk;
     }
   }
 
-  for (size_t ROW = 0; ROW < problem_size1.m(); ROW++) {
+  for (size_t ROW = 0; ROW < attnParams.gemm_size1.m(); ROW++) {
     float sum = 0.0f;
-    for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
-      // printf("(float)host_dropout[ROW*(problem_size1.n()/3) + COL] %f\n", (float)host_dropout[ROW*(problem_size1.n()/3) + COL]);
-      sum += exp((float)host_dropout[ROW*N + COL]);
+    for (size_t COL = 0; COL < attnParams.gemm_size1.n()/3; COL++) {
+      sum += exp((float)host_xdot[ROW*N + COL]);
     }
-    // printf("sum %f\n", sum);
-    // for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
-    //   host_dropout[ROW*(problem_size1.n()/3) + COL] = (ElementOutput)exp((float)host_dropout[ROW*(problem_size1.n()/3) + COL])/sum;
-    // }
-
-    for (size_t COL = 0; COL < problem_size1.n()/3; COL++) {
+    
+    for (size_t COL = 0; COL < attnParams.gemm_size1.n()/3; COL++) {
       //Assume dropout probability is 1.0
-      host_dropout[ROW*N + COL] = (exp(host_dropout[ROW*N + COL]) * host_xqkv[ROW*3*N + COL+2*N])/sum;
+      host_xdot[ROW*N + COL] = (exp(host_xdot[ROW*N + COL]) * host_xqkv[ROW*3*N + COL+2*N])/sum;
     }
   }
   
-  tensor_ref_dropout.sync_device();
+  attnParams.ref_xdot.sync_device();
 
-  ref_matmul<ElementOutput, ElementAccumulator>(problem_size2.m(), problem_size2.n(), problem_size2.k(), 
-          tensor_ref_dropout.device_data(), tensor_w2.device_data(), tensor_out.host_data());
+  attnRefMatmul(attnParams.gemm_size2, attnParams.ref_xdot.device_data(), 
+                attnParams.w2.device_data(), attnParams.ref_xw12.host_data());
   
   return cudaSuccess;
 }
 
-cudaError_t check_results(cutlass::gemm::GemmCoord problem_size1,
-                    cutlass::gemm::GemmCoord problem_size2,
-                    ElementComputeEpilogue alpha,
-                    ElementComputeEpilogue beta,
-                    cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_x,
-                    cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_qkv,
-                    cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_xqkv,
-                    cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_dropout,
-                    cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_w2,
-                    cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_out,
-                    cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_xqkv,
-                    cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_dropout,
-                    cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_ref_out) {
-  ElementOutput* hostXQKV = new ElementOutput[tensor_xqkv.size()];
-  CUDA_CHECK(cudaMemcpy(hostXQKV, tensor_xqkv.device_data(), tensor_xqkv.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
-  printf("checking C tensor_xqkv.size() %lu %lu\n", tensor_xqkv.size(), tensor_ref_xqkv.size());
-  bool eq = equals(tensor_ref_xqkv.size(), tensor_ref_xqkv.host_data(), hostXQKV, 1e-1);
+cudaError_t check_results(AttentionParams& attnParams) {
+  ElementOutput* hostXQKV = new ElementOutput[attnParams.xqkv.size()];
+  CUDA_CHECK(cudaMemcpy(hostXQKV, attnParams.xqkv.device_data(), 
+                        attnParams.xqkv.size() * sizeof(ElementOutput), 
+                        cudaMemcpyDeviceToHost));
+  printf("Checking First GeMM output\n");
+  bool eq = equals(attnParams.ref_xqkv.size(), 
+                   attnParams.ref_xqkv.host_data(), 
+                   hostXQKV, 1e-1f);
   if (eq == false) {
-    printf("XQKV not correct\n");
+    printf("First GeMM not correct\n");
     return cudaErrorUnknown;
   }
 
-  ElementOutput* hostDropout = new ElementOutput[tensor_dropout.size()];
-  CUDA_CHECK(cudaMemcpy(hostDropout, tensor_dropout.device_data(), tensor_dropout.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
-  printf("checking dropout tensor_e.size() %lu %lu\n", tensor_dropout.size(), tensor_ref_dropout.size());
-  eq = equals(tensor_ref_dropout.size(), tensor_ref_dropout.host_data(), hostDropout, 1e-1);
+  ElementOutput* hostxdot = new ElementOutput[attnParams.xdot.size()];
+  CUDA_CHECK(cudaMemcpy(hostxdot, attnParams.xdot.device_data(), 
+                        attnParams.xdot.size() * sizeof(ElementOutput),
+                        cudaMemcpyDeviceToHost));
+  printf("Checking Dot Dropout kernel\n");
+  eq = equals(attnParams.ref_xdot.size(), 
+              attnParams.ref_xdot.host_data(), hostxdot, 1e-1f);
   if (eq == false) {
-    printf("dropout not correct\n");
+    printf("Dot not correct\n");
     return cudaErrorUnknown;
   }
 
-  ElementOutput* hostOut = new ElementOutput[tensor_out.size()];
-  CUDA_CHECK(cudaMemcpy(hostOut, tensor_out.device_data(), tensor_out.size() * sizeof(ElementOutput), cudaMemcpyDeviceToHost));
-  printf("checking Out tensor_e.size() %lu %lu\n", tensor_out.size(), tensor_ref_out.size());
-  eq = equals(tensor_ref_out.size(), tensor_ref_out.host_data(), hostOut, 1e-1);
+  ElementOutput* hostxw12 = new ElementOutput[attnParams.xw12.size()];
+  CUDA_CHECK(cudaMemcpy(hostxw12, attnParams.xw12.device_data(), 
+                        attnParams.xw12.size() * sizeof(ElementOutput),
+                        cudaMemcpyDeviceToHost));
+  printf("Checking second GeMM\n");
+  eq = equals(attnParams.ref_xw12.size(), attnParams.ref_xw12.host_data(), 
+              hostxw12, 1e-1);
   if (eq == false) {
-    printf("Out not correct\n");
+    printf("Second GeMM not correct\n");
     return cudaErrorUnknown;
   }
-  printf("passed\n");
+  printf("Self-Attention Passed\n");
 
   return cudaSuccess;
 }
@@ -422,113 +489,83 @@ __global__ void print_kernel(ElementOutput* data) {
   }
 }
 
+//Run our baseline of Self-Attention
 template<typename GemmTy1, typename GemmTy2>
-cudaError_t runAttentionBaseline(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
-                     cutlass::gemm::GemmCoord problem_size2,
-                     ElementComputeEpilogue alpha,
-                     ElementComputeEpilogue beta,
-                     cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_x,
-                     cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_qkv,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_xqkv,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_dropout,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_w2,
-                     cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_out,
-                     cudaStream_t streams[],
-                     cudaEvent_t event,
-                     curandState* randStates,
-                     double& execTime,
-                     double& matmul1Time,
-                     double& softmaxTime,
-                     double& matmul2Time,
-                     int iters = 100) {  
-  ElementOutput* device_xqkv = tensor_xqkv.device_data();
-  size_t xq_size = tensor_dropout.size();
-  // ElementOutput* device_xq = device_xqkv;
-  // ElementOutput* device_xk = device_xqkv + xq_size;
-  // ElementOutput* device_xv = device_xqkv + xq_size * 2;
-  // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
-  // instantiated CUTLASS kernel
-  typename GemmTy1::Arguments args1{problem_size1,  // <- problem size of matrix multiplication
-                                     tensor_x.device_ref(),  // <- reference to matrix A on device
-                                     tensor_qkv.device_ref(),  // <- reference to matrix B on device
-                                     tensor_xqkv.device_ref(),  // <- reference to matrix C on device
-                                     tensor_xqkv.device_ref(),  // <- reference to matrix C on device
-                                     {alpha, beta},          // <- tuple of alpha and beta
-                                     split_k1};        // <- k-dimension split factor
-  
-  // Using the arguments, query for extra workspace required for matrix multiplication computation
-  size_t workspace_size = GemmTy1::get_workspace_size(args1);
-  // Allocate workspace memory
-  cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
-
-  typename GemmTy2::Arguments args2{problem_size2,  // <- problem size of matrix multiplication
-                                     tensor_dropout.device_ref(),  // <- reference to matrix A on device
-                                     tensor_w2.device_ref(),  // <- reference to matrix B on device
-                                     tensor_out.device_ref(),  // <- reference to matrix C on device
-                                     tensor_out.device_ref(),  // <- reference to matrix C on device
-                                     {alpha, beta},          // <- tuple of alpha and beta
-                                     split_k2};        // <- k-dimension split factor
-  
-  // Using the arguments, query for extra workspace required for matrix multiplication computation
-  workspace_size = GemmTy2::get_workspace_size(args2);
-  // Allocate workspace memory
-  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
-
-  // Instantiate CUTLASS kernel depending on templates
-  GemmTy1 gemm_op1;
-  GemmTy2 gemm_op2;
+cudaError_t runAttentionBaseline(int split_k1, int split_k2,
+                                 AttentionParams& attnParams,
+                                 cudaStream_t streams[],
+                                 double& execTime,
+                                 double& matmul1Time,
+                                 double& softmaxTime,
+                                 double& matmul2Time,
+                                 int iters = 100) {  
+  // ElementOutput* device_xqkv = tensor_xqkv.device_data();
   cutlass::Status status;
-  {
-    // Check the problem size is supported or not 
-    status = gemm_op1.can_implement(args1);
-    CUTLASS_CHECK(status);
 
-    // Initialize CUTLASS kernel with arguments and workspace pointer
-    status = gemm_op1.initialize(args1, workspace1.get());
-    CUTLASS_CHECK(status);
-  }
-  {
-    // Check the problem size is supported or not 
-    cutlass::Status status = gemm_op2.can_implement(args2);
-    CUTLASS_CHECK(status);
+  //Setup First GeMM
+  typename GemmTy1::Arguments args1{attnParams.gemm_size1,
+                                    attnParams.x.device_ref(),
+                                    attnParams.qkv.device_ref(),
+                                    attnParams.xqkv.device_ref(),
+                                    attnParams.xqkv.device_ref(),
+                                    {attnParams.alpha, attnParams.beta},
+                                    split_k1};
+  size_t workspace_size = GemmTy1::get_workspace_size(args1);
+  cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
+  GemmTy1 gemm_op1;
+  status = gemm_op1.can_implement(args1);
+  CUTLASS_CHECK(status);
+  status = gemm_op1.initialize(args1, workspace1.get());
+  CUTLASS_CHECK(status);
 
-    // Initialize CUTLASS kernel with arguments and workspace pointer
-    status = gemm_op2.initialize(args2, workspace2.get());
-    CUTLASS_CHECK(status);
-  }
+  //Setup Second GeMM
+  typename GemmTy2::Arguments args2{attnParams.gemm_size2,
+                                    attnParams.xdot.device_ref(),
+                                    attnParams.w2.device_ref(),
+                                    attnParams.xw12.device_ref(),
+                                    attnParams.xw12.device_ref(),
+                                    {attnParams.alpha, attnParams.beta},
+                                    split_k2};
+  workspace_size = GemmTy2::get_workspace_size(args2);
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+  GemmTy2 gemm_op2;
+  status = gemm_op2.can_implement(args2);
+  CUTLASS_CHECK(status);
+  status = gemm_op2.initialize(args2, workspace2.get());
+  CUTLASS_CHECK(status);
+
   const int SoftmaxThreads = ShapeMMAThreadBlock::kN;
   execTime = 0;
   
-  // Launch initialized CUTLASS kernel
+  //Launch kernels
   for (int r = 0; r < iters; r++) {
     double start = timeInMicroSeconds();
-    status = gemm_op1(args1, workspace1.get(), streams[0]);
+    status = gemm_op1(streams[0]);
     CUTLASS_CHECK(status);
-    
-    if (status != cutlass::Status::kSuccess) {
-      return cudaErrorUnknown;
-    }
     CUDA_CHECK(cudaStreamSynchronize(streams[0]));
     double middle1 = timeInMicroSeconds();
     double iterMatMul1 = middle1-start;
     matmul1Time += iterMatMul1;
     
-    selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, SoftmaxRowTile, false>
-      <<<DIVUP(problem_size1.m(), SoftmaxRowTile), SoftmaxThreads, problem_size1.n()/3 * sizeof(half), streams[0]>>>(problem_size1.m(), problem_size1.n()/3, 
-                                                    (half*)device_xqkv,
-                                                    (half*)tensor_dropout.device_data(), 
-                                                    1.0f, randStates,
-                                                  MiddleCuStage(), MiddleCuStage());
+    selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, 
+                                  ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN,
+                                  SoftmaxRowTile, false>
+                                  <<<DIVUP(attnParams.gemm_size1.m(), SoftmaxRowTile), 
+                                    SoftmaxThreads, 
+                                    attnParams.gemm_size1.n()/3 * sizeof(half), 
+                                    streams[0]>>>
+                                    (attnParams.gemm_size1.m(), 
+                                    attnParams.gemm_size1.n()/3, 
+                                    (half*)attnParams.xqkv.device_data(),
+                                    (half*)attnParams.xdot.device_data(), 
+                                    1.0f, attnParams.randStates,
+                                    MiddleCuStage(), MiddleCuStage());
     CUDA_CHECK(cudaStreamSynchronize(streams[0]));
     double middle2 = timeInMicroSeconds();
     double iterSoftmax = middle2-middle1;
     softmaxTime += iterSoftmax;
-    status = gemm_op2(args2, workspace2.get(), streams[0]);
+    status = gemm_op2(streams[0]);
     CUTLASS_CHECK(status);
-
-    if (status != cutlass::Status::kSuccess) {
-      return cudaErrorUnknown;
-    }
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle3 = timeInMicroSeconds();
     double iterMatmul2 = middle3-middle2;
@@ -543,32 +580,19 @@ cudaError_t runAttentionBaseline(int split_k1, int split_k2, cutlass::gemm::Gemm
 }
 
 template<typename GemmTy1, typename GemmTy2, typename GemmSplitKTy1, typename GemmSplitKTy2>
-cudaError_t runAttentionBaseline(int split_k1, int split_k2, cutlass::gemm::GemmCoord problem_size1,
-                        cutlass::gemm::GemmCoord problem_size2,
-                        ElementComputeEpilogue alpha,
-                        ElementComputeEpilogue beta,
-                        cutlass::HostTensor<ElementInputA, LayoutInputA>& tensor_x,
-                        cutlass::HostTensor<ElementInputB, LayoutInputB>& tensor_qkv,
-                        cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_xqkv,
-                        cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_dropout,
-                        cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_w2,
-                        cutlass::HostTensor<ElementOutput, LayoutOutput>& tensor_out,
-                        cudaStream_t streams[],
-                        cudaEvent_t event,
-                        curandState* randStates,
-                        double& execTime,
-                        double& matmul1Time,
-                        double& softmaxTime,
-                        double& matmul2Time,
-                        int iters = 100) {
-  #define ENABLE_NORMAL_GEMM
+cudaError_t runAttentionBaseline(int split_k1, int split_k2,
+                                 AttentionParams& attnParams, 
+                                 cudaStream_t streams[],
+                                 double& execTime,
+                                 double& matmul1Time,
+                                 double& softmaxTime,
+                                 double& matmul2Time,
+                                 int iters = 100) {
   cudaError_t result;
   if (split_k1 == 1) {
-    result = runAttentionBaseline<GemmTy1, GemmTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runAttentionBaseline<GemmTy1, GemmTy2>(split_k1, split_k2, attnParams, streams, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   } else {
-    result = runAttentionBaseline<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runAttentionBaseline<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, attnParams, streams, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   }
 
   return result;
@@ -859,123 +883,22 @@ int run(int argc, char* arg[]) {
   }
   printf("problem[0] %d problem[1] %d problem[2] %d problem[3] %d\n", problem[0], problem[1], problem[2], problem[3]);
   printf("doChecking=%d split_k1_slices=%d split_k2_slices=%d\n", doChecking, split_k1, split_k2);
-  // Create a tuple of problem size for matrix multiplication
-  cutlass::gemm::GemmCoord problem_size1(problem[0], problem[1] * 3, problem[2]);
-  cutlass::gemm::GemmCoord problem_size2(problem[0], problem[3], problem[1]);
 
-  curandState* randStates;
-  size_t numRandStates = problem_size1.m() * 1024;
-  CUDA_CHECK(cudaMalloc(&randStates, sizeof(curandState)*(numRandStates)));
-  init_curand_states<<<numRandStates/128, 128>>>(randStates, numRandStates);
-  CUDA_CHECK(cudaDeviceSynchronize());
-  // Initialize tensors using CUTLASS helper functions
-  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_x(
-      problem_size1.mk());  // <- Create matrix A with dimensions M x K
-  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_qkv(
-      problem_size1.kn());  // <- Create matrix B with dimensions K x N
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_xqkv(
-      problem_size1.mn());  // <- Create matrix C with dimensions M x N
-  
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_dropout(
-    {problem_size1.m(), problem_size1.n()/3});  // <- Create matrix D with dimensions M x N used to store output from
-                           // CUTLASS kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_w2(
-      problem_size2.kn());  // <- Create matrix D with dimensions M x N used to store output from
-                        // CUTLASS kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_out(
-      problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                        // CUTLASS kernel
-  
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_xqkv(
-    problem_size1.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                           // reference kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_dropout(
-    {problem_size1.m(), problem_size1.n()/3});  // <- Create matrix D with dimensions M x N used to store output from
-                          // reference kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_out(
-      problem_size2.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                        // CUTLASS kernel
-  printf("%ld\n", tensor_ref_dropout.size());
-  
-  // Fill input and output matrices on host using CUTLASS helper functions
-  // cutlass::reference::host::TensorFillRandomUniform(
-  //     tensor_a.host_view(),
-  //     1,
-  //     ElementInputA(2),
-  //     ElementInputA(-2),
-  //     0);  // <- Fill matrix A on host with uniform-distribution random data
-  // cutlass::reference::host::TensorFillRandomUniform(
-  //     tensor_b.host_view(),
-  //     1,
-  //     ElementInputB(2),
-  //     ElementInputB(-2),
-  //     0);  // <- Fill matrix B on host with uniform-distribution random data
-  if (doChecking) {
-    memset_random2(tensor_x.host_data(), ElementOutput(0.02), ElementOutput(0.03), tensor_x.size());
-    memset_random2(tensor_qkv.host_data(), ElementOutput(0.01), ElementOutput(0.035), tensor_qkv.size());
-    memset_random2(tensor_w2.host_data(), ElementOutput(0.01), ElementOutput(0.05), tensor_w2.size());
-  } else {
-    cutlass::reference::host::TensorFill(
-      tensor_x.host_view(),
-      ElementOutput(0.05));  // <- Fill matrix B on host with uniform-distribution random data
-    cutlass::reference::host::TensorFill(
-      tensor_qkv.host_view(),
-      ElementOutput(0.5));  // <- Fill matrix B on host with uniform-distribution random data
-    cutlass::reference::host::TensorFill(
-      tensor_w2.host_view(),
-      ElementOutput(0.01));  // <- Fill matrix B on host with uniform-distribution random data
-  }
-  // cutlass::reference::host::TensorFill(
-  //   tensor_a.host_view());
-  // cutlass::reference::host::TensorFill(
-  //   tensor_b.host_view());
-  // cutlass::reference::host::TensorFill(
-  //   tensor_d.host_view());
-  cutlass::reference::host::TensorFill(
-    tensor_xqkv.host_view());  // <- Fill matrix C on host with zeros
-  cutlass::reference::host::TensorFill(
-    tensor_ref_xqkv.host_view());  // <- Fill matrix C on host with zeros
-  cutlass::reference::host::TensorFill(
-    tensor_ref_dropout.host_view());  // <- fill matrix E on host with zeros
-  cutlass::reference::host::TensorFill(
-    tensor_out.host_view());  // <- fill matrix E on host with zeros
-  cutlass::reference::host::TensorFill(
-    tensor_ref_out.host_view());  // <- fill matrix E on host with zeros
-
-  // Copy data from host to GPU
-  tensor_x.sync_device();
-  tensor_qkv.sync_device();
-  tensor_w2.sync_device();
-
-  tensor_xqkv.sync_device();
-  tensor_ref_xqkv.sync_device();
-
-  tensor_ref_out.sync_device();
-  tensor_out.sync_device();
-  tensor_ref_dropout.sync_device();
-
-  // Initialize alpha and beta for dot product computation
-  ElementComputeEpilogue alpha = ElementComputeEpilogue(1);
-  ElementComputeEpilogue beta = ElementComputeEpilogue(0);
+  // Create and initialize attention tensors
+  AttentionParams attnParams(problem, doChecking);
+  attnParams.initIns();
+  attnParams.initOuts();
+  attnParams.initRefs();
   
   cudaError_t result;
   int epochs = 30;
   int warmup = 20;
 
   if (doChecking) {
-    result = host_attention(problem_size1, problem_size2, alpha, beta,
-        tensor_x, tensor_qkv, tensor_ref_xqkv, tensor_ref_dropout, tensor_w2, tensor_ref_out);
-    if (result != cudaSuccess) {
-      return 1;
-    }
+    result = host_attention(attnParams);
+    CUDA_CHECK(result);
   }
-
-  cudaEvent_t start;
-  cudaEvent_t end;
-  cudaEvent_t event;
-  CUDA_CHECK(cudaEventCreate(&event));
-  CUDA_CHECK(cudaEventCreate(&start));
-  CUDA_CHECK(cudaEventCreate(&end));
+  
   double baselineTime = 0;
   double matmul1Time = 0;
   double softmaxTime = 0;
@@ -983,60 +906,28 @@ int run(int argc, char* arg[]) {
   #define ENABLE_NORMAL_GEMM
 
   if (true) {
-    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
+    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, attnParams, streams, baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     if (doChecking) {
-      result = check_results(problem_size1, problem_size2, alpha, beta, 
-        tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, tensor_ref_xqkv, tensor_ref_dropout, tensor_ref_out);
-      if (result != cudaSuccess) {
-        return 1;
-      }
+      result = check_results(attnParams);
+      CUDA_CHECK(result);
     }
 
-    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, attnParams, streams, baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     matmul1Time = 0;
     softmaxTime = 0;
     matmul2Time = 0;
     printf("START-BASELINE:\n");
-    // double startTime = convertTimeValToDouble(getTimeOfDay());    
-    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, 
-      tensor_x, tensor_qkv, tensor_xqkv, tensor_dropout, tensor_w2, tensor_out, streams, event, randStates, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    result = runAttentionBaseline<Gemm1, Gemm2, GemmSplitK1, GemmSplitK2>(split_k1, split_k2, attnParams, streams, baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
 
-    if (result != cudaSuccess) {
-      std::cerr << "CUTLASS GEMM kernel failed: "
-        << cudaGetErrorString(result) << std::endl;
-      return result;
-    }
-    // CUDA_CHECK(cudaStreamSynchronize(streams));
-    // double endTime = convertTimeValToDouble(getTimeOfDay());
-    // baselineTime = endTime - startTime;
+    CUDA_CHECK(result);
+  
     printf("END-BASELINE: {\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf} microseconds\n", baselineTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
   }
-
   #if 0
-  double minimumTime = (1<<20);
-  if (true) {
-    minimumTime = 0;
-    CUDA_CHECK(cudaStreamCreate(&consumer_stream));
-    result = runhgemm<Gemm, Gemm, GemmSplitK, GemmSplitK, true>(split_k1, split_k2, problem_size1, problem_size2, alpha, beta, tensor_a, tensor_b, tensor_c, tensor_d, tensor_e, baselineHandle, producer_stream, producer_stream, event, NULL, false, minimumTime, epochs);
-
-    if (result != cudaSuccess) {
-      std::cerr << "CUTLASS GEMM kernel failed: "
-        << cudaGetErrorString(result) << std::endl;
-      return result;
-    }
-    // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
-    // double endTime = convertTimeValToDouble(getTimeOfDay());
-    // baselineTime = endTime - startTime;
-  }
-
-  printf("minimum elapsedtime %lf microseconds\n", minimumTime/(float)epochs);
-  #endif 
 
   cutlass::reference::host::TensorFill(
     tensor_xqkv.host_view());  // <- Fill matrix C on host with zeros
@@ -1107,6 +998,7 @@ int run(int argc, char* arg[]) {
     
     printf("END-OVERLAPPED: {\"Total\": %lf, \"matmul1Time\": %lf, \"softmaxTime\": %lf, \"matmul2Time\": %lf} microseconds\n", overlapTime/(float)epochs, matmul1Time/(float)epochs, softmaxTime/(float)epochs, matmul2Time/(float)epochs);
   }
+  #endif
 
   return 0;
 }

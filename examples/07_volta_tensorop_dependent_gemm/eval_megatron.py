@@ -48,12 +48,14 @@ def slurp(path):
   with open(path, "r") as f:
     return f.read()
 
-def genFilesAndMake(batchInfo, syncPolicy):
-  inMLPFile = "mlp.cu"
-  outMLPFile = "mlp-eval.cu"
+def genFilesAndMake(batchInfo, syncPolicy, attention_or_mlp, kernelType):
+  inMLPFile = "mlp.cu" if attention_or_mlp == "mlp" else "attention.cu"
+  outMLPFile = attention_or_mlp + "-eval.cu"
   tilesCode = """using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<%d, %d, %d>;  
 using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
   tilesCode = tilesCode % tuple(batchInfo["TileSizes"])
+  if "SoftmaxRowTile" in batchInfo[kernelType]:
+    tilesCode += "\nconst uint SoftmaxRowTile = %d;"%batchInfo[kernelType]["SoftmaxRowTile"]
   mlpFileContents = slurp(inMLPFile)
   tilesCodeStart = mlpFileContents.find("//<eval tiles>") + len("//<eval tiles>")
   tilesCodeEnd = mlpFileContents.find("//</eval tiles>")
@@ -80,115 +82,98 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
   with open(outMLPFile, "w") as f:
     f.write(mlpFileContents)
   
-  (s,o) = subprocess.getstatusoutput("make mlp-eval")
+  (s,o) = subprocess.getstatusoutput("rm %s-eval ; make %s-eval"%(attention_or_mlp, attention_or_mlp))
   if s != 0:
     print(o)
     sys.exit(0)
 
 if attention_or_mlp == "attention":
-  # Dictionary of tile sizes for each M
-  tiles = {
+  tiles_GPT3 = {
     2048: {
-      "TileSizes" : [256, 128, 32, 128, 64, 32], "SoftmaxRowTile" : 4, "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      6144: {"split_ks": [2,1]},
-      8192: {"split_ks": [2,1]},
-      10240: {"split_ks": [1,1]},
-      12288: {"split_ks": [1,1]},
-      16384: {"split_ks": [1,1]},
-      20480: {"split_ks": [1,1]},
-      25600: {"split_ks": [1,1]},
+      "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [1,1], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [1,1], "SoftmaxRowTile" : 4},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
     },
-    1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "split_ks": [1,1], "MaxTBsPerSM": 2, "SoftmaxRowTile": 2, "Best-Policy": "Row-Sync",
-      6144: {"split_ks": [2,1]},
-      8192: {"split_ks": [2,1]},
-      10240: {"split_ks": [3,1]},
-      12288: {"split_ks": [1,1]},
-      16384: {"split_ks": [2,1]},
-      20480: {"split_ks": [2,1]},
-      25600: {"split_ks": [2,1]},
+    1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [2,1], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [2,1], "SoftmaxRowTile" : 2},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
     },
-    512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "SoftmaxRowTile": 1, "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      6144: {"split_ks":   [2,1]},
-      8192: {"split_ks":   [2,1]},
-      10240: {"split_ks":  [2,1]},
-      12288: {"split_ks":  [2,1]},
-      16384: {"split_ks":  [2,1]},
-      20480: {"split_ks":  [2,1]},
-      25600: {"split_ks":  [2,1]},
+    512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [2,1], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [2,1], "SoftmaxRowTile" : 1},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
     },
-    256: {"TileSizes" : [256, 128, 32, 128, 64, 32], "SoftmaxRowTile": 1, "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
-      6144: {"split_ks":   [4,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1]},
-      16384: {"split_ks":  [4,1]},
-      20480: {"split_ks":  [4,1]},
-      25600: {"split_ks":  [4,1]},
+    256: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
+      "baseline": {"split_ks": [4,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [4,2], "SoftmaxRowTile" : 4},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False
     },
-    128: {"TileSizes" : [128, 128, 32, 64, 64, 32], "SoftmaxRowTile": 1, "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
-      6144: {"split_ks":   [12,3]},
-      8192: {"split_ks":   [12,3]},
-      10240: {"split_ks":  [12,3]},
-      12288: {"split_ks":  [12,3]},
-      16384: {"split_ks":  [12,3]},
-      20480: {"split_ks":  [12,3]},
-      25600: {"split_ks":  [12,3]}},
+    128: {"TileSizes" : [128, 128, 32, 64, 64, 32], "SoftmaxRowTile": 4, "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
+      "split_ks": {"baseline": [4,3],
+                   "cusync":   [4,3]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
     64: {"TileSizes" : [64, 256, 32, 32, 128, 32], "SoftmaxRowTile": 1, "MaxTBsPerSM": 3, "Best-Policy": "Tile-Sync",
-      6144: {"split_ks":   [3,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [12,3]},
-      12288: {"split_ks":  [4,1], "TileBatch":1},
-      16384: {"split_ks":  [12,3]},
-      20480: {"split_ks":  [12,3]},
-      25600: {"split_ks":  [12,3]}},
+      "split_ks": {"baseline": [4,2],#TODO
+                   "cusync":   [4,2]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
     32: {"TileSizes" : [64, 256, 32, 32, 128, 32], "split_ks": [4,1], "MaxTBsPerSM": 3,
-      6144: {"split_ks":   [3,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1], "TileBatch":1},
-      16384: {"split_ks":  [4,1]},
-      20480: {"split_ks":  [4,1]},
-      25600: {"split_ks":  [4,1]}},
+      "split_ks": {"baseline": [4,2],#TODO
+                   "cusync":   [4,2]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
     16: {"TileSizes" : [64, 256, 32, 32, 128, 32], "split_ks": [4,1], "MaxTBsPerSM": 3,
-      6144: {"split_ks":   [4,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1], "TileBatch":1},
-      16384: {"split_ks":  [4,1]},
-      20480: {"split_ks":  [4,1]},
-      25600: {"split_ks":  [4,1]}},
+      "split_ks": {"baseline": [4,2],#TODO
+                   "cusync":   [4,2]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
     8: {"TileSizes" : [64, 256, 32, 32, 128, 32], "split_ks": [4, 1], "MaxTBsPerSM": 3,
-      6144: {"split_ks":   [4,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1], "TileBatch":1},
-      16384: {"split_ks":  [4,1]},
-      20480: {"split_ks":  [4,1]},
-      25600: {"split_ks":  [4,1]}},
+      "split_ks": {"baseline": [4,2],#TODO
+                   "cusync":   [4,2]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
     4: {"TileSizes" : [64, 256, 32, 32, 128, 32], "split_ks": [4, 1], "MaxTBsPerSM": 3,
-      6144: {"split_ks":   [4,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1], "TileBatch":1},
-      16384: {"split_ks":  [4,1]},
-      20480: {"split_ks":  [4,1]},
-      25600: {"split_ks":  [4,1]}},
+      "split_ks": {"baseline": [4,2],#TODO
+                   "cusync":   [4,2]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,  
+    },
     2: {"TileSizes" : [64, 256, 32, 32, 128, 32], "split_ks": [4,1], "MaxTBsPerSM": 3,
-      6144: {"split_ks":   [4,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1], "TileBatch":1},
-      16384: {"split_ks":  [4,1]},
-      20480: {"split_ks":  [4,1]},
-      25600: {"split_ks":  [4,1]}},
+      "split_ks": {"baseline": [4,2],#TODO
+                   "cusync":   [4,2]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
     1: {"TileSizes" : [64, 256, 32, 32, 128, 32], "split_ks": [4,1], "MaxTBsPerSM": 3,
-      6144: {"split_ks":   [4,1]},
-      8192: {"split_ks":   [4,1]},
-      10240: {"split_ks":  [4,1]},
-      12288: {"split_ks":  [4,1], "TileBatch":1}, 
-      16384: {"split_ks":  [4,1]},
-      20480: {"split_ks":  [4,1]},
-      25600: {"split_ks":  [4,1]}}
+      "split_ks": {"baseline": [4,2],#TODO
+                   "cusync":   [4,2]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,  
+    }
   }
 
 elif attention_or_mlp == "mlp":
@@ -297,7 +282,7 @@ else:
   print ("No Hidden dim for ", model)
   sys.exit(0)
 
-for m in [1,2,4,8,16,32,64,128,256, 512, 1024, 2048]:
+for m in [512,1024,2048]:
   if attention_or_mlp == "attention":
     (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
   else:
@@ -308,14 +293,14 @@ for m in [1,2,4,8,16,32,64,128,256, 512, 1024, 2048]:
     ctime = o
     cublasTimes[m] = ctime
 
-  for syncPolicy in ['tilesync']:
-    genFilesAndMake(tiles_GPT3[m], syncPolicy)
+  for syncPolicy in ['rowsync']:
+    genFilesAndMake(tiles_GPT3[m], syncPolicy, attention_or_mlp, 'baseline')
 
     if attention_or_mlp == "mlp":
       command = f"./mlp-eval --batch {m} --check false --model {model.lower()}"
     else:
-      command = f"./attention {m} {int(H/8)} {H} {H}"
-    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['split_ks']['baseline'][0]}" + f" --split-k2 {tiles_GPT3[m]['split_ks']['baseline'][1]}")
+      command = f"./attention-eval --batch {m} --check false --model {model.lower()}"
+    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['baseline']['split_ks'][0]}" + f" --split-k2 {tiles_GPT3[m]['baseline']['split_ks'][1]}")
     # print(o)
     if "Invalid" in o:
       pass
@@ -327,9 +312,9 @@ for m in [1,2,4,8,16,32,64,128,256, 512, 1024, 2048]:
       bTimeTotal = baselinetimes["Total"]
       bTimeMatmul1 = baselinetimes["matmul1Time"]
       bTimeMatmul2 = baselinetimes["matmul2Time"]
-
-    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['split_ks']['cusync'][0]}" + f" --split-k2 {tiles_GPT3[m]['split_ks']['cusync'][1]}")
-    # print(o)
+    genFilesAndMake(tiles_GPT3[m], syncPolicy, attention_or_mlp, 'cusync')
+    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['cusync']['split_ks'][0]}" + f" --split-k2 {tiles_GPT3[m]['cusync']['split_ks'][1]}")
+  
     otime = -1
     if "Invalid" in o:
       pass

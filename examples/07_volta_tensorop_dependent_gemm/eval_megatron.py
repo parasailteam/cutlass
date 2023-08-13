@@ -120,7 +120,7 @@ if attention_or_mlp == "attention":
     },
     128: {"TileSizes" : [128, 128, 32, 64, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
       "baseline": {"split_ks": [4,3], "SoftmaxRowTile" : 1},
-      "cusync": {"split_ks": [4,3], "SoftmaxRowTile" : 4},
+      "cusync":   {"split_ks": [4,3], "SoftmaxRowTile" : 4},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,

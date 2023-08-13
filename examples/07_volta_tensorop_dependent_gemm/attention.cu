@@ -49,13 +49,34 @@ struct StridedSync {
     {return postValue_;}
 
   __device__ constexpr uint tileIndex(const dim3& tile, const dim3& grid) {
-    return tile.x * (grid.y/((H/8)/Tile)) + tile.y%((H/8)/Tile);
+    if (grid.y > ((H/8)/Tile))
+      return tile.x * (grid.y/((H/8)/Tile)) + tile.y%((H/8)/Tile);
+    else
+    return tile.x * grid.y + tile.y;
   }
 
   __device__ bool isSync(const dim3& tile) {
     return tile.y < H/8;
   }
 };
+
+#include "common.h"
+
+#ifndef EVAL_TILE_SIZES
+//Tile sizes of all GeMMs
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
+const int SoftmaxRowTile = 1;
+#else
+//<eval tiles>
+const int SoftmaxRowTile = 1;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+//</eval tiles>
+#endif
+
+using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
+
 
 #ifdef ROWSYNC 
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
@@ -80,22 +101,6 @@ struct StridedSync {
 using CuSyncImpl1 = CuSync<ProdCuStage, MiddleCuStage>;
 using CuSyncImpl2 = CuSync<MiddleCuStage, ConsCuStage>;
 
-#include "common.h"
-
-#ifndef EVAL_TILE_SIZES
-//Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
-const int SoftmaxRowTile = 1;
-#else
-//<eval tiles>
-const int SoftmaxRowTile = 1;
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
-//</eval tiles>
-#endif
-
-using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
 
 //Element types of A, B, and C
 using ElementAccumulator = float;
@@ -825,6 +830,9 @@ int run(int argc, char* argv[]) {
   using Sync2 = Sync1;
   TileSync<1> sync1;
   TileSync<1> sync2(ShapeMMAThreadBlock::kM/SoftmaxRowTile, 1);
+#elif defined(STRIDEDSYNC)
+    StridedSyncImpl sync1;
+    TileSync<1> sync2(ShapeMMAThreadBlock::kM/SoftmaxRowTile, 1);
 #else
   #error "Unknown Policy"
 #endif

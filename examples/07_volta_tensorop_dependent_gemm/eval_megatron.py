@@ -118,9 +118,9 @@ if attention_or_mlp == "attention":
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False
     },
-    128: {"TileSizes" : [128, 128, 32, 64, 64, 32], "SoftmaxRowTile": 4, "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
-      "split_ks": {"baseline": [4,3],
-                   "cusync":   [4,3]},
+    128: {"TileSizes" : [128, 128, 32, 64, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
+      "baseline": {"split_ks": [4,3], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [4,3], "SoftmaxRowTile" : 4},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
@@ -132,42 +132,42 @@ if attention_or_mlp == "attention":
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
-    32: {"TileSizes" : [32, 128, 32, 32, 64, 32], "MaxTBsPerSM": 3,
+    32: {"TileSizes" : [64, 128, 32, 64, 64, 32], "MaxTBsPerSM": 3,
       "baseline": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "cusync": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
-    16: {"TileSizes" : [32, 128, 32, 32, 64, 32], "MaxTBsPerSM": 3,
+    16: {"TileSizes" : [64, 128, 32, 64, 64, 32], "MaxTBsPerSM": 3,
       "baseline": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "cusync": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
-    8: {"TileSizes" : [32, 128, 32, 32, 64, 32], "MaxTBsPerSM": 3,
+    8: {"TileSizes" : [64, 128, 32, 64, 64, 32], "MaxTBsPerSM": 3,
       "baseline": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "cusync": {"split_ks": [6,2], "SoftmaxRowTile" : 4},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
-    4: {"TileSizes" : [32, 128, 32, 32, 64, 32], "MaxTBsPerSM": 3,
+    4: {"TileSizes" : [64, 128, 32, 64, 64, 32], "MaxTBsPerSM": 3,
       "baseline": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "cusync": {"split_ks": [6,2], "SoftmaxRowTile" : 4},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,  
     },
-    2: {"TileSizes" : [32, 128, 32, 32, 64, 32], "MaxTBsPerSM": 3,
+    2: {"TileSizes" : [64, 128, 32, 64, 64, 32], "MaxTBsPerSM": 3,
       "baseline": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "cusync": {"split_ks": [6,2], "SoftmaxRowTile" : 2},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
-    1: {"TileSizes" : [32, 128, 32, 32, 64, 32], "MaxTBsPerSM": 3,
+    1: {"TileSizes" : [64, 128, 32, 64, 64, 32], "MaxTBsPerSM": 3,
       "baseline": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "cusync": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
       "AvoidCustomOrder": True,
@@ -282,7 +282,7 @@ else:
   print ("No Hidden dim for ", model)
   sys.exit(0)
 
-for m in [16,32,64]:
+for m in [1,2,4,8]:
   if attention_or_mlp == "attention":
     (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
   else:
@@ -293,7 +293,7 @@ for m in [16,32,64]:
     ctime = o
     cublasTimes[m] = ctime
 
-  for syncPolicy in ['tilesync']:
+  for syncPolicy in ['stridedsync','tilesync']:
     genFilesAndMake(tiles_GPT3[m], syncPolicy, attention_or_mlp, 'baseline')
 
     if attention_or_mlp == "mlp":

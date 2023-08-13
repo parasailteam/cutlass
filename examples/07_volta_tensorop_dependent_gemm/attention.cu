@@ -34,6 +34,29 @@
 
 #include<cuSync.h>
 
+template<uint H, uint Tile, uint stride>
+struct StridedSync {
+  uint waitValue_;
+  uint postValue_;
+
+  __device__ __host__ StridedSync(): waitValue_(stride), postValue_(1) {}
+  
+  __device__ __host__ uint waitValue(const dim3& tile, const dim3& grid) {
+    return waitValue_;
+  }
+
+  __device__ __host__ uint postValue(const dim3& tile, const dim3& grid) 
+    {return postValue_;}
+
+  __device__ constexpr uint tileIndex(const dim3& tile, const dim3& grid) {
+    return tile.x * (grid.y/((H/8)/Tile)) + tile.y%((H/8)/Tile);
+  }
+
+  __device__ bool isSync(const dim3& tile) {
+    return tile.y < H/8;
+  }
+};
+
 #ifdef ROWSYNC 
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
   using MiddleCuStage = CuStage<CuStageType::Producer|CuStageType::Consumer, RowMajor, RowSync>;
@@ -42,6 +65,12 @@
 #elif defined(TILESYNC)
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<1>>;
   using MiddleCuStage = CuStage<CuStageType::Producer|CuStageType::Consumer, RowMajor, TileSync<1>>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<1>>;
+  using Sync = TileSync<1>;
+#elif defined(STRIDEDSYNC)
+  using StridedSyncImpl = StridedSync<12288, ShapeMMAThreadBlock::kN, 3>;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, StridedSyncImpl>;
+  using MiddleCuStage = CuStage<CuStageType::Producer|CuStageType::Consumer, RowMajor, StridedSyncImpl>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<1>>;
   using Sync = TileSync<1>;
 #else
@@ -55,7 +84,7 @@ using CuSyncImpl2 = CuSync<MiddleCuStage, ConsCuStage>;
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 256, 32>;  
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
 using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
 const int SoftmaxRowTile = 1;
 #else

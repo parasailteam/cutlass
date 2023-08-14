@@ -131,9 +131,18 @@ constexpr int AlignmentC  = 128 / cutlass::sizeof_bits<ElementC>::value;    // M
 using ElementAccumulator  = cutlass::half_t;                          // Element type for internal accumulation
 using ArchTag             = cutlass::arch::Sm80;                      // Tag indicating the minimum SM that supports the intended feature
 using OperatorClass       = cutlass::arch::OpClassTensorOp;           // Operator class tag
+
+
+#ifndef EVAL_TILE_SIZES
+
 using ThreadblockShape    = cutlass::gemm::GemmShape<128, 128, 32>;   // Threadblock-level tile size (concept: GemmShape)
 using WarpShape           = cutlass::gemm::GemmShape<64, 64, 32>;     // Warp-level tile size (concept: GemmShape)
 using InstructionShape    = cutlass::gemm::GemmShape<8, 8, 4>;      // Instruction-level tile size (concept: GemmShape)
+#else
+//<eval tiles>
+//</eval tiles>
+#endif
+
 constexpr int NumStages   = 2;                                        // Number of global->shared pipeline stages used in the GEMM mainloop
 
 // Epilogue output operator

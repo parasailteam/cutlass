@@ -48,6 +48,27 @@ def slurp(path):
   with open(path, "r") as f:
     return f.read()
 
+def getStreamKTimes(output):
+  runtime = re.findall(r'\s*Avg runtime: ([\d\.]+)', output)
+  return float(runtime[0])
+
+def genAndMakeStreamK(batchInfo):
+  inFile = "streamk.cu"
+  outFile = "streamk-eval.cu"
+  tilesCode = """using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<%d, %d, %d>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
+  tilesCode = tilesCode % tuple(batchInfo["TileSizes"])
+  fileContents = slurp(inFile)
+  tilesCodeStart = fileContents.find("//<eval tiles>") + len("//<eval tiles>")
+  tilesCodeEnd = fileContents.find("//</eval tiles>")
+  fileContents = fileContents[0:tilesCodeStart] + "\n" + tilesCode + "\n" + fileContents[tilesCodeEnd:]
+  with open(outFile, "w") as f:
+    f.write(fileContents)
+  (s,o) = subprocess.getstatusoutput("rm streamk-eval ; make streamk-eval")
+  if s != 0:
+    print(o)
+    sys.exit(0)
+
 def genFilesAndMake(batchInfo, syncPolicy, attention_or_mlp, kernelType):
   inMLPFile = "mlp.cu" if attention_or_mlp == "mlp" else "attention.cu"
   outMLPFile = attention_or_mlp + "-eval.cu"
@@ -181,86 +202,86 @@ elif attention_or_mlp == "mlp":
   tiles_GPT3 = {
     2048: {
       "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [1,1],
-                   "cusync":   [1,1]},
+      "baseline": {"split_ks": [1,1]},
+      "cusync": {"split_ks": [1,1]},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
     },
     1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [2,2],
-                   "cusync": [1,1]},
+      "baseline": {"split_ks": [2,2]},
+      "cusync": {"split_ks": [1,1]},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
     },
     512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [2,2],
-                   "cusync": [4,2]},
+      "baseline": {"split_ks": [2,2]},
+      "cusync": {"split_ks": [4,2]},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
     },
     256: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [4,2],
-                   "cusync": [4,2]},
+      "baseline": {"split_ks": [4,2]},
+      "cusync": {"split_ks": [4,2]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
     128: {"TileSizes" : [128, 256, 32, 64, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [3,3],
-                   "cusync": [3,3]},
+      "baseline": {"split_ks": [3,3]},
+      "cusync": {"split_ks": [3,3]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
     64: {"TileSizes" : [64, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [6,3],
-                   "cusync": [6,3]},
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     32: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [6,3],
-                   "cusync": [6,3]},
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
       "TileBatchSync":2,
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     16: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [6,3],
-                   "cusync": [6,3]},
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     8: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [6,3],
-                   "cusync": [6,3]},
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     4: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [6,3],
-                   "cusync": [6,3]},
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     2: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [6,3],
-                   "cusync": [6,3]},
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     1: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "split_ks": {"baseline": [6,3],
-                   "cusync": [6,3]},
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
@@ -282,18 +303,37 @@ else:
   print ("No Hidden dim for ", model)
   sys.exit(0)
 
-for m in [1,2,4,8]:
+for m in [1,2,4,8,16,32,64,128,256,512,1024,2048]:
   if attention_or_mlp == "attention":
     (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
   else:
     (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchmlp.py {m} {int(FFN)} {H} {H}")
+  
   if s == -1:
     print("error " + o)
   else:
     ctime = o
     cublasTimes[m] = ctime
 
-  for syncPolicy in ['stridedsync','tilesync']:
+  genAndMakeStreamK(tiles_GPT3[m])
+  streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
+  (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles_GPT3[m]['baseline']['split_ks'][0]}")
+  if s != 0:
+    print("StreamK Error")
+    print(o)
+
+  firstGeMMStreamK = getStreamKTimes(o)
+
+  (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles_GPT3[m]['baseline']['split_ks'][1]}")
+  if s != 0:
+    print("StreamK Error")
+    print(o)
+
+  secondGeMMStreamK = getStreamKTimes(o)
+
+  for syncPolicy in ['rowsync', 'stridedsync','tilesync']:
+    if attention_or_mlp == 'mlp' and syncPolicy == 'stridedsync':
+      continue
     genFilesAndMake(tiles_GPT3[m], syncPolicy, attention_or_mlp, 'baseline')
 
     if attention_or_mlp == "mlp":
@@ -324,7 +364,7 @@ for m in [1,2,4,8]:
       overlaptimes  = getAllTimes(o, 'START-OVERLAPPED', 'END-OVERLAPPED')
       otime = overlaptimes["Total"]
 
-    print(f'{m} & {H} & {syncPolicy} & {"%.2f"%float(ctime)} & {"%.2f"%avg(bTimeTotal)} & {"%.2f"%stdev(bTimeTotal)} & {"%.2f"%avg(bTimeMatmul1)} & {"%.2f"%avg(bTimeMatmul2)} & {"%.2f"%avg(otime)} & {"%.2f"%stdev(otime)} & {"%.2f"%(100 - avg(otime)/avg(bTimeTotal)*100)}')
+    print(f'{m} & {H} & {syncPolicy} & {"%.2f"%float(ctime)} & {"%.2f"%avg(bTimeTotal)} & {"%.2f"%stdev(bTimeTotal)} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%avg(bTimeMatmul1)} & {"%.2f"%avg(bTimeMatmul2)} & {"%.2f"%avg(otime)} & {"%.2f"%stdev(otime)} & {"%.2f"%(100 - avg(otime)/avg(bTimeTotal)*100)}')
       # btime = re.findall(r'START-BASELINE: ([\.\d]+)', o)
       # baselineTimes[m] = btime[0]
       # otime = re.findall(r'START-OVERLAPPED elapsedtime ([\.\d]+)', o)
@@ -337,7 +377,7 @@ for m in [1,2,4,8]:
 # print(cublasTimes)
 # print(overlappedTimes)
 # print(minimumTimes)
-print("M & N & K & L & TBs & Baseline(us) & cuBLAS(us) & Overlapped(us) & Minimum(us) & Speedup & MaxSpeedup")
+# print("M & N & K & L & TBs & Baseline(us)  & Overlapped(us) & Minimum(us) & Speedup & MaxSpeedup")
 
 for m in baselineTimes:
   print(f"{m} & {n} & {k} & {l} & {m//128*n//128} & {baselineTimes[m]} & {cublasTimes[m]} & {overlappedTimes[m]} & {minimumTimes[m]} & {speedup[m]} & {maxspeedup[m]}")

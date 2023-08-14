@@ -58,8 +58,8 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
@@ -170,46 +170,46 @@ struct MLPParameters {
     std::cout << "GeMM 2 Size: " << gemm_size2.m() << ", " << 
       gemm_size2.n() << ", " << gemm_size2.k() << std::endl;
     
-    a = HostTensor(gemm_size1.mk());
-    b = HostTensor(gemm_size1.kn());
-    c = HostTensor(gemm_size1.mn());
-    d = HostTensor(gemm_size2.kn());
-    e = HostTensor(gemm_size2.mn());
-    ref_c = HostTensor(gemm_size1.mn());
-    ref_e = HostTensor(gemm_size2.mn());
+    x = HostTensor(gemm_size1.mk());
+    w1 = HostTensor(gemm_size1.kn());
+    xw1 = HostTensor(gemm_size1.mn());
+    w2 = HostTensor(gemm_size2.kn());
+    xw12 = HostTensor(gemm_size2.mn());
+    ref_xw1 = HostTensor(gemm_size1.mn());
+    ref_xw12 = HostTensor(gemm_size2.mn());
     checkResults = check;
   }
 
   void initIns() {
     if (checkResults) {
-      memset_random2(a.host_data(), ElementOutput(0.05), ElementOutput(0.2), a.size());
-      memset_random2(b.host_data(), ElementOutput(0.01), ElementOutput(0.2), b.size());
-      memset_random2(d.host_data(), ElementOutput(0.01), ElementOutput(0.05), d.size());
+      memset_random2(x.host_data(), ElementOutput(0.05), ElementOutput(0.2), x.size());
+      memset_random2(w1.host_data(), ElementOutput(0.01), ElementOutput(0.2), w1.size());
+      memset_random2(w2.host_data(), ElementOutput(0.01), ElementOutput(0.05), w2.size());
     } else {
-      cutlass::reference::host::TensorFill(a.host_view(), ElementOutput(0.05));
-      cutlass::reference::host::TensorFill(b.host_view(), ElementOutput(0.5));
-      cutlass::reference::host::TensorFill(d.host_view(), ElementOutput(0.01));
+      cutlass::reference::host::TensorFill(x.host_view(), ElementOutput(0.05));
+      cutlass::reference::host::TensorFill(w1.host_view(), ElementOutput(0.5));
+      cutlass::reference::host::TensorFill(w2.host_view(), ElementOutput(0.01));
     }
     // Copy data from host to GPU
-    a.sync_device();
-    b.sync_device();
-    d.sync_device();
+    x.sync_device();
+    w1.sync_device();
+    w2.sync_device();
   }
   
   void initOuts() {
-    cutlass::reference::host::TensorFill(c.host_view());
-    cutlass::reference::host::TensorFill(e.host_view());
+    cutlass::reference::host::TensorFill(xw1.host_view());
+    cutlass::reference::host::TensorFill(xw12.host_view());
       
-    c.sync_device();
-    e.sync_device();
+    xw1.sync_device();
+    xw12.sync_device();
   }
 
   void initRefs() {
-    cutlass::reference::host::TensorFill(ref_e.host_view());
-    cutlass::reference::host::TensorFill(ref_c.host_view());
+    cutlass::reference::host::TensorFill(ref_xw12.host_view());
+    cutlass::reference::host::TensorFill(ref_xw1.host_view());
       
-    ref_e.sync_device();
-    ref_c.sync_device();
+    ref_xw12.sync_device();
+    ref_xw1.sync_device();
   }
 };
 
@@ -218,38 +218,38 @@ cudaError_t referenceMLP(MLPParameters& mlpParams) {
   ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size1.m(), 
                                                mlpParams.gemm_size1.n(), 
                                                mlpParams.gemm_size1.k(),
-                                               mlpParams.a.device_data(), 
-                                               mlpParams.b.device_data(), 
-                                               mlpParams.ref_c.host_data());
-  CUDA_CHECK(cudaMemcpy(mlpParams.ref_c.device_data(), mlpParams.ref_c.host_data(), 
-             sizeof(ElementOutput) * mlpParams.ref_c.size(), cudaMemcpyHostToDevice));
+                                               mlpParams.x.device_data(), 
+                                               mlpParams.w1.device_data(), 
+                                               mlpParams.ref_xw1.host_data());
+  CUDA_CHECK(cudaMemcpy(mlpParams.ref_xw1.device_data(), mlpParams.ref_xw1.host_data(), 
+             sizeof(ElementOutput) * mlpParams.ref_xw1.size(), cudaMemcpyHostToDevice));
   ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size2.m(),
                                                mlpParams.gemm_size2.n(),
                                                mlpParams.gemm_size2.k(), 
-                                               mlpParams.ref_c.device_data(),
-                                               mlpParams.d.device_data(), 
-                                               mlpParams.ref_e.host_data());
+                                               mlpParams.ref_xw1.device_data(),
+                                               mlpParams.w2.device_data(), 
+                                               mlpParams.ref_xw12.host_data());
   return cudaSuccess;
 }
 
 cudaError_t checkMLPResults(MLPParameters& mlpParams) {
-  ElementOutput* hostC = new ElementOutput[mlpParams.ref_c.size()];
-  CUDA_CHECK(cudaMemcpy(hostC, mlpParams.c.device_data(), 
-                        mlpParams.c.size() * sizeof(ElementOutput), 
+  ElementOutput* hostC = new ElementOutput[mlpParams.ref_xw1.size()];
+  CUDA_CHECK(cudaMemcpy(hostC, mlpParams.xw1.device_data(), 
+                        mlpParams.xw1.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking first GeMM\n");
-  bool eq = equals(mlpParams.ref_c.size(), mlpParams.ref_c.host_data(), hostC, 1e-1f);
+  bool eq = equals(mlpParams.ref_xw1.size(), mlpParams.ref_xw1.host_data(), hostC, 1e-1f);
   if (eq == false) {
     printf("First GeMM not correct\n");
     return cudaErrorUnknown;
   }
   printf("First GeMM passed\n");
-  ElementOutput* hostE = new ElementOutput[mlpParams.ref_e.size()];
-  CUDA_CHECK(cudaMemcpy(hostE, mlpParams.e.device_data(), 
-                        mlpParams.e.size() * sizeof(ElementOutput), 
+  ElementOutput* hostE = new ElementOutput[mlpParams.ref_xw12.size()];
+  CUDA_CHECK(cudaMemcpy(hostE, mlpParams.xw12.device_data(), 
+                        mlpParams.xw12.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking second GeMM\n");
-  eq = equals(mlpParams.ref_e.size(), mlpParams.ref_e.host_data(), hostE, 1e-1f);
+  eq = equals(mlpParams.ref_xw12.size(), mlpParams.ref_xw12.host_data(), hostE, 1e-1f);
   if (eq == false) {
     printf("Second GeMM not correct \n");
     return cudaErrorUnknown;
@@ -270,10 +270,10 @@ cudaError_t runBaseline(int split_k1, int split_k2,
   //Setup first GeMM
   typename GemmTy1::Arguments args1 {
     mlpParams.gemm_size1,
-    mlpParams.a.device_ref(), 
-    mlpParams.b.device_ref(),
-    mlpParams.c.device_ref(),
-    mlpParams.c.device_ref(),
+    mlpParams.x.device_ref(), 
+    mlpParams.w1.device_ref(),
+    mlpParams.xw1.device_ref(),
+    mlpParams.xw1.device_ref(),
     {mlpParams.alpha, mlpParams.beta},
     split_k1};
 
@@ -288,10 +288,10 @@ cudaError_t runBaseline(int split_k1, int split_k2,
   //Setup Second GeMM
   typename GemmTy2::Arguments args2{ 
     mlpParams.gemm_size2, 
-    mlpParams.c.device_ref(), 
-    mlpParams.d.device_ref(), 
-    mlpParams.e.device_ref(), 
-    mlpParams.e.device_ref(), 
+    mlpParams.xw1.device_ref(), 
+    mlpParams.w2.device_ref(), 
+    mlpParams.xw12.device_ref(), 
+    mlpParams.xw12.device_ref(), 
     {mlpParams.alpha, mlpParams.beta},         
     split_k2};
   
@@ -366,10 +366,10 @@ cudaError_t runCuSync(int split_k1, int split_k2,
                       int iters = 100) {
   typename GemmTy1::Arguments args1{handle.prod(),
                                      mlpParams.gemm_size1,
-                                     mlpParams.a.device_ref(),
-                                     mlpParams.b.device_ref(),
-                                     mlpParams.c.device_ref(),
-                                     mlpParams.c.device_ref(),
+                                     mlpParams.x.device_ref(),
+                                     mlpParams.w1.device_ref(),
+                                     mlpParams.xw1.device_ref(),
+                                     mlpParams.xw1.device_ref(),
                                      {mlpParams.alpha, mlpParams.beta},         
                                      split_k1};
   GemmTy1 gemm_op1;
@@ -382,10 +382,10 @@ cudaError_t runCuSync(int split_k1, int split_k2,
 
   typename GemmTy2::Arguments args2{handle.cons(),
                                     mlpParams.gemm_size2,  
-                                    mlpParams.c.device_ref(),
-                                    mlpParams.d.device_ref(),
-                                    mlpParams.e.device_ref(),
-                                    mlpParams.e.device_ref(),
+                                    mlpParams.xw1.device_ref(),
+                                    mlpParams.w2.device_ref(),
+                                    mlpParams.xw12.device_ref(),
+                                    mlpParams.xw12.device_ref(),
                                     {mlpParams.alpha, mlpParams.beta},
                                     split_k2};
 

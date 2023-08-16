@@ -142,17 +142,30 @@ using CuSyncGemmSplitK2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, true>;
 
 using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
 
+enum MLPType {
+  GPT3,
+  LLaMa    
+};
+
 struct MLPParameters {
   HostTensor x; //[B, H]
-  HostTensor w1; //[H, 4H/8]
+  HostTensor w1; //[H, 4H/8] in GPT-3 and [H, H/3] in LLaMa
   //xw1 = GeLU(x * w1)
   HostTensor xw1; //[B, 4 H / 8]
-  HostTensor w2; //[4H/8, H]
+  HostTensor w2; //[4H/8, H] in GPT-3 and [H/3, H] in LLaMa
   //xw12 = xw1 * w2
   HostTensor xw12; //[B, H]
 
+  //For LLaMa only
+  HostTensor v; //[H, H/3] in LLaMa
+  HostTensor xv; //[B, H/3] in LLaMa
+  
   HostTensor ref_xw1;
   HostTensor ref_xw12;
+
+  //For LLaMa only
+  HostTensor ref_xv;
+
   bool checkResults;
 
   cutlass::gemm::GemmCoord gemm_size1;
@@ -160,11 +173,21 @@ struct MLPParameters {
   ElementComputeEpilogue alpha;
   ElementComputeEpilogue beta;
 
-  MLPParameters(int problem[4], bool check) {
+  std::string model;
+
+  MLPParameters(std::string model_, uint batch, bool check) {
     alpha = ElementComputeEpilogue(1.0);
     beta = ElementComputeEpilogue(0.0);
-    gemm_size1 = cutlass::gemm::GemmCoord(problem[0], problem[1], problem[2]);
-    gemm_size2 = cutlass::gemm::GemmCoord(problem[0], problem[3], problem[1]);
+    model = model_;
+
+    if (model == "gpt-3") {
+      gemm_size1 = cutlass::gemm::GemmCoord(batch, 4*12288/8, 12288);
+      gemm_size2 = cutlass::gemm::GemmCoord(batch, 12288, 4*12288/8);
+    } else if (model=="llama") {
+      int d = ((8192/3 + 127)/128)*128;
+      gemm_size1 = cutlass::gemm::GemmCoord(batch, d, 8192);
+      gemm_size2 = cutlass::gemm::GemmCoord(batch, 8192, d);
+    }
     std::cout << "GeMM 1 Size: " << gemm_size1.m() << ", " << 
       gemm_size1.n() << ", " << gemm_size1.k() << std::endl;
     std::cout << "GeMM 2 Size: " << gemm_size2.m() << ", " << 
@@ -177,6 +200,12 @@ struct MLPParameters {
     xw12 = HostTensor(gemm_size2.mn());
     ref_xw1 = HostTensor(gemm_size1.mn());
     ref_xw12 = HostTensor(gemm_size2.mn());
+
+    if (model == "llama") {
+      v = HostTensor(gemm_size1.kn());
+      xv = HostTensor(gemm_size1.mn());
+      ref_xv = HostTensor(gemm_size1.mn());
+    }
     checkResults = check;
   }
 
@@ -185,15 +214,24 @@ struct MLPParameters {
       memset_random2(x.host_data(), ElementOutput(0.05), ElementOutput(0.2), x.size());
       memset_random2(w1.host_data(), ElementOutput(0.01), ElementOutput(0.2), w1.size());
       memset_random2(w2.host_data(), ElementOutput(0.01), ElementOutput(0.05), w2.size());
+      if (model == "llama") {
+        memset_random2(v.host_data(), ElementOutput(0.01), ElementOutput(0.2), v.size());
+      }
     } else {
       cutlass::reference::host::TensorFill(x.host_view(), ElementOutput(0.05));
       cutlass::reference::host::TensorFill(w1.host_view(), ElementOutput(0.5));
       cutlass::reference::host::TensorFill(w2.host_view(), ElementOutput(0.01));
+      if (model == "llama") {
+        cutlass::reference::host::TensorFill(v.host_view(), ElementOutput(0.5));
+      }
     }
     // Copy data from host to GPU
     x.sync_device();
     w1.sync_device();
     w2.sync_device();
+    if (model == "llama") {
+      v.sync_device();
+    }
   }
   
   void initOuts() {
@@ -202,33 +240,72 @@ struct MLPParameters {
       
     xw1.sync_device();
     xw12.sync_device();
+    if (model == "llama") {
+      cutlass::reference::host::TensorFill(xv.host_view());
+      xv.sync_device();
+    }
   }
 
   void initRefs() {
     cutlass::reference::host::TensorFill(ref_xw12.host_view());
     cutlass::reference::host::TensorFill(ref_xw1.host_view());
-      
+
     ref_xw12.sync_device();
     ref_xw1.sync_device();
+    if (model == "llama") {
+      cutlass::reference::host::TensorFill(ref_xv.host_view());
+      ref_xv.sync_device(); 
+    }
   }
+
+  bool isGPT3() {return model == "gpt-3";}
+  bool isLLaMa() {return model == "llama";}
 };
 
 /** Reference MLP for correctness check **/
 cudaError_t referenceMLP(MLPParameters& mlpParams) {
   ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size1.m(), 
-                                               mlpParams.gemm_size1.n(), 
-                                               mlpParams.gemm_size1.k(),
-                                               mlpParams.x.device_data(), 
-                                               mlpParams.w1.device_data(), 
-                                               mlpParams.ref_xw1.host_data());
+                                                mlpParams.gemm_size1.n(), 
+                                                mlpParams.gemm_size1.k(),
+                                                mlpParams.x.device_data(), 
+                                                mlpParams.w1.device_data(), 
+                                                mlpParams.ref_xw1.host_data());
   CUDA_CHECK(cudaMemcpy(mlpParams.ref_xw1.device_data(), mlpParams.ref_xw1.host_data(), 
              sizeof(ElementOutput) * mlpParams.ref_xw1.size(), cudaMemcpyHostToDevice));
-  ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size2.m(),
-                                               mlpParams.gemm_size2.n(),
-                                               mlpParams.gemm_size2.k(), 
-                                               mlpParams.ref_xw1.device_data(),
-                                               mlpParams.w2.device_data(), 
-                                               mlpParams.ref_xw12.host_data());
+  
+  if (mlpParams.isLLaMa()) {
+    ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size1.m(), 
+                                                  mlpParams.gemm_size1.n(), 
+                                                  mlpParams.gemm_size1.k(),
+                                                  mlpParams.x.device_data(), 
+                                                  mlpParams.v.device_data(), 
+                                                  mlpParams.ref_xv.host_data());
+    //Compute XW1 (dot) XV
+    for (int b = 0; b < mlpParams.gemm_size1.m(); b++) {
+      for (int n = 0; n < mlpParams.gemm_size1.n(); n++) {
+        uint index = b * mlpParams.gemm_size1.n() + n;
+        mlpParams.ref_xv.host_data()[index] = mlpParams.ref_xw1.host_data()[index] * 
+                                              mlpParams.ref_xv.host_data()[index];
+      }
+    }
+
+    mlpParams.ref_xv.sync_device();
+
+    ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size2.m(),
+                                                  mlpParams.gemm_size2.n(),
+                                                  mlpParams.gemm_size2.k(), 
+                                                  mlpParams.ref_xv.device_data(),
+                                                  mlpParams.w2.device_data(), 
+                                                  mlpParams.ref_xw12.host_data());
+  } else {
+    ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size2.m(),
+                                                  mlpParams.gemm_size2.n(),
+                                                  mlpParams.gemm_size2.k(), 
+                                                  mlpParams.ref_xw1.device_data(),
+                                                  mlpParams.w2.device_data(), 
+                                                  mlpParams.ref_xw12.host_data());
+  }
+
   return cudaSuccess;
 }
 
@@ -248,6 +325,7 @@ cudaError_t checkMLPResults(MLPParameters& mlpParams) {
   CUDA_CHECK(cudaMemcpy(hostE, mlpParams.xw12.device_data(), 
                         mlpParams.xw12.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
+  //For LLaMa not checking XV
   printf("Checking second GeMM\n");
   eq = equals(mlpParams.ref_xw12.size(), mlpParams.ref_xw12.host_data(), hostE, 1e-1f);
   if (eq == false) {
@@ -260,13 +338,13 @@ cudaError_t checkMLPResults(MLPParameters& mlpParams) {
   return cudaSuccess;
 }
 
-/*Baseline MLP*/
+/*GPT3 Baseline MLP*/
 template<typename GemmTy1, typename GemmTy2>
-cudaError_t runBaseline(int split_k1, int split_k2, 
-                        MLPParameters& mlpParams,
-                        cudaStream_t stream,
-                        double& execTime, double& matmul1Time, double& softmaxTime, double& matmul2Time,
-                        int iters = 100) {
+cudaError_t runBaselineGPT3(int split_k1, int split_k2, 
+                            MLPParameters& mlpParams,
+                            cudaStream_t stream,
+                            double& execTime, double& matmul1Time, double& softmaxTime, double& matmul2Time,
+                            int iters = 100) {
   //Setup first GeMM
   typename GemmTy1::Arguments args1 {
     mlpParams.gemm_size1,
@@ -329,7 +407,7 @@ cudaError_t runBaseline(int split_k1, int split_k2,
   return cudaSuccess;
 }
 
-cudaError_t runBaseline(int split_k1, int split_k2, 
+cudaError_t runBaselineGPT3(int split_k1, int split_k2, 
                         MLPParameters& mlpParams,
                         cudaStream_t stream,
                         double& execTime,
@@ -343,17 +421,141 @@ cudaError_t runBaseline(int split_k1, int split_k2,
   softmaxTime = 0;
   matmul2Time = 0;
   if (split_k1 == 1 && split_k2 == 1) {
-    result = runBaseline<Gemm1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaselineGPT3<Gemm1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   } else if (split_k1 > 1 && split_k2 == 1) {
-    result = runBaseline<GemmSplitK1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaselineGPT3<GemmSplitK1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   } else if (split_k1 == 1 && split_k2 > 1) {
-    result = runBaseline<Gemm1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaselineGPT3<Gemm1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   } else {
-    result = runBaseline<GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+    result = runBaselineGPT3<GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   }
 
   return result;
 }
+
+/*LLaMA Baseline MLP*/
+template<typename GemmTy1, typename GemmTy2>
+cudaError_t runBaselineLLaMA(int split_k1, int split_k2, 
+                             MLPParameters& mlpParams,
+                             cudaStream_t stream,
+                             double& execTime, double& matmul1Time, 
+                             double& matmul2Time, double& matmul3Time,
+                             int iters = 100) {
+  //Setup XW1 GeMM
+  typename GemmTy1::Arguments argsXW1{
+    mlpParams.gemm_size1,
+    mlpParams.x.device_ref(), 
+    mlpParams.w1.device_ref(),
+    mlpParams.xw1.device_ref(),
+    mlpParams.xw1.device_ref(),
+    {mlpParams.alpha, mlpParams.beta},
+    split_k1};
+
+  size_t workspace_size = GemmTy1::get_workspace_size(argsXW1);
+  cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
+  GemmTy1 gemm_opXW1;
+  cutlass::Status status = gemm_opXW1.can_implement(argsXW1);
+  CUTLASS_CHECK(status);
+  status = gemm_opXW1.initialize(argsXW1, workspace1.get());
+  CUTLASS_CHECK(status);
+
+  //Setup XV GeMM
+  typename GemmTy1::Arguments argsXV{
+    mlpParams.gemm_size1,
+    mlpParams.x.device_ref(), 
+    mlpParams.w1.device_ref(),
+    mlpParams.xw1.device_ref(),
+    mlpParams.xw1.device_ref(),
+    {mlpParams.alpha, mlpParams.beta},
+    split_k1};
+
+  workspace_size = GemmTy1::get_workspace_size(argsXV);
+  workspace1 = cutlass::device_memory::allocation<uint8_t>(workspace_size);
+  GemmTy1 gemm_opXV;
+  status = gemm_opXV.can_implement(argsXV);
+  CUTLASS_CHECK(status);
+  status = gemm_opXV.initialize(argsXV, workspace1.get());
+  CUTLASS_CHECK(status);
+
+  //Setup XW12 GeMM
+  typename GemmTy2::Arguments argsXW12{
+    mlpParams.gemm_size2, 
+    mlpParams.xw1.device_ref(), 
+    mlpParams.w2.device_ref(), 
+    mlpParams.xw12.device_ref(), 
+    mlpParams.xw12.device_ref(), 
+    {mlpParams.alpha, mlpParams.beta},         
+    split_k2};
+  
+  GemmTy2 gemm_opXW12;
+  workspace_size = GemmTy2::get_workspace_size(argsXW12);
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+  status = gemm_opXW12.can_implement(argsXW12);
+  CUTLASS_CHECK(status);
+  status = gemm_opXW12.initialize(argsXW12, workspace2.get());
+  CUTLASS_CHECK(status);
+  
+  execTime = 0;
+  
+  //Run kernels
+  for (int r = 0; r < iters; r++) {    
+    double start = timeInMicroSeconds();
+    status = gemm_opXW1(argsXW1, workspace1.get(), stream);
+    CUTLASS_CHECK(status);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    double middle1 = timeInMicroSeconds();
+    double iterMatMul1 = middle1-start;
+    matmul1Time += iterMatMul1;
+
+    status = gemm_opXV(argsXV, workspace1.get(), stream);
+    CUTLASS_CHECK(status);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    double middle2 = timeInMicroSeconds();
+    double iterMatMul2 = middle2-middle1;
+    matmul2Time += iterMatMul2;
+
+    status = gemm_opXW12(argsXW12, workspace2.get(), stream);
+    CUTLASS_CHECK(status);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    double middle3 = timeInMicroSeconds();
+    double iterMatmul3 = middle3-middle2;
+    matmul3Time += iterMatmul3;
+    double end = timeInMicroSeconds();
+    if (iters > 10)
+      printf("{\"Total\": %lf, \"matmul1Time\": %lf, \"matmul2Time\": %lf, \"matmul3Time\": %lf}\n",end-start, iterMatMul1, iterMatMul2, iterMatmul3);
+    execTime += end-start;
+  }
+
+  return cudaSuccess;
+}
+
+cudaError_t runBaselineLLaMA(int split_k1, int split_k2, 
+                        MLPParameters& mlpParams,
+                        cudaStream_t stream,
+                        double& execTime,
+                        double& matmul1Time,
+                        double& matmul2Time,
+                        double& matmul3Time,
+                        int iters = 100) {
+  cudaError_t result;
+  execTime = 0;
+  matmul1Time = 0;
+  matmul2Time = 0;
+  matmul3Time = 0;
+  if (split_k1 == 1 && split_k2 == 1) {
+    result = runBaselineLLaMA<Gemm1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+  } else if (split_k1 > 1 && split_k2 == 1) {
+    result = runBaselineLLaMA<GemmSplitK1, Gemm2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+  } else if (split_k1 == 1 && split_k2 > 1) {
+    result = runBaselineLLaMA<Gemm1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+  } else {
+    result = runBaselineLLaMA<GemmSplitK1, GemmSplitK2>(split_k1, split_k2, mlpParams, stream, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+  }
+
+  return result;
+}
+
+
 
 /*CuSync GeMMs in MLP*/
 template<typename GemmTy1, typename GemmTy2>
@@ -516,25 +718,13 @@ int run(int argc, char* argv[]) {
   }
     
   std::cout << "model=" << model << " batch=" << batch << "check="<<doChecking <<std::endl;
-  int problem[4] = {0,0,0,0};
-  problem[0] = batch;
-  
-  if (model=="gpt-3") {
-    problem[1] = 12288*4/8;
-    problem[2] = 12288;
-    problem[3] = 12288;
-  } else if (model=="llama") {
-    problem[1] = ((8192/3 + 128 - 1)/128)*128;
-    problem[2] = 8192;
-    problem[3] = 8192;
-  }
 
   cudaStream_t producer_stream;
   cudaStream_t consumer_stream;
   CUDA_CHECK(cudaStreamCreate(&producer_stream));
   CUDA_CHECK(cudaStreamCreate(&consumer_stream));
 
-  MLPParameters mlpParams(problem, doChecking);
+  MLPParameters mlpParams(model, batch, doChecking);
   mlpParams.initIns();
   mlpParams.initOuts();
   mlpParams.initRefs();
@@ -557,8 +747,31 @@ int run(int argc, char* argv[]) {
   double softmaxTime = 0;
   double matmul2Time = 0;
 
-  if (true) {
-    result = runBaseline(split_k1, split_k2, mlpParams, producer_stream, 
+  if (mlpParams.isGPT3()) {
+    result = runBaselineGPT3(split_k1, split_k2, mlpParams, producer_stream, 
+                             baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    if (doChecking) {
+      result = checkMLPResults(mlpParams);
+      if (result != cudaSuccess) {
+        return 1;
+      }
+    }
+
+    result = runBaselineGPT3(split_k1, split_k2, mlpParams, producer_stream, 
+                             baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+    printf("START-BASELINE:\n");
+    result = runBaselineGPT3(split_k1, split_k2, mlpParams, producer_stream, 
+                         baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
+    CUDA_CHECK(result);
+    printf("END-BASELINE:\n");
+    printf("Average time %lf microseconds\n", baselineTime/(float)epochs);
+  } else if (mlpParams.isLLaMa()) {
+    result = runBaselineLLaMA(split_k1, split_k2, mlpParams, producer_stream, 
                          baselineTime, matmul1Time, softmaxTime, matmul2Time, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -570,12 +783,12 @@ int run(int argc, char* argv[]) {
       }
     }
 
-    result = runBaseline(split_k1, split_k2, mlpParams, producer_stream, 
+    result = runBaselineLLaMA(split_k1, split_k2, mlpParams, producer_stream, 
                          baselineTime, matmul1Time, softmaxTime, matmul2Time, warmup);
 
     CUDA_CHECK(cudaDeviceSynchronize());
     printf("START-BASELINE:\n");
-    result = runBaseline(split_k1, split_k2, mlpParams, producer_stream, 
+    result = runBaselineLLaMA(split_k1, split_k2, mlpParams, producer_stream, 
                          baselineTime, matmul1Time, softmaxTime, matmul2Time, epochs);
     CUDA_CHECK(result);
     printf("END-BASELINE:\n");

@@ -303,7 +303,7 @@ else:
   print ("No Hidden dim for ", model)
   sys.exit(0)
 
-for m in [1,2,4,8,16,32,64,128,256,512,1024,2048]:
+for m in [256,512,1024,2048]: #1,2,4,8,16,32,64,128,
   if attention_or_mlp == "attention":
     (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
   else:

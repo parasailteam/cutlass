@@ -58,8 +58,8 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
@@ -933,7 +933,10 @@ int run(int argc, char* argv[]) {
   Sync sync;
 #elif defined(TILESYNC)
   using Sync = TileSync<1>;
-  Sync sync;
+  uint waitValue = 1;
+  if (mlpParams.isLLaMa())
+    waitValue = 2;
+  Sync sync(waitValue, 1);
 #elif defined(BATCHEDROW)
   using Sync = BatchedRowSync;
   BatchedRowSync sync(gridDim1.y, 1);
@@ -980,7 +983,6 @@ int run(int argc, char* argv[]) {
     
     printf("Average time %lf microseconds\n", overlapTime/(float)epochs);
   } else if (mlpParams.isLLaMa()) {
-    if (split_k2 > 1) split_k2 = 1;
     result = runCuSyncLLaMA(split_k1, split_k2, mlpParams, cuSyncHandle, producer_stream, producer_stream2, consumer_stream, overlapTime, 1);
 
     CUDA_CHECK(cudaDeviceSynchronize());

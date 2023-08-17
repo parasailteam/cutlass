@@ -475,7 +475,6 @@ public:
 
     dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
     dim3 block(GemmKernel::kThreadCount, 1, 1);
-    
     cudaError_t result;
 
     int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
@@ -489,11 +488,11 @@ public:
         return Status::kErrorInternal;
       }
     }
-
+    
     cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
 
     result = cudaGetLastError();
-
+    
     return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
   }
 

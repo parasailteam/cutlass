@@ -58,8 +58,8 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 256, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
@@ -458,23 +458,22 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
   CUTLASS_CHECK(status);
   status = gemm_opXW1.initialize(argsXW1, workspace1.get());
   CUTLASS_CHECK(status);
-
+  
   //Setup XV GeMM
   typename GemmTy1::Arguments argsXV{
     mlpParams.gemm_size1,
     mlpParams.x.device_ref(), 
-    mlpParams.w1.device_ref(),
-    mlpParams.xw1.device_ref(),
-    mlpParams.xw1.device_ref(),
+    mlpParams.v.device_ref(),
+    mlpParams.xv.device_ref(),
+    mlpParams.xv.device_ref(),
     {mlpParams.alpha, mlpParams.beta},
     split_k1};
-
   workspace_size = GemmTy1::get_workspace_size(argsXV);
-  workspace1 = cutlass::device_memory::allocation<uint8_t>(workspace_size);
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
   GemmTy1 gemm_opXV;
   status = gemm_opXV.can_implement(argsXV);
   CUTLASS_CHECK(status);
-  status = gemm_opXV.initialize(argsXV, workspace1.get());
+  status = gemm_opXV.initialize(argsXV, workspace2.get());
   CUTLASS_CHECK(status);
 
   //Setup XW12 GeMM
@@ -489,32 +488,32 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
   
   GemmTy2 gemm_opXW12;
   workspace_size = GemmTy2::get_workspace_size(argsXW12);
-  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+  cutlass::device_memory::allocation<uint8_t> workspace3(workspace_size);
   status = gemm_opXW12.can_implement(argsXW12);
   CUTLASS_CHECK(status);
-  status = gemm_opXW12.initialize(argsXW12, workspace2.get());
+  status = gemm_opXW12.initialize(argsXW12, workspace3.get());
   CUTLASS_CHECK(status);
   
-  execTime = 0;
-  
+  execTime = 0; 
+
   //Run kernels
   for (int r = 0; r < iters; r++) {    
     double start = timeInMicroSeconds();
-    status = gemm_opXW1(argsXW1, workspace1.get(), stream);
+    status = gemm_opXW1(stream);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaStreamSynchronize(stream));
     double middle1 = timeInMicroSeconds();
     double iterMatMul1 = middle1-start;
     matmul1Time += iterMatMul1;
 
-    status = gemm_opXV(argsXV, workspace1.get(), stream);
+    status = gemm_opXV(stream);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaStreamSynchronize(stream));
     double middle2 = timeInMicroSeconds();
     double iterMatMul2 = middle2-middle1;
     matmul2Time += iterMatMul2;
 
-    status = gemm_opXW12(argsXW12, workspace2.get(), stream);
+    status = gemm_opXW12(stream);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle3 = timeInMicroSeconds();
@@ -675,17 +674,17 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
   typename GemmTy1::Arguments argsXV{handle.prod(),
     mlpParams.gemm_size1,
     mlpParams.x.device_ref(),
-    mlpParams.w1.device_ref(),
-    mlpParams.xw1.device_ref(),
-    mlpParams.xw1.device_ref(),
+    mlpParams.v.device_ref(),
+    mlpParams.xv.device_ref(),
+    mlpParams.xv.device_ref(),
     {mlpParams.alpha, mlpParams.beta},         
     split_k1};
   GemmTy1 gemm_opXV;
   workspace_size = GemmTy1::get_workspace_size(argsXV);
-  workspace1 = cutlass::device_memory::allocation<uint8_t>(workspace_size);
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
   status = gemm_opXV.can_implement(argsXV);
   CUTLASS_CHECK(status);
-  status = gemm_opXV.initialize(argsXV, workspace1.get());
+  status = gemm_opXV.initialize(argsXV, workspace2.get());
   CUTLASS_CHECK(status);
 
   typename GemmTy2::Arguments argsXW12{handle.cons(),
@@ -699,10 +698,10 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
 
   GemmTy2 gemm_opXW12;
   workspace_size = GemmTy2::get_workspace_size(argsXW12);
-  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+  cutlass::device_memory::allocation<uint8_t> workspace3(workspace_size);
   status = gemm_opXW12.can_implement(argsXW12);
   CUTLASS_CHECK(status);
-  status = gemm_opXW12.initialize(argsXW12, workspace2.get());
+  status = gemm_opXW12.initialize(argsXW12, workspace3.get());
   CUTLASS_CHECK(status);
 
   execTime = 0;
@@ -829,7 +828,7 @@ int run(int argc, char* argv[]) {
     return 0;
   }
     
-  std::cout << "model=" << model << " batch=" << batch << "check="<<doChecking <<std::endl;
+  std::cout << "model=" << model << " batch=" << batch << " check="<<doChecking <<std::endl;
 
   cudaStream_t producer_stream;
   cudaStream_t producer_stream2;

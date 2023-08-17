@@ -108,7 +108,7 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
     print(o)
     sys.exit(0)
 
-if attention_or_mlp == "attention":
+if model == "gpt3" and attention_or_mlp == "attention":
   tiles_GPT3 = {
     2048: {
       "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
@@ -197,7 +197,7 @@ if attention_or_mlp == "attention":
     }
   }
 
-elif attention_or_mlp == "mlp":
+elif model == "gpt3" and attention_or_mlp == "mlp":
     # Dictionary of tile sizes for each M
   tiles_GPT3 = {
     2048: {
@@ -287,7 +287,96 @@ elif attention_or_mlp == "mlp":
       "ReorderTileLoads": True
     },
   }
-
+elif model == "llama" and attention_or_mlp == "mlp":
+    # Dictionary of tile sizes for each M
+  tiles_LLaMA = {
+    2048: {
+      "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [2,1]},
+      "cusync": {"split_ks": [2,1]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
+    1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [4,1]},
+      "cusync": {"split_ks": [4,1]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
+    512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [4,1]},
+      "cusync": {"split_ks": [4,1]},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
+    256: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [8,1]},
+      "cusync": {"split_ks": [4,1]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,
+    },
+    128: {"TileSizes" : [128, 256, 32, 64, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [3,3]},
+      "cusync": {"split_ks": [3,3]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,
+    },
+    64: {"TileSizes" : [64, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True
+    },
+    32: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
+      "TileBatchSync":2,
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True
+    },
+    16: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True
+    },
+    8: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True
+    },
+    4: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True
+    },
+    2: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True
+    },
+    1: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [6,3]},
+      "cusync": {"split_ks": [6,3]},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True
+    },
+  }
   
 
 if model.lower() == "BLOOM".lower():

@@ -717,8 +717,9 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
     double start = timeInMicroSeconds();
     status = gemm_opXW1.run(true, NULL, producer_stream);
     CUTLASS_CHECK(status);
+    // CUDA_CHECK(cudaStreamSynchronize(producer_stream));
 
-    status = gemm_opXV.run(true, NULL, producer_stream2);
+    status = gemm_opXV.run(true, NULL, producer_stream);
     CUTLASS_CHECK(status);
 
     // CUDA_CHECK(cudaDeviceSynchronize());

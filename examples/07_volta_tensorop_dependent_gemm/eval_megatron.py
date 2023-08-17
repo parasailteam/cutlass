@@ -109,7 +109,7 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
     sys.exit(0)
 
 if model == "gpt3" and attention_or_mlp == "attention":
-  tiles_GPT3 = {
+  tiles = {
     2048: {
       "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
       "baseline": {"split_ks": [1,1], "SoftmaxRowTile" : 1},
@@ -199,7 +199,7 @@ if model == "gpt3" and attention_or_mlp == "attention":
 
 elif model == "gpt3" and attention_or_mlp == "mlp":
     # Dictionary of tile sizes for each M
-  tiles_GPT3 = {
+  tiles = {
     2048: {
       "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
       "baseline": {"split_ks": [1,1]},
@@ -289,7 +289,7 @@ elif model == "gpt3" and attention_or_mlp == "mlp":
   }
 elif model == "llama" and attention_or_mlp == "mlp":
     # Dictionary of tile sizes for each M
-  tiles_LLaMA = {
+  tiles = {
     2048: {
       "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
       "baseline": {"split_ks": [2,1]},
@@ -320,58 +320,58 @@ elif model == "llama" and attention_or_mlp == "mlp":
       "ReorderTileLoads": True,
     },
     128: {"TileSizes" : [128, 256, 32, 64, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [3,3]},
-      "cusync": {"split_ks": [3,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True,
     },
     64: {"TileSizes" : [64, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [6,3]},
-      "cusync": {"split_ks": [6,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     32: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [6,3]},
-      "cusync": {"split_ks": [6,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "TileBatchSync":2,
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     16: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [6,3]},
-      "cusync": {"split_ks": [6,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     8: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [6,3]},
-      "cusync": {"split_ks": [6,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     4: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [6,3]},
-      "cusync": {"split_ks": [6,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     2: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [6,3]},
-      "cusync": {"split_ks": [6,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     1: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [6,3]},
-      "cusync": {"split_ks": [6,3]},
+      "baseline": {"split_ks": [8,2]},
+      "cusync": {"split_ks": [4,1]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
@@ -387,16 +387,16 @@ elif model.lower() == "GPT-3".lower():
   FFN = 4*H/8
 elif model.lower() == "llama".lower():
   H = 8192
-  FFN = 2728#int(2/3 * 4 * H/8)
+  FFN = int(((8192/3+127)//128)*128)#int(2/3 * 4 * H/8)
 else:
   print ("No Hidden dim for ", model)
   sys.exit(0)
 
-for m in [256,512,1024,2048]: #1,2,4,8,16,32,64,128,
+for m in [128,256,512,1024,2048]:
   if attention_or_mlp == "attention":
     (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
   else:
-    (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchmlp.py {m} {int(FFN)} {H} {H}")
+    (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchmlp.py {m} {int(FFN)} {H} {H} {model}")
   
   if s == -1:
     print("error " + o)
@@ -404,32 +404,61 @@ for m in [256,512,1024,2048]: #1,2,4,8,16,32,64,128,
     ctime = o
     cublasTimes[m] = ctime
 
-  genAndMakeStreamK(tiles_GPT3[m])
-  streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
-  (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles_GPT3[m]['baseline']['split_ks'][0]}")
-  if s != 0:
-    print("StreamK Error")
-    print(o)
+  print(f'{m} & {H} & {"pytorch"} & {"%.2f"%float(ctime)}')
 
-  firstGeMMStreamK = getStreamKTimes(o)
+  genAndMakeStreamK(tiles[m])
+  if model == 'gpt-3':
+    streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
+    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
+    if s != 0:
+      print("StreamK Error")
+      print(o)
 
-  (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles_GPT3[m]['baseline']['split_ks'][1]}")
-  if s != 0:
-    print("StreamK Error")
-    print(o)
+    firstGeMMStreamK = getStreamKTimes(o)
 
-  secondGeMMStreamK = getStreamKTimes(o)
+    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles[m]['baseline']['split_ks'][1]}")
+    if s != 0:
+      print("StreamK Error")
+      print(o)
+
+    secondGeMMStreamK = getStreamKTimes(o)
+    total = firstGeMMStreamK + secondGeMMStreamK
+    print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
+  elif model == 'llama' and attention_or_mlp == 'mlp':
+    streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
+    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
+    if s != 0:
+      print("StreamK Error")
+      print(o)
+
+    firstGeMMStreamK = getStreamKTimes(o)
+
+    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
+    if s != 0:
+      print("StreamK Error")
+      print(o)
+
+    secondGeMMStreamK = getStreamKTimes(o)
+
+    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles[m]['baseline']['split_ks'][1]}")
+    if s != 0:
+      print("StreamK Error")
+      print(o)
+
+    thirdGeMMStreamK = getStreamKTimes(o)
+    total = firstGeMMStreamK + secondGeMMStreamK + thirdGeMMStreamK
+    print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(thirdGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
 
   for syncPolicy in ['rowsync', 'stridedsync','tilesync']:
     if attention_or_mlp == 'mlp' and syncPolicy == 'stridedsync':
       continue
-    genFilesAndMake(tiles_GPT3[m], syncPolicy, attention_or_mlp, 'baseline')
+    genFilesAndMake(tiles[m], syncPolicy, attention_or_mlp, 'baseline')
 
     if attention_or_mlp == "mlp":
       command = f"./mlp-eval --batch {m} --check false --model {model.lower()}"
     else:
       command = f"./attention-eval --batch {m} --check false --model {model.lower()}"
-    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['baseline']['split_ks'][0]}" + f" --split-k2 {tiles_GPT3[m]['baseline']['split_ks'][1]}")
+    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles[m]['baseline']['split_ks'][0]}" + f" --split-k2 {tiles[m]['baseline']['split_ks'][1]}")
     # print(o)
     if "Invalid" in o:
       pass
@@ -441,8 +470,8 @@ for m in [256,512,1024,2048]: #1,2,4,8,16,32,64,128,
       bTimeTotal = baselinetimes["Total"]
       bTimeMatmul1 = baselinetimes["matmul1Time"]
       bTimeMatmul2 = baselinetimes["matmul2Time"]
-    genFilesAndMake(tiles_GPT3[m], syncPolicy, attention_or_mlp, 'cusync')
-    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles_GPT3[m]['cusync']['split_ks'][0]}" + f" --split-k2 {tiles_GPT3[m]['cusync']['split_ks'][1]}")
+    genFilesAndMake(tiles[m], syncPolicy, attention_or_mlp, 'cusync')
+    (s, o) = subprocess.getstatusoutput(command + f" --split-k1 {tiles[m]['cusync']['split_ks'][0]}" + f" --split-k2 {tiles[m]['cusync']['split_ks'][1]}")
   
     otime = -1
     if "Invalid" in o:
@@ -453,7 +482,7 @@ for m in [256,512,1024,2048]: #1,2,4,8,16,32,64,128,
       overlaptimes  = getAllTimes(o, 'START-OVERLAPPED', 'END-OVERLAPPED')
       otime = overlaptimes["Total"]
 
-    print(f'{m} & {H} & {syncPolicy} & {"%.2f"%float(ctime)} & {"%.2f"%avg(bTimeTotal)} & {"%.2f"%stdev(bTimeTotal)} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%avg(bTimeMatmul1)} & {"%.2f"%avg(bTimeMatmul2)} & {"%.2f"%avg(otime)} & {"%.2f"%stdev(otime)} & {"%.2f"%(100 - avg(otime)/avg(bTimeTotal)*100)}')
+    print(f'{m} & {H} & {syncPolicy} & {"%.2f"%avg(bTimeTotal)} & {"%.2f"%stdev(bTimeTotal)} & {"%.2f"%avg(bTimeMatmul1)} & {"%.2f"%avg(bTimeMatmul2)} & {"%.2f"%avg(otime)} & {"%.2f"%stdev(otime)} & {"%.2f"%(100 - avg(otime)/avg(bTimeTotal)*100)}')
       # btime = re.findall(r'START-BASELINE: ([\.\d]+)', o)
       # baselineTimes[m] = btime[0]
       # otime = re.findall(r'START-OVERLAPPED elapsedtime ([\.\d]+)', o)

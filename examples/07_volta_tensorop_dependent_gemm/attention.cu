@@ -64,8 +64,8 @@ struct StridedSync {
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
 const int SoftmaxRowTile = 4;
 #else
 //<eval tiles>

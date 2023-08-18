@@ -140,8 +140,8 @@ if model == "gpt3" and attention_or_mlp == "attention":
       "ReorderTileLoads": False
     },
     128: {"TileSizes" : [128, 128, 32, 64, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
-      "baseline": {"split_ks": [4,3], "SoftmaxRowTile" : 1},
-      "cusync":   {"split_ks": [4,3], "SoftmaxRowTile" : 4},
+      "baseline": {"split_ks": [6,1], "SoftmaxRowTile" : 1},
+      "cusync":   {"split_ks": [6,1], "SoftmaxRowTile" : 4},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
@@ -378,6 +378,94 @@ elif model == "llama" and attention_or_mlp == "mlp":
     },
   }
   
+elif model == "llama" and attention_or_mlp == "attention":
+  tiles = {
+    2048: {
+      "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [4,1], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [2,1], "SoftmaxRowTile" : 4},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
+    1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [8,1], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [2,1], "SoftmaxRowTile" : 2},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
+    512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
+      "baseline": {"split_ks": [4,1], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [2,1], "SoftmaxRowTile" : 1},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
+    256: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
+      "baseline": {"split_ks": [8,1], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [4,1], "SoftmaxRowTile" : 4},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False
+    },
+    128: {"TileSizes" : [128, 128, 32, 64, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Tile-Sync",
+      "baseline": {"split_ks": [6,1], "SoftmaxRowTile" : 1},
+      "cusync":   {"split_ks": [6,1], "SoftmaxRowTile" : 4},
+      "AvoidCustomOrder": False,
+      "AvoidWaitKernel": False,
+      "ReorderTileLoads": False,
+    },
+    64: {"TileSizes" : [64, 256, 32, 32, 128, 32], "MaxTBsPerSM": 3, "Best-Policy": "Tile-Sync",
+      "baseline": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [6,2], "SoftmaxRowTile" : 1},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,
+    },
+    32: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 3,
+      "baseline": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,
+    },
+    16: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 3,
+      "baseline": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,
+    },
+    8: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 3,
+      "baseline": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [8,2], "SoftmaxRowTile" : 4},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,
+    },
+    4: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 3,
+      "baseline": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [8,2], "SoftmaxRowTile" : 4},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,  
+    },
+    2: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 3,
+      "baseline": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [8,2], "SoftmaxRowTile" : 2},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,
+    },
+    1: {"TileSizes" : [32, 256, 32, 32, 128, 32], "MaxTBsPerSM": 3,
+      "baseline": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "cusync": {"split_ks": [8,2], "SoftmaxRowTile" : 1},
+      "AvoidCustomOrder": True,
+      "AvoidWaitKernel": True,
+      "ReorderTileLoads": True,  
+    }
+  }
 
 if model.lower() == "BLOOM".lower():
   H = 14336
@@ -392,8 +480,8 @@ else:
   print ("No Hidden dim for ", model)
   sys.exit(0)
 
-for m in [1,2,4,8,16,32,64,128,256,512,1024,2048]:
-  if False:
+for m in [1,2,4,8,16,32,64,128]: #[256,512,1024,2048]: #1,2,4,8,16,32,64,128,
+  if True:
     if attention_or_mlp == "attention":
       (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
     else:
@@ -450,7 +538,7 @@ for m in [1,2,4,8,16,32,64,128,256,512,1024,2048]:
       total = firstGeMMStreamK + secondGeMMStreamK + thirdGeMMStreamK
       print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(thirdGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
 
-  for syncPolicy in ['rowsync', 'stridedsync','tilesync']:
+  for syncPolicy in ['rowsync']:
     if attention_or_mlp == 'mlp' and syncPolicy == 'stridedsync':
       continue
     genFilesAndMake(tiles[m], syncPolicy, attention_or_mlp, 'baseline')

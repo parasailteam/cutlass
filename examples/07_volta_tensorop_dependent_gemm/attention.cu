@@ -55,7 +55,7 @@ struct StridedSync {
     return tile.x * grid.y + tile.y;
   }
 
-  __device__ bool isSync(const dim3& tile) {
+  __device__ bool isSync(const dim3& tile, const dim3& grid) {
     return tile.y < H/8;
   }
 };
@@ -64,9 +64,9 @@ struct StridedSync {
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
 using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
-const int SoftmaxRowTile = 1;
+const int SoftmaxRowTile = 4;
 #else
 //<eval tiles>
 const int SoftmaxRowTile = 1;
@@ -743,8 +743,7 @@ int run(int argc, char* argv[]) {
     problem[2] = 12288;
     problem[3] = 12288;
   } else if (model=="llama") {
-    printf("TODO\n"); abort();
-    problem[1] = ((8192/3 + 128 - 1)/128)*128;
+    problem[1] = 8192/8;
     problem[2] = 8192;
     problem[3] = 8192;
   }

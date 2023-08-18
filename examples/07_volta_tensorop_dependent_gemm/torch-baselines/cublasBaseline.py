@@ -5,12 +5,11 @@ import time
 M = int(sys.argv[1])
 N = int(sys.argv[2])
 K = int(sys.argv[3])
-L = int(sys.argv[4])
 
 a = torch.ones((M, K), dtype=torch.half).cuda()
 b = torch.ones((K, N), dtype=torch.half).cuda()
 #c = torch.ones((M, N), dtype=torch.half).cuda()
-d = torch.ones((N, L), dtype=torch.half).cuda()
+# d = torch.ones((N, L), dtype=torch.half).cuda()
 #e = torch.ones([M, L], dtype=torch.half).cuda()
 
 c = a@b

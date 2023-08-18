@@ -85,7 +85,7 @@ void KernelOverlapProducer(typename Operator::Params params) {
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, true);
+  op.run_overlap_gemm(params, *shared_storage);
 }
 
 template <typename Operator>
@@ -99,7 +99,7 @@ void KernelOverlapConsumer(typename Operator::Params params) {
       reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
 
   Operator op;
-  op.run_overlap_gemm(params, *shared_storage, false);
+  op.run_overlap_gemm(params, *shared_storage);
 }
 
 /// Generic CUTLASS kernel template.

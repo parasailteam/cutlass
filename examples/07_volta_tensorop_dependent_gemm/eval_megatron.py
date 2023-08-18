@@ -292,22 +292,22 @@ elif model == "llama" and attention_or_mlp == "mlp":
   tiles = {
     2048: {
       "TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [2,1]},
-      "cusync": {"split_ks": [2,1]},
+      "baseline": {"split_ks": [2,2]},
+      "cusync": {"split_ks": [2,2]},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
     },
     1024: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [4,1]},
-      "cusync": {"split_ks": [4,1]},
+      "baseline": {"split_ks": [4,2]},
+      "cusync": {"split_ks": [4,2]},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
     },
     512: {"TileSizes" : [256, 128, 32, 128, 64, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
-      "baseline": {"split_ks": [4,1]},
-      "cusync": {"split_ks": [4,1]},
+      "baseline": {"split_ks": [4,2]},
+      "cusync": {"split_ks": [4,2]},
       "AvoidCustomOrder": False,
       "AvoidWaitKernel": False,
       "ReorderTileLoads": False,
@@ -328,14 +328,14 @@ elif model == "llama" and attention_or_mlp == "mlp":
     },
     64: {"TileSizes" : [64, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
       "baseline": {"split_ks": [5,2]},
-      "cusync": {"split_ks": [5,1]},
+      "cusync": {"split_ks": [5,2]},
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
       "ReorderTileLoads": True
     },
     32: {"TileSizes" : [64, 256, 32, 32, 128, 32], "MaxTBsPerSM": 2, "Best-Policy": "Row-Sync",
       "baseline": {"split_ks": [5,2]},
-      "cusync": {"split_ks": [5,1]},
+      "cusync": {"split_ks": [5,2]},
       "TileBatchSync":2,
       "AvoidCustomOrder": True,
       "AvoidWaitKernel": True,
@@ -393,61 +393,62 @@ else:
   sys.exit(0)
 
 for m in [1,2,4,8,16,32,64,128,256,512,1024,2048]:
-  if attention_or_mlp == "attention":
-    (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
-  else:
-    (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchmlp.py {m} {int(FFN)} {H} {H} {model}")
-  
-  if s == -1:
-    print("error " + o)
-  else:
-    ctime = o
-    cublasTimes[m] = ctime
+  if False:
+    if attention_or_mlp == "attention":
+      (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
+    else:
+      (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchmlp.py {m} {int(FFN)} {H} {H} {model}")
+    
+    if s == -1:
+      print("error " + o)
+    else:
+      ctime = o
+      cublasTimes[m] = ctime
 
-  print(f'{m} & {H} & {"pytorch"} & {"%.2f"%float(ctime)}')
+    print(f'{m} & {H} & {"pytorch"} & {"%.2f"%float(ctime)}')
 
-  genAndMakeStreamK(tiles[m])
-  if model == 'gpt-3':
-    streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
-    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
-    if s != 0:
-      print("StreamK Error")
-      print(o)
+    genAndMakeStreamK(tiles[m])
+    if model == 'gpt-3':
+      streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
+      (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
+      if s != 0:
+        print("StreamK Error")
+        print(o)
 
-    firstGeMMStreamK = getStreamKTimes(o)
+      firstGeMMStreamK = getStreamKTimes(o)
 
-    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles[m]['baseline']['split_ks'][1]}")
-    if s != 0:
-      print("StreamK Error")
-      print(o)
+      (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles[m]['baseline']['split_ks'][1]}")
+      if s != 0:
+        print("StreamK Error")
+        print(o)
 
-    secondGeMMStreamK = getStreamKTimes(o)
-    total = firstGeMMStreamK + secondGeMMStreamK
-    print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
-  elif model == 'llama' and attention_or_mlp == 'mlp':
-    streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
-    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
-    if s != 0:
-      print("StreamK Error")
-      print(o)
+      secondGeMMStreamK = getStreamKTimes(o)
+      total = firstGeMMStreamK + secondGeMMStreamK
+      print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
+    elif model == 'llama' and attention_or_mlp == 'mlp':
+      streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
+      (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
+      if s != 0:
+        print("StreamK Error")
+        print(o)
 
-    firstGeMMStreamK = getStreamKTimes(o)
+      firstGeMMStreamK = getStreamKTimes(o)
 
-    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
-    if s != 0:
-      print("StreamK Error")
-      print(o)
+      (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
+      if s != 0:
+        print("StreamK Error")
+        print(o)
 
-    secondGeMMStreamK = getStreamKTimes(o)
+      secondGeMMStreamK = getStreamKTimes(o)
 
-    (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles[m]['baseline']['split_ks'][1]}")
-    if s != 0:
-      print("StreamK Error")
-      print(o)
+      (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={H} --k={int(FFN)} " + f"--split={tiles[m]['baseline']['split_ks'][1]}")
+      if s != 0:
+        print("StreamK Error")
+        print(o)
 
-    thirdGeMMStreamK = getStreamKTimes(o)
-    total = firstGeMMStreamK + secondGeMMStreamK + thirdGeMMStreamK
-    print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(thirdGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
+      thirdGeMMStreamK = getStreamKTimes(o)
+      total = firstGeMMStreamK + secondGeMMStreamK + thirdGeMMStreamK
+      print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(thirdGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
 
   for syncPolicy in ['rowsync', 'stridedsync','tilesync']:
     if attention_or_mlp == 'mlp' and syncPolicy == 'stridedsync':

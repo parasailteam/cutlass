@@ -208,7 +208,7 @@ struct CuSyncGemm {
 
   //TODO: Had to make Params non-const, does that have any perf issue?
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage, bool isProducerOrConsumer) {
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage) {
     CuStageImpl2& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
     dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
     
@@ -223,7 +223,7 @@ struct CuSyncGemm {
 
     // Compute threadblock location
     cutlass::gemm::GemmCoord threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, true);
 
     // if (isProducerOrConsumer && threadIdx.x == 0 && params.syncHandle.iter == 1) {
     //   printf("grid_tiled_shape.m() %d grid_tiled_shape.n() %d tb.m() %d tb.n() %d blockIdx.x %d blockIdx.y %d\n", params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), threadblock_tile_offset.m(), threadblock_tile_offset.n(), blockIdx.x, blockIdx.y);
@@ -302,10 +302,10 @@ struct CuSyncGemm {
 
     if (!kSplitKSerial || gemm_k_iterations > 0) {
       // Compute threadblock-scoped matrix multiply-add
-      if (isProducerOrConsumer) {//Row sync or a producer
+      if (!stage.isConsumer()) {//Row sync or a producer
         mma(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators);
-      } else if (!isProducerOrConsumer) {
-        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, isProducerOrConsumer,
+      } else {
+        mma.doWithOverlap(gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators,
                           stage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
       }
     }
@@ -321,7 +321,7 @@ struct CuSyncGemm {
     //
 
     threadblock_tile_offset =
-        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
+        threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, true);
 
     //assume identity swizzle
     MatrixCoord threadblock_offset(
@@ -393,7 +393,7 @@ struct CuSyncGemm {
       
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_offset.k() + 1) {
-        if (isProducerOrConsumer) {
+        if (stage.isProducer()) {
           dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
           stage.post(tile);
         }
@@ -408,7 +408,7 @@ struct CuSyncGemm {
       semaphore.release(lock);
     }
 
-    if (isProducerOrConsumer && (!kSplitKSerial || (kSplitKSerial && params.grid_tiled_shape.k() == 1))) {
+    if (stage.isProducer() && (!kSplitKSerial || (kSplitKSerial && params.grid_tiled_shape.k() == 1))) {
       dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
       stage.post(tile);
     }

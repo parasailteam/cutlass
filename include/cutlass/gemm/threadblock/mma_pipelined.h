@@ -438,7 +438,6 @@ public:
     FragmentC &accum,             ///< [in|out] accumulator tile
     IteratorA &iterator_A,        ///< [in|out] iterator over A operand in global memory
     IteratorB &iterator_B,        ///< [in|out] iterator over B operand in global memory
-    bool producerOrConsumer,
     CuStageImpl& custage,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
@@ -484,7 +483,7 @@ public:
       // Loop over GEMM K dimension
       //
       uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-      if (!producerOrConsumer && startK > Shape::kN && startK%Shape::kN == 0) {
+      if (custage.isConsumer() && startK > Shape::kN && startK%Shape::kN == 0) {
         dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
         #ifdef REORDER_TILE_LOADS
           custage.wait(tile, 0, false);
@@ -566,14 +565,13 @@ public:
     IteratorA &iterator_A,      ///< [in|out] iterator over A operand in global memory
     IteratorB &iterator_B,      ///< [in|out] iterator over B operand in global memory
     int &gemm_k_iterations,     ///< [in|out] number of threadblock mainloop iterations remaining
-    bool producerOrConsumer,
     CuStageImpl& custage,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
     const uint block_idx_x, const uint block_idx_y) {
     // The last kblock is loaded in the prolog
     uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-    if (!producerOrConsumer) {
+    if (custage.isConsumer()) {
       // if (threadIdx.x == 0) {
       //   printf("563: %d\n", tb_offset_A.row());
       // }
@@ -634,14 +632,13 @@ public:
     IteratorA iterator_A,                             ///< iterator over A operand in global memory
     IteratorB iterator_B,                             ///< iterator over B operand in global memory
     FragmentC const &src_accum,
-    bool producerOrConsumer,
     CuStageImpl& custage,
     cutlass::MatrixCoord tb_offset_A,
     cutlass::MatrixCoord tb_offset_B,
     const uint block_idx_x, const uint block_idx_y)
   {
     // Prologue
-    prologue(iterator_A, iterator_B, gemm_k_iterations, producerOrConsumer,
+    prologue(iterator_A, iterator_B, gemm_k_iterations,
              custage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
 
     // Wait until we have at least one completed global fetch stage
@@ -651,7 +648,7 @@ public:
     accum = src_accum;
 
     // Perform the MAC-iterations
-    gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B, producerOrConsumer,
+    gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B,
                custage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y);
   }
 };

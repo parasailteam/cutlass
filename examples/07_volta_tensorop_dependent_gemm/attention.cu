@@ -89,7 +89,13 @@ using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<1>>;
   using Sync = TileSync<1>;
 #elif defined(STRIDEDSYNC)
-  using StridedSyncImpl = StridedSync<12288, ShapeMMAThreadBlock::kN, 3>;
+  #if defined(GPT3)
+    using StridedSyncImpl = StridedSync<12288, ShapeMMAThreadBlock::kN, 3>;
+  #elif defined(LLaMA)
+    using StridedSyncImpl = StridedSync<8192, ShapeMMAThreadBlock::kN, 3>;
+  #else
+    #error "GPT3 or LLaMA"
+  #endif
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, StridedSyncImpl>;
   using MiddleCuStage = CuStage<CuStageType::Producer|CuStageType::Consumer, RowMajor, StridedSyncImpl>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<1>>;

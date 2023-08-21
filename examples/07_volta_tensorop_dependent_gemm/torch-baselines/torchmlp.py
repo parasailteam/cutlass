@@ -7,19 +7,22 @@ N = int(sys.argv[2])
 K = int(sys.argv[3])
 L = int(sys.argv[4])
 model = sys.argv[5]
-assert model in ['gpt-3', 'llama']
+assert model in ['gpt3', 'llama']
 
 X = torch.ones((M, K), dtype=torch.half).cuda()
 W1 = torch.ones((K, N), dtype=torch.half).cuda()
 W2 = torch.ones((N, L), dtype=torch.half).cuda()
 V = torch.ones((K, N), dtype=torch.half).cuda()
 
+print(X.shape, W1.shape, W2.shape, V.shape)
 epochs = 20
+for i in range(epochs):
+    XW1 = X@W1
 torch.cuda.synchronize()
 
 start = time.time_ns()
 
-if model == 'gpt-3':
+if model == 'gpt3':
     for i in range(epochs):
         XW1 = X@W1
         out = XW1@W2

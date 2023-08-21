@@ -103,7 +103,11 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
   with open(outMLPFile, "w") as f:
     f.write(mlpFileContents)
   
-  (s,o) = subprocess.getstatusoutput("rm %s-eval ; make %s-eval"%(attention_or_mlp, attention_or_mlp))
+  if attention_or_mlp == "mlp":
+    (s,o) = subprocess.getstatusoutput("rm %s-eval ; make %s-eval"%(attention_or_mlp, attention_or_mlp))
+  else:
+    (s,o) = subprocess.getstatusoutput("rm %s-%s-eval ; make %s-%s-eval"%(attention_or_mlp, model, attention_or_mlp, model))
+
   if s != 0:
     print(o)
     sys.exit(0)
@@ -470,9 +474,9 @@ elif model == "llama" and attention_or_mlp == "attention":
 if model.lower() == "BLOOM".lower():
   H = 14336
   FFN = 4*H/8
-elif model.lower() == "GPT-3".lower():
+elif model.lower() == "GPT3".lower():
   H = 12288
-  FFN = 4*H/8
+  FFN = int(4*H/8)
 elif model.lower() == "llama".lower():
   H = 8192
   FFN = int(((8192/3+127)//128)*128)#int(2/3 * 4 * H/8)
@@ -480,8 +484,8 @@ else:
   print ("No Hidden dim for ", model)
   sys.exit(0)
 
-for m in [64,128,256,512,1024,2048]: #1,2,4,8,16,32,64,128,
-  if False:
+for m in [1,2,4,8,16,32,64,128,256,512,1024,2048]: #1,2,4,8,16,32,64,128,
+  if True:
     if attention_or_mlp == "attention":
       (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")
     else:
@@ -496,7 +500,7 @@ for m in [64,128,256,512,1024,2048]: #1,2,4,8,16,32,64,128,
     print(f'{m} & {H} & {"pytorch"} & {"%.2f"%float(ctime)}')
 
     genAndMakeStreamK(tiles[m])
-    if model == 'gpt-3':
+    if model == 'gpt3':
       streamk_command = f"./streamk-eval --m={m} --alpha=1 --beta=0 --iterations=20 "
       (s, o) = subprocess.getstatusoutput(streamk_command + f"--n={int(FFN)} --k={H} " + f"--split={tiles[m]['baseline']['split_ks'][0]}")
       if s != 0:
@@ -538,7 +542,7 @@ for m in [64,128,256,512,1024,2048]: #1,2,4,8,16,32,64,128,
       total = firstGeMMStreamK + secondGeMMStreamK + thirdGeMMStreamK
       print(f'{m} & {H} & {"streamk"} & {"%.2f"%(firstGeMMStreamK*1000)} & {"%.2f"%(secondGeMMStreamK*1000)} & {"%.2f"%(thirdGeMMStreamK*1000)} & {"%.2f"%(total*1000)}')
 
-  for syncPolicy in ['tilesync']:
+  for syncPolicy in ['stridedsync']:
     if attention_or_mlp == 'mlp' and syncPolicy == 'stridedsync':
       continue
     genFilesAndMake(tiles[m], syncPolicy, attention_or_mlp, 'baseline')

@@ -30,12 +30,12 @@
  **************************************************************************************************/
 
 //<OPTIMIZATIONS>
+// #define AVOID_CUSTOM_ORDER
+// #define AVOID_WAIT_KERNEL
+// #define REORDER_TILE_LOADS
+
 //</OPTIMIZATIONS>
-#if defined(TILESYNC) || defined(TILEBATCH) || defined(STRIDEDSYNC)
-#define AVOID_CUSTOM_ORDER
-#define REORDER_TILE_LOADS
-#define AVOID_WAIT_KERNEL
-#endif
+
 #include<cuSync.h>
 
 template<uint H, uint Tile, uint stride>
@@ -68,7 +68,7 @@ struct StridedSync {
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
 using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
 const int SoftmaxRowTile = 1;
 #else
@@ -79,6 +79,7 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
 //</eval tiles>
 #endif
 
+const int SoftmaxThreads = 256;
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
 
 
@@ -484,7 +485,6 @@ cudaError_t runAttentionBaseline(int split_k1, int split_k2,
   status = gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
 
-  const int SoftmaxThreads = 512;//ShapeMMAThreadBlock::kN * 2;
   execTime = 0;
   
   //Launch kernels
@@ -597,7 +597,6 @@ cudaError_t runAttentionCuSync(int split_k1, int split_k2,
   status = gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
   
-  const int SoftmaxThreads = ShapeMMAThreadBlock::kN;
   execTime = 0;
   
   //Run Kernels in Self-Attention
@@ -613,10 +612,9 @@ cudaError_t runAttentionCuSync(int split_k1, int split_k2,
     status = gemm_op1.run(true, NULL, streams[0]);
     CUTLASS_CHECK(status);
     
-#ifdef AVOID_WAIT_KERNEL
+#ifndef AVOID_WAIT_KERNEL
     handle1.invokeWaitKernel(streams[1]);
 #endif
-
     selfAttnDotProdSoftmaxDropout<SoftmaxThreads, half, float, 
                                   ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 
                                   SoftmaxRowTile, true>
@@ -630,8 +628,9 @@ cudaError_t runAttentionCuSync(int split_k1, int split_k2,
                                  1.0f,
                                  attnParams.randStates,
                                  handle1.cons(), handle2.prod());
-    // CUDA_CHECK(cudaDeviceSynchronize());
-#ifdef AVOID_WAIT_KERNEL    
+
+                                 // CUDA_CHECK(cudaDeviceSynchronize());
+#ifndef AVOID_WAIT_KERNEL    
     handle2.invokeWaitKernel(streams[2]);
 #endif
     // CUDA_CHECK(cudaDeviceSynchronize());
@@ -847,10 +846,12 @@ int run(int argc, char* argv[]) {
   using Sync1 = TileSync<1>;
   using Sync2 = Sync1;
   TileSync<1> sync1;
-  TileSync<1> sync2(ShapeMMAThreadBlock::kM/SoftmaxRowTile, 1);
+  uint waitValue = DIVUP(min(attnParams.gemm_size1.m(), ShapeMMAThreadBlock::kM), SoftmaxRowTile);
+  TileSync<1> sync2(waitValue, 1);
 #elif defined(STRIDEDSYNC)
     StridedSyncImpl sync1;
-    TileSync<1> sync2(ShapeMMAThreadBlock::kM/SoftmaxRowTile, 1);
+    uint waitValue = DIVUP(min(attnParams.gemm_size1.m(), ShapeMMAThreadBlock::kM), SoftmaxRowTile);
+    TileSync<1> sync2(waitValue, 1);
 #else
   #error "Unknown Policy"
 #endif

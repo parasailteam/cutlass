@@ -14,7 +14,6 @@ W1 = torch.ones((K, N), dtype=torch.half).cuda()
 W2 = torch.ones((N, L), dtype=torch.half).cuda()
 V = torch.ones((K, N), dtype=torch.half).cuda()
 
-print(X.shape, W1.shape, W2.shape, V.shape)
 epochs = 20
 for i in range(epochs):
     XW1 = X@W1

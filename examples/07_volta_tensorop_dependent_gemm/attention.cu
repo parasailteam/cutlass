@@ -29,9 +29,13 @@
  *
  **************************************************************************************************/
 
- //<OPTIMIZATIONS>
+//<OPTIMIZATIONS>
 //</OPTIMIZATIONS>
-
+#if defined(TILESYNC) || defined(TILEBATCH) || defined(STRIDEDSYNC)
+#define AVOID_CUSTOM_ORDER
+#define REORDER_TILE_LOADS
+#define AVOID_WAIT_KERNEL
+#endif
 #include<cuSync.h>
 
 template<uint H, uint Tile, uint stride>
@@ -42,11 +46,11 @@ struct StridedSync {
   __device__ __host__ StridedSync(): waitValue_(stride), postValue_(1) {}
   
   __device__ __host__ uint waitValue(const dim3& tile, const dim3& grid) {
-    return waitValue_;
+    return stride;
   }
 
   __device__ __host__ uint postValue(const dim3& tile, const dim3& grid) 
-    {return postValue_;}
+    {return 1;}
 
   __device__ constexpr uint tileIndex(const dim3& tile, const dim3& grid) {
     if (grid.y > ((H/8)/Tile))
@@ -56,7 +60,7 @@ struct StridedSync {
   }
 
   __device__ bool isSync(const dim3& tile, const dim3& grid) {
-    return tile.y < H/8;
+    return true; //tile.y < H/8;
   }
 };
 
@@ -64,9 +68,9 @@ struct StridedSync {
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
-const int SoftmaxRowTile = 4;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
+const int SoftmaxRowTile = 1;
 #else
 //<eval tiles>
 const int SoftmaxRowTile = 1;
@@ -293,7 +297,9 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       T xq = XQKV[ROW * 3 * N + COL];
       if (enableOverlap  && ti == 0) {
         dim3 tile = {tileM, N/TileN + COL/TileN, 0};
+        #ifdef TILESYNC
         cons1.wait(tile, (COL/TileN)%NTHREADS);
+        #endif
       }
       T xk = XQKV[ROW * 3 * N + (COL + N)];
       // if (enableOverlap) {
@@ -322,9 +328,12 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       //   } else {
       if (enableOverlap && ti == 0) {
         dim3 tile = {tileM, N/TileN*2 + COL/TileN, 0};
+        #ifndef TILESYNC
         cons1.wait(tile, (COL/TileN)%NTHREADS);
+        #endif
       }
-      __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * (float)XQKV[ROW* 3 * N + (COL + 2 * N)]))/sum) : (__half)0.0f;
+      __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * 
+                                     (float)XQKV[ROW* 3 * N + (COL + 2 * N)]))/sum) : (__half)0.0f;
       // if (COL == 0 && blockIdx.x < 8) {
       //   printf("199: %f %f %f %f %f\n", r, p, (float)v, (float)xqkRows[COL], (float)XQKV[ROW*N + COL]);
       // }
@@ -475,7 +484,7 @@ cudaError_t runAttentionBaseline(int split_k1, int split_k2,
   status = gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
 
-  const int SoftmaxThreads = ShapeMMAThreadBlock::kN;
+  const int SoftmaxThreads = 512;//ShapeMMAThreadBlock::kN * 2;
   execTime = 0;
   
   //Launch kernels
@@ -531,9 +540,13 @@ cudaError_t runAttentionBaseline(int split_k1, int split_k2,
                                  double& matmul2Time,
                                  int iters = 100) {
   cudaError_t result;
-  if (split_k1 == 1) {
+  if (split_k1 == 1 && split_k2 == 1) {
     result = runAttentionBaseline<GemmTy1, GemmTy2>(split_k1, split_k2, attnParams, streams, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
-  } else {
+  } else if (split_k1 > 1 && split_k2 == 1) {
+    result = runAttentionBaseline<GemmSplitKTy1, GemmTy1>(split_k1, split_k2, attnParams, streams, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+  } else if (split_k1 == 1 && split_k2 > 1) {
+    result = runAttentionBaseline<GemmTy1, GemmSplitKTy2>(split_k1, split_k2, attnParams, streams, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
+  } else if (split_k1 > 1 && split_k2 > 1) {
     result = runAttentionBaseline<GemmSplitKTy1, GemmSplitKTy2>(split_k1, split_k2, attnParams, streams, execTime, matmul1Time, softmaxTime, matmul2Time, iters);
   }
 
@@ -693,7 +706,7 @@ int run(int argc, char* argv[]) {
   
   if (argc < NUM_ARGS+1) {
     std::cout << "usage: " << std::endl
-              << argNames[0] << " gpt-3|llama " << argHelp[0] << std::endl 
+              << argNames[0] << " gpt3|llama " << argHelp[0] << std::endl 
               << argNames[1] << " <int>" << argHelp[1] << std::endl
               << argNames[2] << " true|false" << argHelp[2] << std::endl
               << argNames[3] << " <int> " << argHelp[3] << std::endl
@@ -744,7 +757,7 @@ int run(int argc, char* argv[]) {
   int problem[4] = {0,0,0,0};
   problem[0] = batch;
   
-  if (model=="gpt-3") {
+  if (model=="gpt3") {
     problem[1] = 12288/8;
     problem[2] = 12288;
     problem[3] = 12288;

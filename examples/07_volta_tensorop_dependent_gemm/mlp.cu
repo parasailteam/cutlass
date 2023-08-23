@@ -32,6 +32,12 @@
 //<OPTIMIZATIONS>
 //</OPTIMIZATIONS>
 
+#if defined(TILESYNC) || defined(TILEBATCH)
+#define AVOID_CUSTOM_ORDER
+#define REORDER_TILE_LOADS
+#define AVOID_WAIT_KERNEL
+#endif 
+
 #include<cuSync.h>
 
 #ifdef ROWSYNC
@@ -41,6 +47,7 @@
   using Sync = RowSync;
 #elif defined(TILEBATCH)
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<2>>;
+  using MiddleCuStage = CuStage<CuStageType::Producer | CuStageType::Consumer, RowMajor, TileSync<2>>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<2>>;
   using Sync = TileSync<2>;
 #elif defined(TILESYNC)
@@ -60,7 +67,7 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 256, 32>;  
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
 using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
 #else
 //<eval tiles>
@@ -186,7 +193,7 @@ struct MLPParameters {
     beta = ElementComputeEpilogue(0.0);
     model = model_;
 
-    if (model == "gpt-3") {
+    if (model == "gpt3") {
       gemm_size1 = cutlass::gemm::GemmCoord(batch, 4*12288/8, 12288);
       gemm_size2 = cutlass::gemm::GemmCoord(batch, 12288, 4*12288/8);
     } else if (model=="llama") {
@@ -264,7 +271,7 @@ struct MLPParameters {
     }
   }
 
-  bool isGPT3() {return model == "gpt-3";}
+  bool isGPT3() {return model == "gpt3";}
   bool isLLaMa() {return model == "llama";}
 };
 
@@ -789,12 +796,12 @@ int run(int argc, char* argv[]) {
   
   const uint NUM_ARGS = 5;
   std::string argNames[NUM_ARGS] = {"--model", "--batch", "--check", "--split-k1", "--split-k2"};
-  std::string argHelp[NUM_ARGS] = {"GPT-3 or LLaMa", "Batch size", "Check results", 
+  std::string argHelp[NUM_ARGS] = {"GPT3 or LLaMa", "Batch size", "Check results", 
                                    "Split K for first GeMM", "Split K for second GeMM"};
   
   if (argc < NUM_ARGS+1) {
     std::cout << "usage: " << std::endl
-              << argNames[0] << " gpt-3|llama " << argHelp[0] << std::endl 
+              << argNames[0] << " gpt3|llama " << argHelp[0] << std::endl 
               << argNames[1] << " <int>" << argHelp[1] << std::endl
               << argNames[2] << " true|false" << argHelp[2] << std::endl
               << argNames[3] << " <int> " << argHelp[3] << std::endl

@@ -130,17 +130,18 @@ compare if the output from CUTLASS kernel is same as the reference implicit GEMM
 #include <cuSync.h>
 
 #ifdef ROWSYNC 
-  using CuStageImpl = CuStage<RowMajor, RowSync>;
   using Sync = RowSync;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
 #elif TILESYNC
-  using CuStageImpl = CuStage<RowMajor, TileSync>;
   using Sync = TileSync;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
 #else
   #error "Unknown Synchronization"
 #endif 
 
-using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
-
+using CuSyncImpl = CuSync<ProdCuStage, ConsCuStage>;
 
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
@@ -162,8 +163,8 @@ using CuSyncImpl = CuSync<RowMajor, RowMajor, Sync>;
 #include "cutlass/util/tensor_view_io.h"
 
 #include "helper.h"
-#include<time.h>
-#include<sys/time.h>
+#include <time.h>
+#include <sys/time.h>
 
 static double convertTimeValToDouble(struct timeval _time) {
   return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
@@ -189,92 +190,91 @@ static double getCurrentTime() {
   return timeInMicroSeconds();
 }
 
-// The code section below describes datatype for input, output tensors and computation between
-// elements
-using ElementAccumulator = float;                 // Data type of accumulator
-using ElementComputeEpilogue = cutlass::half_t;               // Data type of epilogue computation (alpha, beta)
-using ElementInputA = cutlass::half_t;             // Data type of elements in input tensor
-using ElementInputB = ElementInputA;             // Data type of elements in input tensor
-using ElementOutput = ElementInputB;             // Data type of elements in output tensor
+using ElementAccumulator = float;
+using ElementComputeEpilogue = cutlass::half_t;
+using ElementInputA = cutlass::half_t;
+using ElementInputB = ElementInputA;
+using ElementOutput = ElementInputB;
 
 using LayoutInputA = cutlass::layout::TensorNHWC;
 using LayoutInputB = cutlass::layout::TensorNHWC;
 using LayoutOutput = cutlass::layout::TensorNHWC;
 
-// This code section describes whether you want to use tensor cores or regular SIMT cores on GPU SM
 using MMAOp = cutlass::arch::OpClassTensorOp;
-
-// This code section describes CUDA SM architecture number
 using SmArch = cutlass::arch::Sm70;
+using ThreadblockShape = cutlass::gemm::GemmShape<64, 64, 32>;
+using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;
+using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;
 
-// This code section describes the tile size a thread block will compute
-using ThreadblockShape = cutlass::gemm::GemmShape<64, 64, 32>;  // Threadblock tile shape
-
-// This code section describes tile size a warp will compute
-using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;         // Warp tile shape
-
-// This code section describes the size of MMA op
-using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;    // TensorCore instruction shape
-
-// This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 
-// Number of pipelines you want to use
 constexpr int NumStages = 2;
 
-// This code section describes the epilogue part of the kernel, we use default value
 using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-    ElementOutput,                                     // Data type of output matrix.
-    8,                                                 // The number of elements per vectorized.
-                                                       // memory access. This becomes the vector width of
-                                                       // math instructions in the epilogue too.
-    ElementAccumulator,                                // Data type of accumulator
-    ElementComputeEpilogue>;                           // Data type for alpha/beta in linear combination
+    ElementOutput,
+    8,
+    ElementAccumulator,
+    ElementComputeEpilogue>;
 
 
-using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
-  ElementInputA, LayoutInputA,
-  ElementInputB, LayoutInputB,
-  ElementOutput, LayoutOutput,
-  ElementAccumulator,
-  MMAOp,
-  SmArch,
-  ThreadblockShape,
-  WarpShape,
-  InstructionShape,
-  EpilogueOp,
-  cutlass::gemm::threadblock::ThreadblockSwizzleStreamK,
-  NumStages,
-  cutlass::arch::OpMultiplyAdd,
-  cutlass::conv::IteratorAlgorithm::kAnalytic
->::Kernel;
+using Conv2dFpropKernel = 
+  typename cutlass::conv::kernel::DefaultConv2dFprop<ElementInputA, LayoutInputA,
+                                              ElementInputB, LayoutInputB,
+                                              ElementOutput, LayoutOutput,
+                                              ElementAccumulator,
+                                              MMAOp,
+                                              SmArch,
+                                              ThreadblockShape,
+                                              WarpShape,
+                                              InstructionShape,
+                                              EpilogueOp,
+                                              cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+                                              NumStages,
+                                              cutlass::arch::OpMultiplyAdd,
+                                              cutlass::conv::IteratorAlgorithm::kAnalytic>::Kernel;
 
-using ImplicitGemm1 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
-using ImplicitGemm2 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+using BaselineImplicitGemm1 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+using BaselineImplicitGemm2 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 
-using CuSyncConv2dFpropKernel = typename cutlass::conv::kernel::CuSyncDefaultConv2dFprop<
-  CuStageImpl,
-  ElementInputA, LayoutInputA,
-  ElementInputB, LayoutInputB,
-  ElementOutput, LayoutOutput,
-  ElementAccumulator,
-  MMAOp,
-  SmArch,
-  ThreadblockShape,
-  WarpShape,
-  InstructionShape,
-  EpilogueOp,
-  SwizzleThreadBlock,
-  NumStages,
-  cutlass::arch::OpMultiplyAdd,
-  cutlass::conv::IteratorAlgorithm::kAnalytic
->::Kernel;
+using ProdConv2dKernel =
+  typename cutlass::conv::kernel::CuSyncDefaultConv2dFprop<ProdCuStage,
+                                                            ElementInputA, LayoutInputA,
+                                                            ElementInputB, LayoutInputB,
+                                                            ElementOutput, LayoutOutput,
+                                                            ElementAccumulator,
+                                                            MMAOp,
+                                                            SmArch,
+                                                            ThreadblockShape,
+                                                            WarpShape,
+                                                            InstructionShape,
+                                                            EpilogueOp,
+                                                            SwizzleThreadBlock,
+                                                            NumStages,
+                                                            cutlass::arch::OpMultiplyAdd,
+                                                            cutlass::conv::IteratorAlgorithm::kAnalytic
+                                                          >::Kernel;
 
-using CuSyncImplicitGemm1 = cutlass::conv::device::CuSyncImplicitGemmConvolution<CuSyncImpl, CuSyncConv2dFpropKernel>;
-using CuSyncImplicitGemm2 = cutlass::conv::device::CuSyncImplicitGemmConvolution<CuSyncImpl, CuSyncConv2dFpropKernel>;
-/////////////////////////////////////////////////////////////////////////////////////////////////
+using ConsConv2dKernel =
+  typename cutlass::conv::kernel::CuSyncDefaultConv2dFprop<ConsCuStage,
+                                                            ElementInputA, LayoutInputA,
+                                                            ElementInputB, LayoutInputB,
+                                                            ElementOutput, LayoutOutput,
+                                                            ElementAccumulator,
+                                                            MMAOp,
+                                                            SmArch,
+                                                            ThreadblockShape,
+                                                            WarpShape,
+                                                            InstructionShape,
+                                                            EpilogueOp,
+                                                            SwizzleThreadBlock,
+                                                            NumStages,
+                                                            cutlass::arch::OpMultiplyAdd,
+                                                            cutlass::conv::IteratorAlgorithm::kAnalytic
+                                                          >::Kernel;
+using ProdCuSyncImplicitGemm1 = cutlass::conv::device::CuSyncImplicitGemmConvolution<ProdCuStage, ProdConv2dKernel>;
+using ConsCuSyncImplicitGemm2 = cutlass::conv::device::CuSyncImplicitGemmConvolution<ConsCuStage, ConsConv2dKernel>;
 
-
+//Check for tensor equality
 template<typename T>
 bool equals(size_t size, T* mat1, T* mat2, float err) {
   for (size_t i = 0; i < size; i++) {
@@ -310,7 +310,6 @@ bool equals(size_t size, T* mat1, T* mat2, float err) {
 
 // Command line options parsing
 struct Options {
-
   bool help;
   cutlass::Tensor4DCoord input_size;
   cutlass::Tensor4DCoord filter_size;
@@ -372,9 +371,8 @@ struct Options {
   }
 
   /// Updates input and filter sizes
-  void update(
-    cutlass::Tensor4DCoord input_size,
-    cutlass::Tensor4DCoord filter_size) {
+  void update(cutlass::Tensor4DCoord input_size,
+              cutlass::Tensor4DCoord filter_size) {
 
     this->input_size = input_size;
     this->filter_size = filter_size;
@@ -545,8 +543,71 @@ struct Result {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<bool useCuSync, typename ImplicitGemm1, typename ImplicitGemm2, typename TensorA, typename TensorB, typename TensorC>
-void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options& options, cudaStream_t* streams, CuSyncImpl& handle,
+template<typename TensorA, typename TensorB, typename TensorC>
+void runBaseline(cutlass::conv::Conv2dProblemSize problem_size, 
+                 const Options& options, cudaStream_t* streams, 
+                 TensorA& tensor_x, TensorB& tensor_w1, TensorB& tensor_w2, TensorC& tensor_y1, TensorC& tensor_y2, 
+                 double& elapsedTime, double& conv1Time, double& conv2Time, int runs) {
+  // Construct ImplicitGemm::Argument structure with conv2d 
+  // problem size, data pointers, and epilogue values
+  typename BaselineImplicitGemm1::Arguments args1{
+    problem_size,
+    tensor_x.device_ref(),
+    tensor_w1.device_ref(),
+    tensor_y1.device_ref(),
+    tensor_y1.device_ref(),
+    {options.alpha, options.beta},
+  };
+
+  BaselineImplicitGemm1 implicit_gemm_op1;
+  size_t workspace_size1 = implicit_gemm_op1.get_workspace_size(args1);
+  cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size1);
+  auto status = implicit_gemm_op1.can_implement(args1);
+  CUTLASS_CHECK(status);
+  status = implicit_gemm_op1.initialize(args1, workspace1.get());
+  CUTLASS_CHECK(status);
+
+  typename BaselineImplicitGemm2::Arguments args2{
+    problem_size,
+    tensor_y1.device_ref(),
+    tensor_w2.device_ref(),
+    tensor_y2.device_ref(),
+    tensor_y2.device_ref(),
+    {options.alpha, options.beta},
+  };
+
+  BaselineImplicitGemm2 implicit_gemm_op2;
+  size_t workspace_size2 = implicit_gemm_op2.get_workspace_size(args2);
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size2);
+  status = implicit_gemm_op2.can_implement(args2);
+  CUTLASS_CHECK(status);
+  status = implicit_gemm_op2.initialize(args2, workspace2.get());
+  CUTLASS_CHECK(status);
+
+  for (int i = 0; i < runs; i++) {
+    double start = getCurrentTime();
+    auto status = implicit_gemm_op1(args1, workspace1.get(), streams[0]);
+
+    CUTLASS_CHECK(status);
+    cudaDeviceSynchronize();
+    double middle1 = getCurrentTime();
+    conv1Time += middle1 - start;
+    status = implicit_gemm_op2(args2, workspace2.get(), streams[0]);
+
+    CUTLASS_CHECK(status);
+    cudaDeviceSynchronize();
+    double end = getCurrentTime();
+    conv2Time += end - middle1;
+    elapsedTime += end - start;
+    printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,middle1-start,end-middle1);
+  }
+}
+
+#if 0
+template<bool useCuSync, typename TensorA, typename TensorB, typename TensorC>
+void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, 
+                    const Options& options, cudaStream_t* streams, 
+                    CuSyncImpl& handle,
                     TensorA& tensor_x, TensorB& tensor_w1, TensorB& tensor_w2, TensorC& tensor_y1, TensorC& tensor_y2, 
                     double& elapsedTime, double& conv1Time, double& conv2Time, int runs) {
   // Construct ImplicitGemm::Argument structure with conv2d 
@@ -645,6 +706,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, const Options
     }
   }
 }
+#endif
 
 /// Runs one benchmark
 Result profile_convolution(Options const &options) {
@@ -754,55 +816,28 @@ Result profile_convolution(Options const &options) {
   double conv1Time = 0;
   double conv2Time = 0;
   
-  CuSyncImpl baselineHandle;
-  runConvolution<false, ImplicitGemm1, ImplicitGemm2>
-    (problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, 1);
+  runBaseline(problem_size, options, &streams[0], tensor_x, tensor_w1,
+              tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time,
+              conv2Time, 1);
 
   if (options.reference_check) {
     std::cout << "Verification on host...\n";
+    
+    using NumericConverter = cutlass::NumericConverter<ElementOutput, ElementComputeEpilogue>;
+    auto HostConv2d = cutlass::reference::host::Conv2dFprop<ElementInputA, LayoutInputA,
+                                                       ElementInputB, LayoutInputB,
+                                                       ElementOutput, LayoutOutput,
+                                                       ElementComputeEpilogue,
+                                                       ElementAccumulator,
+                                                       ElementOutput,
+                                                       NumericConverter>;
+    HostConv2d(problem_size, tensor_x.host_ref(), tensor_w1.host_ref(),
+               tensor_y1.host_ref(), tensor_ref_y1.host_ref(),
+               options.alpha, options.beta);
+    HostConv2d(problem_size, tensor_y1.host_ref(), tensor_w2.host_ref(),
+               tensor_y2.host_ref(), tensor_ref_y2.host_ref(),
+               options.alpha, options.beta);
 
-    // Compute with reference implementation
-    cutlass::reference::host::Conv2dFprop<
-      ElementInputA,
-      LayoutInputA,
-      ElementInputB,
-      LayoutInputB,
-      ElementOutput,
-      LayoutOutput,
-      ElementComputeEpilogue,
-      ElementAccumulator,
-      ElementOutput,
-      cutlass::NumericConverter<ElementOutput, ElementComputeEpilogue>
-    >(
-      problem_size,
-      tensor_x.host_ref(),
-      tensor_w1.host_ref(),
-      tensor_y1.host_ref(),
-      tensor_ref_y1.host_ref(),
-      options.alpha,
-      options.beta
-    );
-
-    cutlass::reference::host::Conv2dFprop<
-      ElementInputA,
-      LayoutInputA,
-      ElementInputB,
-      LayoutInputB,
-      ElementOutput,
-      LayoutOutput,
-      ElementComputeEpilogue,
-      ElementAccumulator,
-      ElementOutput,
-      cutlass::NumericConverter<ElementOutput, ElementComputeEpilogue>
-    >(
-      problem_size,
-      tensor_y1.host_ref(),
-      tensor_w2.host_ref(),
-      tensor_y2.host_ref(),
-      tensor_ref_y2.host_ref(),
-      options.alpha,
-      options.beta
-    );
     // Check if output from CUTLASS kernel and reference kernel are equal or not
     tensor_y1.sync_host(); tensor_y2.sync_host();
     bool passed = equals(tensor_y1.size(), tensor_ref_y1.host_data(), tensor_y1.host_data(), 1e-2);
@@ -827,17 +862,22 @@ Result profile_convolution(Options const &options) {
       std::cout << "Second Passed.\n";
     }
   }
-  if (true) {
-  runConvolution<false, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
+
+  runBaseline(problem_size, options, &streams[0], 
+              tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2,
+              elapsedTime, conv1Time, conv2Time, warmup);
+
   elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
   printf("START-BASELINE:\n");
-  runConvolution<false, ImplicitGemm1, ImplicitGemm2>(problem_size, options, &streams[0], baselineHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
+  runBaseline(problem_size, options, &streams[0], 
+              tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2,
+              elapsedTime, conv1Time, conv2Time, epochs);
   
   printf("END-BASELINE: {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
-  }
 
+  #if 0
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
   printf("gemm problem size: {%d, %d, %d}\n", gemm_problem_size.m(), gemm_problem_size.n(), gemm_problem_size.k());
   printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN, options.split_k_slices);
@@ -906,7 +946,7 @@ Result profile_convolution(Options const &options) {
   runConvolution<true, CuSyncImplicitGemm1, CuSyncImplicitGemm2>
     (problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
   printf("END-OVERLAP {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
-
+#endif
   return result;
 }
 

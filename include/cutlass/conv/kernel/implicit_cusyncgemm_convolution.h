@@ -48,7 +48,6 @@
 #include "cutlass/conv/conv2d_problem_size.h"
 #include "cutlass/conv/conv3d_problem_size.h"
 #include "cutlass/epilogue/threadblock/output_iterator_parameter.h"
-#include "cutlass/cuSync.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 

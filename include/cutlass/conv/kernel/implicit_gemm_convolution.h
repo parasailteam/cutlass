@@ -48,7 +48,6 @@
 #include "cutlass/conv/conv2d_problem_size.h"
 #include "cutlass/conv/conv3d_problem_size.h"
 #include "cutlass/epilogue/threadblock/output_iterator_parameter.h"
-#include "cutlass/cuSync.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -148,7 +147,6 @@ struct ImplicitGemmConvolution {
     //
     // Data members
     //
-    CuStageImpl custage;
     ConvProblemSize problem_size;
     TensorRefA ref_A;
     TensorRefB ref_B;
@@ -173,7 +171,6 @@ struct ImplicitGemmConvolution {
 
     CUTLASS_HOST_DEVICE
     Arguments(
-      CuStageImpl& custage,
       ConvProblemSize const & problem_size,
       TensorRefA const & ref_A,
       TensorRefB const & ref_B,
@@ -182,7 +179,6 @@ struct ImplicitGemmConvolution {
       typename EpilogueOutputOp::Params const & output_op,
       SplitKMode const & split_k_mode = SplitKMode::kSerial
     ):
-      custage(custage),
       problem_size(problem_size),
       ref_A(ref_A),
       ref_B(ref_B),
@@ -198,7 +194,6 @@ struct ImplicitGemmConvolution {
 
   /// Parameters structure
   struct Params {
-    CuStageImpl custage;
     ConvProblemSize problem_size;
     cutlass::gemm::GemmCoord grid_tiled_shape;
     gemm::GemmCoord implicit_gemm_problem_size;
@@ -231,7 +226,6 @@ struct ImplicitGemmConvolution {
       Arguments const &args,
       int *semaphore = nullptr
     ):
-      custage(args.custage),
       problem_size(args.problem_size),
       implicit_gemm_problem_size(cutlass::conv::implicit_gemm_problem_size(kConvolutionalOperator, args.problem_size)),
       iterator_A(Mma::IteratorA::getParams(args.problem_size, args.ref_A.layout())),

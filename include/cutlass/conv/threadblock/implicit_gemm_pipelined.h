@@ -310,6 +310,7 @@ public:
   }
 
   /// Perform a threadblock-scoped matrix multiply-accumulate
+  template<typename CuStageImpl>
   CUTLASS_DEVICE
   void doWithOverlap(
     int gemm_k_iterations,                            ///< number of iterations of the mainloop

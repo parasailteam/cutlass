@@ -309,7 +309,7 @@ public:
 
     int smem_size = int(sizeof(typename UnderlyingKernel::SharedStorage));
 
-    if (overlap) {
+    if (true) {
       if (params_.custage.isProducer()) {
         cutlass::KernelOverlapProducer<UnderlyingKernel><<<grid, block, smem_size, stream>>>(params_);
       } else {
@@ -340,20 +340,6 @@ public:
     
     if (status == Status::kSuccess) {
       status = run(stream);
-    }
-
-    return status;
-  }
-  Status operator()(
-    Arguments const &args,
-    bool overlap,
-    void *workspace = nullptr, 
-    cudaStream_t stream = nullptr) {
-    
-    Status status = initialize(args, workspace, stream);
-    
-    if (status == Status::kSuccess) {
-      status = run(overlap, stream);
     }
 
     return status;

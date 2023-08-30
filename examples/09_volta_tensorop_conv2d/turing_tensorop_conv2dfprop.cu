@@ -29,100 +29,6 @@
  *
  **************************************************************************************************/
 
-/**
-
-
-This example shows how to run convolution kernels using functions and data structures
-provided by CUTLASS using tensor cores; which we run on a NVIDIA Turing GPU.
-
-Writing a single high performance convolution kernel is hard but do-able. Whereas writing
-high performance kernels at scale which works for multiple problem sizes with good abstractions is
-really hard. CUTLASS solves this problem by providing simplified abstractions to compose
-multiple sections of implicit gemm kernel. When used properly, the kernels can hit peak performance
-of GPU easily.
-
-CUTLASS divides a kernel into hierarchical composable sections. Which means, at each thread, warp
-and thread-block level, they compute on their own tile-size with higher level of tile sizes being
-composed from lower level ones. Multiple thread-tiles (tile size each thread computes) can be used
-to form warp-tiles (tile size each warp computes) and multiple warp tiles can be used to compute
-threadblock-tile (tile size computed by a threadblock).
-
-In thie example, we split variable initialization into
-1. Setting up data properties : describes how tensors are laid out in the memory and how the kernel
-can view them (logical to physical mapping)
-2. Setting up computation properties : describes how the above set tensors will be used to compute
-output of convolution.
-
-First, we setup the data types of the input tensor A, weights' tensor B and output tensor C along
-with alpha, beta as the equation for convolution is C = alpha * Conv(A, B) + beta * C. In CUTLASS,
-the kernels first compute Conv(A, B) and leave the rest of the computation to end of the kernel as
-alpha * X + beta * C is a simple element-wise operation on X (Conv(A, B)) and C. We call this as 
-epilogue of kernel. Hence, we setup data types for alpha and beta to be equal to 
-ElementComputeEpilogue = float. We want to use MMA instructions on Turing and they support 4-bit
-signed integer. But int4b_t is not fully supported by Nvidia software stack, so CUTLASS introduces
-cutlass::int4b_t. We use the data type for elements in input tensor A and B as cutlass::int4b_t. We
-convey this to CUTLASS kernel by initializing template variables ElementAccumulator (int32_t),
-ElementComputeEpilogue (float), ElementInputA (cutlass::int4b_t), ElementInputB (cutlass::int4b_t),
-ElementOutput (int32_t). Communicating just the data type is not enough. As the data is laid out 
-linearly in memory, we have to convey the layout of tensors. We do that by initializing template
-variables LayoutInputA, LayoutInputB and LayoutOutput to TensorNHWC cutlass variable. Next, we setup
-rules to comptue alpha * X + beta * C which is called epilogue of the kernel. We initialize template
-variable EpilogueOp, which takes the data type of output ElementOutput (int32_t), the number of
-elements per vector memory access (32), data type of accumulator (int32_t) and data type of
-computation of linear combination (alpha * X + beta * C).
-
-Now that we setup the properties of data, we have to setup properties of computation.
-
-Second, we create template variables of tile sizes for thread-block, warp and mma-op to 128x128x128,
-64x64x128, 8x8x32 (MxNxK) respectively. When passed to instantiate CUTLASS Implicit GEMM kernel, it
-internally deduces the amount of threads needed per thread-block, amount of shared memory, storing
-data in bank-conflict free manner, and ton of other variables required to compose, intialize and
-launch a high performance Implicit GEMM kernel. This is the beauty of CUTLASS, it relieves developer
-from understanding and coding complicated hardware optimizations which can easily go wrong.
-
-CUTLASS also supports multiple MMA pipelines in a threadblock. What are MMA pipelines? MMA pipelines
-constitute the whole process of loading input data from global memory to shared memory, loading data
-from shared memory to registers, doing matrix multiplication, store to global memory. The below flow
-sequence shows a typical mma pipeline.
-
-tensor in global memory -> registers -> tile in shared memory -> registers -> mma -> registers ->
-output to global memory
-
-The problem with single pipeline is, each stage is synchronous which means, each stage has to wait
-until the previous finished executing. There are stages in the pipeline which do not have fixed
-latency, for example, the loads from global memory and shared memory. Therefore, we can add one more
-pipeline with a phase shift in mma kernel to hide latency from global and shared memory loads.
-Finally, the pipeline in a kernel looks like
-
-(1) tensor in global memory -> (2) registers -> (3) tile in shared memory -> (4) registers -> (5)
-mma -> (6) registers -> (7) output to global memory (1) <null> -> (2) <null> -> (3) tensor in global
-memory -> (4) registers -> (5) tile in shared memory -> (6) registers -> (7) mma -> (8) registers ->
-(9) output to global memory
-
-This way, you can hide the second global memory load latency by doing computation on already loaded
-input data.
-
-There are few more template variables initialized such as, which threadblock tile of output matrix
-is done which threadblock launched on an SM, CUDA SM architecture of GPU you want to run on.
-
-These are all put together to create a template variable which describes CUTLASS Implicit GEMM
-kernel using cutlass::conv::device::ImplicitGemm template.
-
-The next step is to intialize physical data, instantiate and initialize CUTLASS kernel and run it.
-We use CUTLASS utilities to initialize, fill, compare tensors as they are simple and doesn't come
-in the way of learning CUTLASS.
-
-Once all the tensors are initialized and filled with data, create arguments tuple to launch CUTLASS
-kernel which takes problem size (N = 1, H = 64, W = 64, C = 128), filter size (K = 64,
-R = 3, S = 3, C = 128 ), padding, strides, dilation, tensors, alpha, beta and the
-important one, split k-dimension factor. Along with that, we query CUTLASS if any scratch-space
-memory required by the kernel we instantiated. If yes, we create it and pass it along with other
-arguments created to intialize CUTLASS kernel then, the kernel is launched.
-
-In this example, we later on launch a reference convolution kernel (from CUTLASS utilities) to
-compare if the output from CUTLASS kernel is same as the reference implicit GEMM kernel.
-*/
-
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -134,7 +40,7 @@ compare if the output from CUTLASS kernel is same as the reference implicit GEMM
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
 #elif TILESYNC
-  using Sync = TileSync;
+  using Sync = Conv2DTileSync<1, 3*3>;
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
 #else
@@ -165,6 +71,8 @@ using CuSyncImpl = CuSync<ProdCuStage, ConsCuStage>;
 #include "helper.h"
 #include <time.h>
 #include <sys/time.h>
+
+using namespace cutlass::conv;
 
 static double convertTimeValToDouble(struct timeval _time) {
   return ((double)_time.tv_sec)*1e6 + ((double)_time.tv_usec);
@@ -218,7 +126,7 @@ using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
 
 
 using Conv2dFpropKernel = 
-  typename cutlass::conv::kernel::DefaultConv2dFprop<ElementInputA, LayoutInputA,
+  typename kernel::DefaultConv2dFprop<ElementInputA, LayoutInputA,
                                               ElementInputB, LayoutInputB,
                                               ElementOutput, LayoutOutput,
                                               ElementAccumulator,
@@ -233,11 +141,11 @@ using Conv2dFpropKernel =
                                               cutlass::arch::OpMultiplyAdd,
                                               cutlass::conv::IteratorAlgorithm::kAnalytic>::Kernel;
 
-using BaselineImplicitGemm1 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
-using BaselineImplicitGemm2 = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+using BaselineImplicitGemm1 = device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+using BaselineImplicitGemm2 = device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 
 using ProdConv2dKernel =
-  typename cutlass::conv::kernel::CuSyncDefaultConv2dFprop<ProdCuStage,
+  typename kernel::CuSyncDefaultConv2dFprop<ProdCuStage,
                                                             ElementInputA, LayoutInputA,
                                                             ElementInputB, LayoutInputB,
                                                             ElementOutput, LayoutOutput,
@@ -255,7 +163,7 @@ using ProdConv2dKernel =
                                                           >::Kernel;
 
 using ConsConv2dKernel =
-  typename cutlass::conv::kernel::CuSyncDefaultConv2dFprop<ConsCuStage,
+  typename kernel::CuSyncDefaultConv2dFprop<ConsCuStage,
                                                             ElementInputA, LayoutInputA,
                                                             ElementInputB, LayoutInputB,
                                                             ElementOutput, LayoutOutput,
@@ -271,8 +179,8 @@ using ConsConv2dKernel =
                                                             cutlass::arch::OpMultiplyAdd,
                                                             cutlass::conv::IteratorAlgorithm::kAnalytic
                                                           >::Kernel;
-using ProdCuSyncImplicitGemm1 = cutlass::conv::device::CuSyncImplicitGemmConvolution<ProdCuStage, ProdConv2dKernel>;
-using ConsCuSyncImplicitGemm2 = cutlass::conv::device::CuSyncImplicitGemmConvolution<ConsCuStage, ConsConv2dKernel>;
+using ProdCuSyncImplicitGemm1 = device::CuSyncImplicitGemmConvolution<ProdCuStage, ProdConv2dKernel>;
+using ConsCuSyncImplicitGemm2 = device::CuSyncImplicitGemmConvolution<ConsCuStage, ConsConv2dKernel>;
 
 //Check for tensor equality
 template<typename T>
@@ -603,8 +511,7 @@ void runBaseline(cutlass::conv::Conv2dProblemSize problem_size,
   }
 }
 
-#if 0
-template<bool useCuSync, typename TensorA, typename TensorB, typename TensorC>
+template<typename TensorA, typename TensorB, typename TensorC>
 void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, 
                     const Options& options, cudaStream_t* streams, 
                     CuSyncImpl& handle,
@@ -612,7 +519,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
                     double& elapsedTime, double& conv1Time, double& conv2Time, int runs) {
   // Construct ImplicitGemm::Argument structure with conv2d 
   // problem size, data pointers, and epilogue values
-  typename ImplicitGemm1::Arguments args1{
+  typename ProdCuSyncImplicitGemm1::Arguments args1{
     handle.prod(),
     problem_size,
     tensor_x.device_ref(),
@@ -621,8 +528,16 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
     tensor_y1.device_ref(),
     {options.alpha, options.beta},
   };
+  
+  ProdCuSyncImplicitGemm1 implicit_gemm_op1;
+  size_t workspace_size1 = implicit_gemm_op1.get_workspace_size(args1);
+  cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size1);
+  auto status = implicit_gemm_op1.can_implement(args1);
+  CUTLASS_CHECK(status);
+  status = implicit_gemm_op1.initialize(args1, workspace1.get());
+  CUTLASS_CHECK(status);
 
-  typename ImplicitGemm2::Arguments args2{
+  typename ConsCuSyncImplicitGemm2::Arguments args2{
     handle.cons(),
     problem_size,
     tensor_y1.device_ref(),
@@ -632,81 +547,38 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
     {options.alpha, options.beta},
   };
 
-  //
-  // Initialize CUTLASS Convolution
-  //
+  ConsCuSyncImplicitGemm2 implicit_gemm_op2;
+  size_t workspace_size2 = implicit_gemm_op2.get_workspace_size(args2);
+  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size2);
+  status = implicit_gemm_op2.can_implement(args2);
+  CUTLASS_CHECK(status);
+  status = implicit_gemm_op2.initialize(args2, workspace2.get());
+  CUTLASS_CHECK(status);
 
-  ImplicitGemm1 implicit_gemm_op1;
-  ImplicitGemm2 implicit_gemm_op2;
-  
-    size_t workspace_size1 = implicit_gemm_op1.get_workspace_size(args1);
+  for (int i = 0; i < runs; i++) {
+    handle.cons().iter += 1;
+    handle.prod().iter += 1;
+    args1.custage.iter += 1;
+    args2.custage.iter += 1;
+    double start = getCurrentTime();
+    auto status = implicit_gemm_op1(streams[0]);
+  //  waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
+    // CUDA_CHECK(cudaDeviceSynchronize());
+    // CUTLASS_CHECK(status);
+    handle.invokeWaitKernel(streams[1]);
+    // cudaDeviceSynchronize();
+    // double middle1 = getCurrentTime();
+    // conv1Time += middle1 - start;
+    status = implicit_gemm_op2(streams[1]);
 
-    // Allocate workspace memory
-    cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size1);
-
-    auto status = implicit_gemm_op1.can_implement(args1);
     CUTLASS_CHECK(status);
-
-    status = implicit_gemm_op1.initialize(args1, workspace1.get());
-    CUTLASS_CHECK(status);
-  
-    size_t workspace_size2 = implicit_gemm_op2.get_workspace_size(args2);
-
-    // Allocate workspace memory
-    cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size2);
-
-    status = implicit_gemm_op2.can_implement(args2);
-    CUTLASS_CHECK(status);
-
-    status = implicit_gemm_op2.initialize(args2, workspace2.get());
-    CUTLASS_CHECK(status);
-
-  if (!useCuSync) {
-    for (int i = 0; i < runs; i++) {
-      double start = getCurrentTime();
-      auto status = implicit_gemm_op1(args1, workspace1.get(), streams[0]);
-
-      CUTLASS_CHECK(status);
-      cudaDeviceSynchronize();
-      double middle1 = getCurrentTime();
-      conv1Time += middle1 - start;
-      status = implicit_gemm_op2(args2, workspace2.get(), streams[0]);
-
-      CUTLASS_CHECK(status);
-      cudaDeviceSynchronize();
-      double end = getCurrentTime();
-      conv2Time += end - middle1;
-      elapsedTime += end - start;
-      printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,middle1-start,end-middle1);
-    }
-  } else {
-    for (int i = 0; i < runs; i++) {
-      handle.iter += 1;
-      args1.custage.iter += 1;
-      args2.custage.iter += 1;
-      double start = getCurrentTime();
-      args1.custage.producerOrConsumer_ = true;
-      auto status = implicit_gemm_op1(args1, true, workspace1.get(), streams[0]);
-    //  waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
-      // CUDA_CHECK(cudaDeviceSynchronize());
-      // CUTLASS_CHECK(status);
-      handle.invokeWaitKernel(streams[1]);
-      // cudaDeviceSynchronize();
-      args2.custage.producerOrConsumer_ = false;
-      // double middle1 = getCurrentTime();
-      // conv1Time += middle1 - start;
-      status = implicit_gemm_op2(args2, true, workspace2.get(), streams[1]);
-
-      CUTLASS_CHECK(status);
-      cudaDeviceSynchronize();
-      double end = getCurrentTime();
-      // conv2Time += end - middle1;
-      elapsedTime += end - start;
-      printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,conv1Time,conv2Time);
-    }
+    cudaDeviceSynchronize();
+    double end = getCurrentTime();
+    // conv2Time += end - middle1;
+    elapsedTime += end - start;
+    printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,conv1Time,conv2Time);
   }
 }
-#endif
 
 /// Runs one benchmark
 Result profile_convolution(Options const &options) {
@@ -877,7 +749,7 @@ Result profile_convolution(Options const &options) {
   
   printf("END-BASELINE: {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
 
-  #if 0
+
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
   printf("gemm problem size: {%d, %d, %d}\n", gemm_problem_size.m(), gemm_problem_size.n(), gemm_problem_size.k());
   printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN, options.split_k_slices);
@@ -889,14 +761,13 @@ Result profile_convolution(Options const &options) {
   using Sync = RowSync;
   RowSync sync(gridDim.y);
 #elif TILESYNC
-  using Sync = TileSync;
   Sync sync;
 #else
   #error "Unkown Policy"
 #endif
-  
-  CuStageImpl prod(gridDim, tileSize, sync);
-  CuStageImpl cons(gridDim, tileSize, sync);
+
+  ProdCuStage prod(gridDim, tileSize, sync);
+  ConsCuStage cons(gridDim, tileSize, sync);
   prod.iter = cons.iter = 0;
   CuSyncImpl cuSyncHandle(prod, cons);
 
@@ -907,9 +778,11 @@ Result profile_convolution(Options const &options) {
   
   tensor_y1.sync_device();
   tensor_y2.sync_device();
-
-  runConvolution<true, CuSyncImplicitGemm1, CuSyncImplicitGemm2>
-    (problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, 1);
+  
+  runConvolution(problem_size, options, &streams[0], 
+                 cuSyncHandle, tensor_x, tensor_w1, 
+                 tensor_w2, tensor_y1, tensor_y2,
+                 elapsedTime, conv1Time, conv2Time, 1);
   
   if (options.reference_check) {
     // Check if output from CUTLASS kernel and reference kernel are equal or not
@@ -936,17 +809,13 @@ Result profile_convolution(Options const &options) {
       std::cout << "Second Passed.\n";
     }
   }
-
-  runConvolution<true, CuSyncImplicitGemm1, CuSyncImplicitGemm2>
-    (problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
+  runConvolution(problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
   elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
   printf("START-OVERLAP:\n");
-  runConvolution<true, CuSyncImplicitGemm1, CuSyncImplicitGemm2>
-    (problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
+  runConvolution(problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
   printf("END-OVERLAP {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
-#endif
   return result;
 }
 

@@ -340,8 +340,8 @@ public:
     tb_frag_A.clear();
     tb_frag_B.clear();
 
-    uint startK = tb_offset_A.column()/9;//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-    if (!producerOrConsumer && startK%Shape::kN == 0) {
+    uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
+    if (custage.isConsumer() && startK%Shape::kN == 0) {
       dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
       custage.wait(tile);
     }
@@ -437,8 +437,8 @@ public:
 
         if (warp_mma_k == 0) {
           uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-          startK = startK/9;
-          if (!producerOrConsumer && startK > Shape::kN && startK%Shape::kN == 0) {
+          // startK = startK/9;
+          if (custage.isConsumer() && startK > Shape::kN && startK%Shape::kN == 0) {
             dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
             custage.wait(tile);
           }

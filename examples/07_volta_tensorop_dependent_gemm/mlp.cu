@@ -32,9 +32,13 @@
 //<OPTIMIZATIONS>
 //</OPTIMIZATIONS>
 
+#if defined(TILESYNC)
+#define NO_ATOMIC_ADD
+#define REORDER_TILE_LOADS
+#endif
+
 // #if defined(TILESYNC) || defined(TILEBATCH)
 // #define AVOID_CUSTOM_ORDER
-// #define REORDER_TILE_LOADS
 // #define AVOID_WAIT_KERNEL
 // #endif 
 
@@ -67,8 +71,8 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 256, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 128, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
@@ -941,7 +945,7 @@ int run(int argc, char* argv[]) {
                    (uint)DIVUP(mlpParams.gemm_size2.n(), ShapeMMAThreadBlock::kN), 
                    split_k2};
   dim3 tileSize = {ShapeMMAThreadBlock::kM, ShapeMMAThreadBlock::kN, 1};
-  printf("gridDim1.y %d\n", gridDim1.y);
+
 #if defined(ROWSYNC)
   using Sync = RowSync;
   uint waitValue = gridDim1.y;

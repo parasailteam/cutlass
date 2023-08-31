@@ -30,13 +30,35 @@
  **************************************************************************************************/
 
 //<OPTIMIZATIONS>
-// #define AVOID_CUSTOM_ORDER
-// #define AVOID_WAIT_KERNEL
-// #define REORDER_TILE_LOADS
-
 //</OPTIMIZATIONS>
 
+// #if defined(TILESYNC)
+// #define NO_ATOMIC_ADD
+// #endif
+
+// #if defined(TILESYNC) || defined(TILEBATCH) || defined(STRIDEDSYNC)
+// #define AVOID_CUSTOM_ORDER
+// #define REORDER_TILE_LOADS
+// #define AVOID_WAIT_KERNEL
+// #endif
+
 #include<cuSync.h>
+
+#include "common.h"
+
+#ifndef EVAL_TILE_SIZES
+//Tile sizes of all GeMMs
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
+const int SoftmaxRowTile = 1;
+#else
+//<eval tiles>
+const int SoftmaxRowTile = 1;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+//</eval tiles>
+#endif
+
 
 template<uint H, uint Tile, uint stride>
 struct StridedSync {
@@ -60,26 +82,11 @@ struct StridedSync {
   }
 
   __device__ bool isSync(const dim3& tile, const dim3& grid) {
-    return true; //tile.y < H/8;
+    return true; //tile.y < (H/8)/ShapeMMAThreadBlock::kN;
   }
 };
 
-#include "common.h"
-
-#ifndef EVAL_TILE_SIZES
-//Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<64, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
-const int SoftmaxRowTile = 1;
-#else
-//<eval tiles>
-const int SoftmaxRowTile = 1;
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
-//</eval tiles>
-#endif
-
-const int SoftmaxThreads = 256;
+const int SoftmaxThreads = ShapeMMAThreadBlock::kN;
 using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  
 
 
@@ -290,22 +297,19 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
 
     for (uint COL = threadIdx.x; COL < N; COL += blockDim.x) {
       if (enableOverlap) {
-        if (ti == 0) {
+        if (ti == 0 && ROW % TileM == 0) {
           dim3 tile = {tileM, COL/TileN, 0};
           cons1.wait(tile, (COL/TileN)%NTHREADS);
         }
       }
       T xq = XQKV[ROW * 3 * N + COL];
-      if (enableOverlap  && ti == 0) {
+      if (enableOverlap  && ti == 0 && ROW % TileM == 0) {
         dim3 tile = {tileM, N/TileN + COL/TileN, 0};
         #ifdef TILESYNC
         cons1.wait(tile, (COL/TileN)%NTHREADS);
         #endif
       }
       T xk = XQKV[ROW * 3 * N + (COL + N)];
-      // if (enableOverlap) {
-      //   handle.waitOnTiles();
-      // }
       T xqk = xq * xk;
       threadSum += (AT)exp((AT)xqk);
       xqkRows[COL] = xqk;
@@ -313,21 +317,13 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
     __syncthreads();
     atomicAdd(&sum, (AT)threadSum);
     __syncthreads();
-    // if (threadIdx.x == 0) printf("sum %f\n", sum);
-    // for (int COL = threadIdx.x; COL < N; COL += blockDim.x) {
-    //   xqkRows[COL] = xqkRows[COL]/(__half)sum;
-    // }
-    // __syncthreads();
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //   printf("185: %p\n", out);
-    // }
     for (uint COL = threadIdx.x; COL < N; COL += blockDim.x) {
       float r = curand_uniform(localRandState);
       // if (enableOverlap && ti == 0) {
       //   if (rowSyncOrTileSync) {
 
       //   } else {
-      if (enableOverlap && ti == 0) {
+      if (enableOverlap && ti == 0 && ROW % TileM == 0) {
         dim3 tile = {tileM, N/TileN*2 + COL/TileN, 0};
         #ifndef TILESYNC
         cons1.wait(tile, (COL/TileN)%NTHREADS);
@@ -335,12 +331,8 @@ __global__ void selfAttnDotProdSoftmaxDropout(uint32_t M, uint32_t N,
       }
       __half v = (r <= p) ? (__half)(((float)(exp((AT)xqkRows[COL]) * 
                                      (float)XQKV[ROW* 3 * N + (COL + 2 * N)]))/sum) : (__half)0.0f;
-      // if (COL == 0 && blockIdx.x < 8) {
-      //   printf("199: %f %f %f %f %f\n", r, p, (float)v, (float)xqkRows[COL], (float)XQKV[ROW*N + COL]);
-      // }
       out[ROW * N + COL] = v;
       if (enableOverlap && ti == SoftmaxRowTile - 1) {
-        // printf("206: COL %d TileN %d threadIdx.x %d\n", COL, TileN, threadIdx.x);
         dim3 tile = {tileM, COL/TileN, 0};
         prod2.post(tile, ((COL/TileN)*TileN)%NTHREADS);
       }
@@ -633,8 +625,8 @@ cudaError_t runAttentionCuSync(int split_k1, int split_k2,
 #ifndef AVOID_WAIT_KERNEL    
     handle2.invokeWaitKernel(streams[2]);
 #endif
-    // CUDA_CHECK(cudaDeviceSynchronize());
-
+    CUDA_CHECK(cudaDeviceSynchronize());
+    
     status = gemm_op2.run(true, NULL, streams[2]);
     CUTLASS_CHECK(status);
 
@@ -789,8 +781,8 @@ int run(int argc, char* argv[]) {
   attnParams.initRefs();
   
   cudaError_t result;
-  int epochs = 30;
-  int warmup = 20;
+  int epochs = 20;
+  int warmup = 10;
 
   if (doChecking) {
     result = host_attention(attnParams);
@@ -841,7 +833,7 @@ int run(int argc, char* argv[]) {
   using Sync1 = RowSync;
   RowSync sync1(gridDim1.y);
   using Sync2 = RowSync;
-  Sync2 sync2(ShapeMMAThreadBlock::kM, SoftmaxRowTile); 
+  Sync2 sync2(min(ShapeMMAThreadBlock::kM, attnParams.gemm_size1.m()), SoftmaxRowTile); 
 #elif defined(TILESYNC)
   using Sync1 = TileSync<1>;
   using Sync2 = Sync1;

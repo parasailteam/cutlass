@@ -16,7 +16,7 @@ mlp-batchedrow: mlp.cu common.h
 	/usr/local/cuda-11.2/bin/nvcc  $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DBATCHEDROW
 
 mlp-tilebatchsync: mlp.cu common.h
-	/usr/local/cuda-11.2/bin/nvcc  $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DTILEBATCH -DCUSTOM_ORDER
+	/usr/local/cuda-11.2/bin/nvcc  $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DTILEBATCH
 
 mlp-rowsync: mlp.cu common.h
 	/usr/local/cuda-11.2/bin/nvcc  $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DROWSYNC

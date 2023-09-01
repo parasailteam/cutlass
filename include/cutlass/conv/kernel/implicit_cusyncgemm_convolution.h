@@ -454,9 +454,8 @@ struct ImplicitCuSyncGemmConvolution {
 
   /// Executes one ImplicitGEMM
   CUTLASS_DEVICE
-  void run_overlap_gemm(Params &params, SharedStorage &shared_storage,
-            bool isProducerOrConsumer) {
-    CuStageImpl& stage = params.custage; //(isProducerOrConsumer) ? params.syncHandle.prod() : params.syncHandle.cons();
+  void run_overlap_gemm(Params &params, SharedStorage &shared_storage) {
+    CuStageImpl& stage = params.custage; 
     dim3 new_block_idx = stage.tile(&shared_storage.tile_idx);
     const uint block_idx_y = new_block_idx.y;
     const uint block_idx_x = new_block_idx.x;
@@ -467,14 +466,14 @@ struct ImplicitCuSyncGemmConvolution {
 
     cutlass::gemm::GemmCoord threadblock_tile_idx =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, 
-        block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
+        block_idx_x, block_idx_y, block_idx_z, stage.isProducer());
 
     // Early exit if CTA is out of range
-    if (params.grid_tiled_shape.m() <= threadblock_tile_idx.m() ||
-      params.grid_tiled_shape.n() <= threadblock_tile_idx.n()) {
+    // if (params.grid_tiled_shape.m() <= threadblock_tile_idx.m() ||
+    //   params.grid_tiled_shape.n() <= threadblock_tile_idx.n()) {
 
-      return;
-    }
+    //   return;
+    // }
 
     // Compute position within threadblock
     int thread_idx = threadIdx.x;
@@ -534,10 +533,10 @@ struct ImplicitCuSyncGemmConvolution {
     accumulators.clear();
 
     // Compute threadblock-scoped matrix multiply-add
-    if (isProducerOrConsumer)
+    if (!stage.isConsumer())
       mma(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, params.gemm_k_iterations_per_channel);
     else {
-      mma.doWithOverlap(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, isProducerOrConsumer, stage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y, params.gemm_k_iterations_per_channel);
+      mma.doWithOverlap(params.gemm_k_iterations, accumulators, iterator_A, iterator_B, accumulators, stage.isProducer(), stage, tb_offset_A, tb_offset_B, block_idx_x, block_idx_y, params.gemm_k_iterations_per_channel);
     }
     //
     // Epilogue
@@ -553,7 +552,7 @@ struct ImplicitCuSyncGemmConvolution {
     // Compute logical position within grid
     threadblock_tile_idx =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile,
-        block_idx_x, block_idx_y, block_idx_z, isProducerOrConsumer);
+        block_idx_x, block_idx_y, block_idx_z, stage.isProducer());
 
     // If performing a reduction via split-K, fetch the initial synchronization
     if (params.split_k_mode == SplitKMode::kSerial && params.grid_tiled_shape.k() > 1) {
@@ -624,7 +623,7 @@ struct ImplicitCuSyncGemmConvolution {
 
       int lock = 0;
       if (params.grid_tiled_shape.k() == threadblock_tile_idx.k() + 1) {
-        if (isProducerOrConsumer) {
+        if (stage.isProducer()) {
           dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
           stage.post(tile);
         }
@@ -638,7 +637,7 @@ struct ImplicitCuSyncGemmConvolution {
       
       semaphore.release(lock);
     } else {
-      if (isProducerOrConsumer) {
+      if (stage.isProducer()) {
         dim3 tile = {block_idx_x, block_idx_y, block_idx_z};
         stage.post(tile);
       }

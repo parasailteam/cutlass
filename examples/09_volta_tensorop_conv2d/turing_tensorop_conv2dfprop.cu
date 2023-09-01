@@ -33,13 +33,23 @@
 #include <fstream>
 #include <sstream>
 
+//<OPTIMIZATIONS>
+//</OPTIMIZATIONS>
+// #define AVOID_CUSTOM_ORDER
+// #define AVOID_WAIT_KERNEL
+// #define NO_ATOMIC_ADD
+
+#ifdef TILESYNC
+  #define REORDER_TILE_LOADS
+#endif
+
 #include <cuSync.h>
 
 #ifdef ROWSYNC 
   using Sync = RowSync;
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
-#elif TILESYNC
+#elif defined(TILESYNC)
   using Sync = Conv2DTileSync<1, 3*3>;
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
@@ -110,10 +120,13 @@ using LayoutOutput = cutlass::layout::TensorNHWC;
 
 using MMAOp = cutlass::arch::OpClassTensorOp;
 using SmArch = cutlass::arch::Sm70;
-using ThreadblockShape = cutlass::gemm::GemmShape<64, 64, 32>;
-using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;
-using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;
 
+//<eval tiles>
+using ThreadblockShape = cutlass::gemm::GemmShape<128, 256, 32>;
+using WarpShape = cutlass::gemm::GemmShape<64, 128, 32>;
+//</eval tiles>
+
+using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;
 using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 
 constexpr int NumStages = 2;
@@ -326,11 +339,6 @@ struct Options {
     cmd.get_cmd_line_argument("r", filter_size.h());
     cmd.get_cmd_line_argument("s", filter_size.w());
     filter_size.c() = input_size.c(); 
-
-    int syncType;
-    cmd.get_cmd_line_argument("syncType", syncType);
-    if (syncType == 0) rowSyncOrTileSync = false;
-    else rowSyncOrTileSync = true;
 
     cmd.get_cmd_line_argument("alpha", alpha);
     cmd.get_cmd_line_argument("beta", beta);
@@ -558,14 +566,16 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
   for (int i = 0; i < runs; i++) {
     handle.cons().iter += 1;
     handle.prod().iter += 1;
-    args1.custage.iter += 1;
-    args2.custage.iter += 1;
+    implicit_gemm_op1.params_.custage.iter += 1;
+    implicit_gemm_op2.params_.custage.iter += 1;
     double start = getCurrentTime();
     auto status = implicit_gemm_op1(streams[0]);
   //  waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
     // CUDA_CHECK(cudaDeviceSynchronize());
     // CUTLASS_CHECK(status);
+#ifndef AVOID_WAIT_KERNEL
     handle.invokeWaitKernel(streams[1]);
+#endif
     // cudaDeviceSynchronize();
     // double middle1 = getCurrentTime();
     // conv1Time += middle1 - start;
@@ -752,15 +762,16 @@ Result profile_convolution(Options const &options) {
 
   auto gemm_problem_size = cutlass::conv::implicit_gemm_problem_size(cutlass::conv::Operator::kFprop, problem_size);
   printf("gemm problem size: {%d, %d, %d}\n", gemm_problem_size.m(), gemm_problem_size.n(), gemm_problem_size.k());
-  printf("Number of thread blocks for both convs: {%d, %d, %d}\n", (gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM,gemm_problem_size.n()/ThreadblockShape::kN, options.split_k_slices);
   dim3 gridDim = {(gemm_problem_size.m()+ThreadblockShape::kM-1)/ThreadblockShape::kM, 
-      (gemm_problem_size.n() + ThreadblockShape::kN - 1)/ThreadblockShape::kN, 1};
+      (gemm_problem_size.n() + ThreadblockShape::kN - 1)/ThreadblockShape::kN, options.split_k_slices};
   dim3 tileSize = {ThreadblockShape::kM, ThreadblockShape::kN, 1};
+  printf("gridDim: {%d, %d, %d}\n", gridDim.x, gridDim.y, gridDim.z);
+
   
-#if ROWSYNC
+#if defined(ROWSYNC)
   using Sync = RowSync;
   RowSync sync(gridDim.y);
-#elif TILESYNC
+#elif defined(TILESYNC)
   Sync sync;
 #else
   #error "Unkown Policy"

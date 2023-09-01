@@ -136,11 +136,11 @@ using ShapeMMAWarp = cutlass::gemm::GemmShape<%d, %d, %d>;"""
   optimizationsCode += "#define " + syncPolicy.upper() + "\n"
   optimizationsCode += "#define " + "EVAL_TILE_SIZES" + "\n"
   mlpFileContents = mlpFileContents[0:optimizationsStart] + "\n" + optimizationsCode + "\n" + mlpFileContents[optimizationsEnd:]
-
-  with open(outMLPFile, "r") as f:
-    oldContents = f.read()
-    if mlpFileContents == oldContents:
-      return
+  if os.path.exists(outMLPFile):
+    with open(outMLPFile, "r") as f:
+      oldContents = f.read()
+      if mlpFileContents == oldContents:
+        return
   with open(outMLPFile, "w") as f:
     f.write(mlpFileContents)
 
@@ -640,7 +640,7 @@ if 'stridedsync' in policies and attention_or_mlp == 'mlp':
 
 deleteFiles(policies+['baseline'], attention_or_mlp)
 
-for m in [128,256]: #[1,2,4,8,16,32,64,128,256,512,1024,2048]:
+for m in [1,2,4,8,16,32,64,128,256,512,1024,2048]:
   if False:
     if attention_or_mlp == "attention":
       (s, o) = subprocess.getstatusoutput(f"python3 torch-baselines/torchAttention.py {m} {int(H/8)} {H} {H}")

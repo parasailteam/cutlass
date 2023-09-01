@@ -225,19 +225,6 @@ struct CuSyncGemm {
     cutlass::gemm::GemmCoord threadblock_tile_offset =
         threadblock_swizzle.get_tile_offset(params.swizzle_log_tile, block_idx_x, block_idx_y, block_idx_z, true);
 
-    // if (isProducerOrConsumer && threadIdx.x == 0 && params.syncHandle.iter == 1) {
-    //   printf("grid_tiled_shape.m() %d grid_tiled_shape.n() %d tb.m() %d tb.n() %d blockIdx.x %d blockIdx.y %d\n", params.grid_tiled_shape.m(), params.grid_tiled_shape.n(), threadblock_tile_offset.m(), threadblock_tile_offset.n(), blockIdx.x, blockIdx.y);
-    // }
-    // Early exit if CTA is out of range
-    // if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
-    //   params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {
-
-    //   return;
-    // }
-    // if (isProducerOrConsumer && threadIdx.x == 0) {
-    //   printf("%d %d\n", start_block_idx_x, start_block_idx_y);
-    // }
-
     // Early exit if CTA is out of range
     // if (params.grid_tiled_shape.m() <= threadblock_tile_offset.m() ||
     //   params.grid_tiled_shape.n() <= threadblock_tile_offset.n()) {

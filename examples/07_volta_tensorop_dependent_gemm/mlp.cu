@@ -37,6 +37,9 @@
 #define REORDER_TILE_LOADS
 #endif
 
+// #define AVOID_CUSTOM_ORDER
+// #define AVOID_WAIT_KERNEL
+
 // #if defined(TILESYNC) || defined(TILEBATCH)
 // #define AVOID_CUSTOM_ORDER
 // #define AVOID_WAIT_KERNEL
@@ -71,8 +74,8 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 128, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 64, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 128, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
@@ -519,14 +522,14 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
     double start = timeInMicroSeconds();
     status = gemm_opXW1(stream1);
     CUTLASS_CHECK(status);
-    CUDA_CHECK(cudaStreamSynchronize(stream1));
+    CUDA_CHECK(cudaDeviceSynchronize());
     double middle1 = timeInMicroSeconds();
     double iterMatMul1 = middle1-start;
     matmul1Time += iterMatMul1;
 
-    status = gemm_opXV(stream2);
+    status = gemm_opXV(stream1);
     CUTLASS_CHECK(status);
-    CUDA_CHECK(cudaStreamSynchronize(stream2));
+    CUDA_CHECK(cudaDeviceSynchronize());
     double middle2 = timeInMicroSeconds();
     double iterMatMul2 = middle2-middle1;
     matmul2Time += iterMatMul2;

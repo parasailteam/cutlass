@@ -341,11 +341,27 @@ public:
     tb_frag_B.clear();
 
     uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-    if (custage.isConsumer() && startK%Shape::kN == 0) {
+    if (custage.isConsumer() && startK%Shape::kN) {
       dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
-      custage.wait(tile);
+      #ifdef REORDER_TILE_LOADS
+      custage.wait(tile, 0, false);
+      #else
+      custage.wait(tile, 0, true);
+      #endif
     }
 
+    #ifdef REORDER_TILE_LOADS
+    // The last kblock is loaded in the prolog
+    iterator_B.load(tb_frag_B);
+    ++iterator_B;
+    this->smem_iterator_B_.store(transform_B(tb_frag_B));
+    ++this->smem_iterator_B_;
+
+    iterator_A.load(tb_frag_A);
+    ++iterator_A;
+    this->smem_iterator_A_.store(transform_A(tb_frag_A));
+    ++this->smem_iterator_A_;
+    #else
     // The last kblock is loaded in the prolog
     iterator_A.load(tb_frag_A);
     iterator_B.load(tb_frag_B);
@@ -358,6 +374,7 @@ public:
 
     ++this->smem_iterator_A_;
     ++this->smem_iterator_B_;
+    #endif
 
     __syncthreads();
 
@@ -436,17 +453,30 @@ public:
         ++this->warp_tile_iterator_B_;
 
         if (warp_mma_k == 0) {
+          
           uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
           // startK = startK/9;
           if (custage.isConsumer() && startK > Shape::kN && startK%Shape::kN == 0) {
             dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
-            custage.wait(tile);
+            #ifdef REORDER_TILE_LOADS
+            custage.wait(tile, 0, false);
+            #else
+            custage.wait(tile, 0, true);
+            #endif
           }
+          #ifdef REORDER_TILE_LOADS
+          iterator_B.load(tb_frag_B);
+          ++iterator_B;
+          
+          iterator_A.load(tb_frag_A);
+          ++iterator_A;
+          #else
           iterator_A.load(tb_frag_A);
           iterator_B.load(tb_frag_B);
     
           ++iterator_A;
           ++iterator_B;
+          #endif
         }
 
         warp_mma(accum, warp_frag_A[warp_mma_k % 2],

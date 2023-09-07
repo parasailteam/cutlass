@@ -447,22 +447,36 @@ using WarpShape = cutlass::gemm::GemmShape<%d, %d, %d>;"""
 
 policies=['rowsync','tilesync']
 deleteFiles(policies+['baseline'])
-for c in [512]: #64
+for c in [64,128,256,512]: #
   for m in [1, 4, 8,12, 16, 20, 24, 28, 32]:
-    if False:
-      (s, o) = subprocess.getstatusoutput(f"python3 torchconv2d.py {m} {c}")
-      if s != 0:
-        print(o)
-      else:
-        torchTime = float(o)
+    command_args = f"--n={m} --h={hw[c]['h']} --w={hw[c]['w']} --c={c} --k={c} --r=3 --s=3"
+    split_k = f"--split_k_slices={tiles[m][c]['baseline']['split_k']}"
     policies = ['rowsync', 'tilesync']
     for syncPolicy in (policies+['baseline']):
       genFiles(tiles[m][c], syncPolicy)
 
     makeFiles(policies+['baseline'])
 
-    command_args = f"--n={m} --h={hw[c]['h']} --w={hw[c]['w']} --c={c} --k={c} --r=3 --s=3"
-    split_k = f"--split_k_slices={tiles[m][c]['baseline']['split_k']}"
+    if True:
+      (s, o) = subprocess.getstatusoutput(f"python3 torchconv2d.py {m} {c}")
+      if s != 0:
+        print(o)
+      else:
+        torchTime = float(o)
+        print(f"{m} & {c} & torch & {'%.2f'%torchTime}")
+      (s, o) = subprocess.getstatusoutput("make conv-eval-streamk")
+      if s != 0:
+        print(o)
+      
+      # (s, o) = subprocess.getstatusoutput("./conv-eval-streamk " + command_args + " " + split_k)
+      # print(o)
+      # if s != 0:
+      #   print(o)
+      # else:    
+      #   streamkTimes = getAllTimes(o, "START-BASELINE", "END-BASELINE")
+      #   print(f"{m} & {c} & streank & {'%.2f'%avg(streamkTimes)} & {'%.2f'%stdev(streamkTimes)}")
+
+
     (s, o) = subprocess.getstatusoutput("./conv-eval-baseline " + command_args + " " + split_k)
     baselineTimes = getAllTimes(o, "START-BASELINE", "END-BASELINE")
     bTimes = baselineTimes["Total"]

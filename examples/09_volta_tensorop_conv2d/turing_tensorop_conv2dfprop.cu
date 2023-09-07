@@ -45,20 +45,6 @@
 
 #include <cuSync.h>
 
-#ifdef ROWSYNC 
-  using Sync = RowSync;
-  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
-  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
-#elif defined(TILESYNC)
-  using Sync = Conv2DTileSync<1, 3*3>;
-  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
-  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
-#else
-  #error "Unknown Synchronization"
-#endif 
-
-using CuSyncImpl = CuSync<ProdCuStage, ConsCuStage>;
-
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
 #include "cutlass/conv/kernel/default_conv2d_fprop.h"
@@ -126,8 +112,22 @@ using ThreadblockShape = cutlass::gemm::GemmShape<128, 256, 32>;
 using WarpShape = cutlass::gemm::GemmShape<64, 128, 32>;
 //</eval tiles>
 
+#ifdef ROWSYNC 
+  using Sync = RowSync;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
+#elif defined(TILESYNC)
+  using Sync = Conv2DTileSync<1, 3*3, ThreadblockShape::kN>;
+  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
+  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
+#else
+  #error "Unknown Synchronization"
+#endif 
+
+using CuSyncImpl = CuSync<ProdCuStage, ConsCuStage>;
+
+
 using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;
-using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 
 constexpr int NumStages = 2;
 
@@ -137,6 +137,11 @@ using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
     ElementAccumulator,
     ElementComputeEpilogue>;
 
+#ifdef STREAM_K
+using SwizzleThreadBlock = cutlass::gemm::threadblock::ThreadblockSwizzleStreamK;
+#else
+using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
+#endif
 
 using Conv2dFpropKernel = 
   typename kernel::DefaultConv2dFprop<ElementInputA, LayoutInputA,
@@ -149,13 +154,15 @@ using Conv2dFpropKernel =
                                               WarpShape,
                                               InstructionShape,
                                               EpilogueOp,
-                                              cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+                                              SwizzleThreadBlock,
                                               NumStages,
                                               cutlass::arch::OpMultiplyAdd,
                                               cutlass::conv::IteratorAlgorithm::kAnalytic>::Kernel;
 
 using BaselineImplicitGemm1 = device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 using BaselineImplicitGemm2 = device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+
+using CuSyncSwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 
 using ProdConv2dKernel =
   typename kernel::CuSyncDefaultConv2dFprop<ProdCuStage,
@@ -169,7 +176,7 @@ using ProdConv2dKernel =
                                                             WarpShape,
                                                             InstructionShape,
                                                             EpilogueOp,
-                                                            SwizzleThreadBlock,
+                                                            CuSyncSwizzleThreadBlock,
                                                             NumStages,
                                                             cutlass::arch::OpMultiplyAdd,
                                                             cutlass::conv::IteratorAlgorithm::kAnalytic
@@ -187,7 +194,7 @@ using ConsConv2dKernel =
                                                             WarpShape,
                                                             InstructionShape,
                                                             EpilogueOp,
-                                                            SwizzleThreadBlock,
+                                                            CuSyncSwizzleThreadBlock,
                                                             NumStages,
                                                             cutlass::arch::OpMultiplyAdd,
                                                             cutlass::conv::IteratorAlgorithm::kAnalytic
@@ -790,6 +797,7 @@ Result profile_convolution(Options const &options) {
   tensor_y1.sync_device();
   tensor_y2.sync_device();
   
+#ifndef STREAM_K
   runConvolution(problem_size, options, &streams[0], 
                  cuSyncHandle, tensor_x, tensor_w1, 
                  tensor_w2, tensor_y1, tensor_y2,
@@ -827,6 +835,8 @@ Result profile_convolution(Options const &options) {
   printf("START-OVERLAP:\n");
   runConvolution(problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
   printf("END-OVERLAP {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
+#endif
+
   return result;
 }
 

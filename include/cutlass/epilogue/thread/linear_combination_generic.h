@@ -189,7 +189,6 @@ public:
 
     multiplies<FragmentCompute> mul_add_accumulator;
     ActivationFunctor<FragmentCompute> activation;
-    if (threadIdx.x == 0) printf("194\n");
 
     if (Scale == ScaleType::Nothing) {
       intermediate = converted_accumulator;

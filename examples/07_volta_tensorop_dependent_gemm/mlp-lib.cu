@@ -320,7 +320,7 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
   //Setup XW12 GeMM
   typename GemmTy3::Arguments argsXW12{
     mlpParams.gemm_size2, 
-    mlpParams.xw1, 
+    mlpParams.xv, 
     mlpParams.w2, 
     mlpParams.xw12, 
     mlpParams.xw12, 
@@ -396,24 +396,24 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
   return result;
 }
 
-MLPParameters llamaMLPParams;
 
 extern "C"
-void initMLPParams(const void* w1, const void* v, const void* w2, const uint batch) {
+MLPParameters* initMLPParams(const void* w1, const void* v, const void* w2, const uint batch) {
   const size_t H = 8192;
   printf("w1 %p v %p w2 %p\n", w1, v, w2);
 
-  llamaMLPParams = MLPParameters(std::string("llama"), batch, 
+  MLPParameters* llamaMLPParams = new MLPParameters(std::string("llama"), batch, 
                                  (const ElementInputA*)w1, 
                                  (const ElementInputA*)v,
                                  (const ElementInputA*)w2);
+  return llamaMLPParams;
 }
 
 extern "C"
-void runLLAMA(const void* x, const void* silu, const void* xv, const void* out) {
+void runLLAMA(MLPParameters* llamaMLPParams, const void* x, const void* silu, const void* xv, const void* out) {
   double times = 0;
-  llamaMLPParams.setInput((ElementInputA*)x);
-  llamaMLPParams.setIntermediate((ElementInputA*)silu, (ElementInputA*)xv);
-  llamaMLPParams.setOutput((ElementInputA*)out);
-  runBaselineLLaMA(1, 1, llamaMLPParams, 0, 0, times, times, times, times, 1);
+  llamaMLPParams->setInput((ElementInputA*)x);
+  llamaMLPParams->setIntermediate((ElementInputA*)silu, (ElementInputA*)xv);
+  llamaMLPParams->setOutput((ElementInputA*)out);
+  runBaselineLLaMA(1, 1, *llamaMLPParams, 0, 0, times, times, times, times, 1);
 }

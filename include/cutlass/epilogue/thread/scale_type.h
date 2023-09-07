@@ -51,6 +51,7 @@ struct ScaleType {
     NoBetaScaling,     // alpha x C + D
     OnlyAlphaScaling,  // alpha x C
     OnlyAlphaPerChannelScaling, // alpha_vec x C
+    SwishScaling, //alpha x C x D
     Nothing           // C
   };
 };

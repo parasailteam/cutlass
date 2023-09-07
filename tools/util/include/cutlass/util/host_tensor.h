@@ -151,6 +151,18 @@ public:
     this->reset(extent, layout, device_backed);
   }
 
+  /// Constructs a tensor given an extent and layout
+  HostTensor(
+    TensorCoord const &extent,
+    Layout const &layout,
+    device_memory::allocation<Element> device,
+    bool device_backed = true
+  ) {
+
+    device_ = device;
+    this->reset(extent, layout, device_backed);
+  }
+
   ~HostTensor() { }
 
   /// Clears the HostTensor allocation to size/capacity = 0
@@ -283,6 +295,21 @@ public:
   ConstTensorRef device_ref(LongIndex ptr_element_offset=0) const {
     return TensorRef(device_data_ptr_offset(ptr_element_offset), layout_);
   }
+
+
+  /// Gets pointer to device data with a pointer offset
+  Element * device_data_ptr_offset(Element* device_ptr, LongIndex ptr_element_offset) { return &ReferenceFactory<Element>::get(device_ptr, ptr_element_offset); }
+
+  /// Accesses the tensor reference pointing to data
+  TensorRef device_ref(Element* device_ptr, LongIndex ptr_element_offset=0) {
+    return TensorRef(device_data_ptr_offset(device_ptr, ptr_element_offset), layout_);
+  }
+
+  /// Accesses the tensor reference pointing to data
+  ConstTensorRef device_ref(Element* device_ptr, LongIndex ptr_element_offset=0) const {
+    return TensorRef(device_data_ptr_offset(device_ptr, ptr_element_offset), layout_);
+  }
+
 
   /// Accesses the tensor reference pointing to data
   TensorView host_view(LongIndex ptr_element_offset=0) {

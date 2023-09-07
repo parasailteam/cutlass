@@ -156,6 +156,10 @@ public:
       intermediate = mul_add_accumulator(params_.alpha, converted_accumulator, intermediate);    // D = alpha * Accum + X
     }  else if (Scale == ScaleType::Nothing) {
       intermediate = converted_accumulator;
+    } else if (Scale == ScaleType::SwishScaling) {
+      multiplies<FragmentCompute> mul;
+      intermediate = mul(params_.alpha, converted_accumulator);                     // X = alpha * Accum
+      intermediate = mul(intermediate, converted_source);                           // D = X * C 
     } else {
       intermediate = mul_add_source(params_.beta, converted_source);                             // X =  beta * C + uniform
       intermediate = mul_add_accumulator(params_.alpha, converted_accumulator, intermediate);    // D = alpha * Accum + X
@@ -185,6 +189,7 @@ public:
 
     multiplies<FragmentCompute> mul_add_accumulator;
     ActivationFunctor<FragmentCompute> activation;
+    if (threadIdx.x == 0) printf("194\n");
 
     if (Scale == ScaleType::Nothing) {
       intermediate = converted_accumulator;

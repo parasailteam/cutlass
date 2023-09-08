@@ -468,6 +468,24 @@ public:
     return Status::kSuccess;
   }
 
+  /// Lightweight update given a subset of arguments
+  Status updateA(TensorRefA a) {
+    params_.ref_A.reset(a.non_const_ref().data());
+  
+    return Status::kSuccess;
+  }
+
+  Status updateC(TensorRefC c) {
+    params_.ref_C.reset(c.non_const_ref().data());
+  
+    return Status::kSuccess;
+  }
+
+  Status updateD(TensorRefD d) {
+    params_.ref_D.reset(d.non_const_ref().data());
+    
+    return Status::kSuccess;
+  }
   /// Runs the kernel using initialized state.
   Status run(cudaStream_t stream = nullptr) {
 
@@ -796,6 +814,25 @@ public:
   Status update(Arguments const &args, void *workspace = nullptr) {
 
     return underlying_operator_.update(to_underlying_arguments(args), workspace);
+  }
+
+  /// Lightweight update given a subset of arguments
+  Status updateA(TensorRefA a) {
+    underlying_operator_.updateA(a);
+  
+    return Status::kSuccess;
+  }
+
+  Status updateC(TensorRefC c) {
+    underlying_operator_.updateC(c);
+  
+    return Status::kSuccess;
+  }
+
+  Status updateD(TensorRefD d) {
+    underlying_operator_.updateD(d);
+    
+    return Status::kSuccess;
   }
 
   /// Runs the kernel using initialized state.

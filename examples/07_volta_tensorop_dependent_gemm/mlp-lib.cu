@@ -176,6 +176,7 @@ enum MLPType {
   LLaMa    
 };
 
+template<typename GemmTy1, typename GemmTy2, typename GemmTy3>
 struct MLPParameters {
   TensorRef x; //[B, H]
   TensorRef w1; //[H, 4H/8] in GPT-3 and [H, H/3] in LLaMa
@@ -203,6 +204,14 @@ struct MLPParameters {
   ElementComputeEpilogue beta;
 
   std::string model;
+
+  GemmTy1 gemm1;
+  GemmTy2 gemm2;
+  GemmTy3 gemm3;
+
+  typename GemmTy1::Arguments argsXW1;
+  typename GemmTy2::Arguments argsXV;
+  typename GemmTy3::Arguments argsXW12;
 
   MLPParameters() {
     
@@ -232,10 +241,62 @@ struct MLPParameters {
     w2 = TensorRef((cutlass::half_t*)w2Ptr, layout_);
     v = TensorRef((cutlass::half_t*)vPtr, layout_);
     checkResults = false;
+
+    //Initialize GeMMs
+
+    //Setup XW1 GeMM;
+    int split_k1 = 1; 
+    int split_k2 = 1;
+    argsXW1 = typename GemmTy1::Arguments {gemm_size1,
+                                           x, 
+                                           w1,
+                                           xw1,
+                                           xw1,
+                                           {alpha, beta},
+                                           split_k1};
+
+    size_t workspace_size = GemmTy1::get_workspace_size(argsXW1);
+    cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
+    cutlass::Status status = gemm1.can_implement(argsXW1);
+    CUTLASS_CHECK(status);
+    status = gemm1.initialize(argsXW1, workspace1.get());
+    CUTLASS_CHECK(status);
+    
+    //Setup XV GeMM
+    argsXV = typename GemmTy2::Arguments {gemm_size1,
+                                          x, 
+                                          v,
+                                          xw1,
+                                          xv,
+                                          {alpha, ElementComputeEpilogue(1.0f)},
+                                          split_k1};
+    workspace_size = GemmTy2::get_workspace_size(argsXV);
+    cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
+    status = gemm2.can_implement(argsXV);
+    CUTLASS_CHECK(status);
+    status = gemm2.initialize(argsXV, workspace2.get());
+    CUTLASS_CHECK(status);
+
+    //Setup XW12 GeMM
+    argsXW12 = typename GemmTy3::Arguments {gemm_size2, 
+                                            xv, 
+                                            w2, 
+                                            xw12, 
+                                            xw12, 
+                                            {alpha, beta},         
+                                            split_k2};
+    
+    workspace_size = GemmTy3::get_workspace_size(argsXW12);
+    cutlass::device_memory::allocation<uint8_t> workspace3(workspace_size);
+    status = gemm3.can_implement(argsXW12);
+    CUTLASS_CHECK(status);
+    status = gemm3.initialize(argsXW12, workspace3.get());
+    CUTLASS_CHECK(status);
   }
 
-  void setInput(ElementInputA* x) {
-    this->x = TensorRef(x, LayoutInputA());
+  void setInput(ElementInputA* xPtr) {
+    this->x = TensorRef(xPtr, LayoutInputA());
+    gemm1.updateA(this->x);
     // if (checkResults) {
     //   memset_random2(x.host_data(), ElementOutput(0.05), ElementOutput(0.2), x.size());
     //   memset_random2(w1.host_data(), ElementOutput(0.01), ElementOutput(0.2), w1.size());
@@ -263,10 +324,22 @@ struct MLPParameters {
   void setIntermediate(ElementInputA* silu, ElementInputA* xv) {
     this->xv = TensorRef(xv, LayoutInputA());
     this->xw1 = TensorRef(silu, LayoutInputA());
+
+    gemm1.updateC(this->xw1);
+    gemm1.updateD(this->xw1);
+
+    gemm2.updateA(this->x);
+    gemm2.updateC(this->xw1);
+    gemm2.updateD(this->xv);
+
+    gemm3.updateA(this->xv);
   }
 
   void setOutput(ElementInputA* out) {
     this->xw12 = TensorRef(out, LayoutInputA());
+
+    gemm3.updateC(this->xw12);
+    gemm3.updateD(this->xw12);
   }
 
   bool isGPT3() {return model == "gpt3";}
@@ -276,85 +349,32 @@ struct MLPParameters {
 /*LLaMA Baseline MLP*/
 template<typename GemmTy1, typename GemmTy2, typename GemmTy3>
 cudaError_t runBaselineLLaMA(int split_k1, int split_k2, 
-                             MLPParameters& mlpParams,
+                             MLPParameters<GemmTy1, GemmTy2, GemmTy3>& mlpParams,
                              cudaStream_t stream1,
                              cudaStream_t stream2,
                              double& execTime, double& matmul1Time, 
                              double& matmul2Time, double& matmul3Time,
-                             int iters = 100) {
-  //Setup XW1 GeMM
-  typename GemmTy1::Arguments argsXW1{
-    mlpParams.gemm_size1,
-    mlpParams.x, 
-    mlpParams.w1,
-    mlpParams.xw1,
-    mlpParams.xw1,
-    {mlpParams.alpha, mlpParams.beta},
-    split_k1};
-
-  size_t workspace_size = GemmTy1::get_workspace_size(argsXW1);
-  cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
-  GemmTy1 gemm_opXW1;
-  cutlass::Status status = gemm_opXW1.can_implement(argsXW1);
-  CUTLASS_CHECK(status);
-  status = gemm_opXW1.initialize(argsXW1, workspace1.get());
-  CUTLASS_CHECK(status);
-  
-  //Setup XV GeMM
-  typename GemmTy2::Arguments argsXV{
-    mlpParams.gemm_size1,
-    mlpParams.x, 
-    mlpParams.v,
-    mlpParams.xw1,
-    mlpParams.xv,
-    {mlpParams.alpha, ElementComputeEpilogue(1.0f)},
-    split_k1};
-  workspace_size = GemmTy2::get_workspace_size(argsXV);
-  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
-  GemmTy2 gemm_opXV;
-  status = gemm_opXV.can_implement(argsXV);
-  CUTLASS_CHECK(status);
-  status = gemm_opXV.initialize(argsXV, workspace2.get());
-  CUTLASS_CHECK(status);
-
-  //Setup XW12 GeMM
-  typename GemmTy3::Arguments argsXW12{
-    mlpParams.gemm_size2, 
-    mlpParams.xv, 
-    mlpParams.w2, 
-    mlpParams.xw12, 
-    mlpParams.xw12, 
-    {mlpParams.alpha, mlpParams.beta},         
-    split_k2};
-  
-  GemmTy3 gemm_opXW12;
-  workspace_size = GemmTy3::get_workspace_size(argsXW12);
-  cutlass::device_memory::allocation<uint8_t> workspace3(workspace_size);
-  status = gemm_opXW12.can_implement(argsXW12);
-  CUTLASS_CHECK(status);
-  status = gemm_opXW12.initialize(argsXW12, workspace3.get());
-  CUTLASS_CHECK(status);
-  
+                             int iters = 100) {  
   execTime = 0; 
-
+                     
   //Run kernels
   for (int r = 0; r < iters; r++) {    
     double start = timeInMicroSeconds();
-    status = gemm_opXW1(stream1);
+    auto status = mlpParams.gemm1(stream1);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle1 = timeInMicroSeconds();
     double iterMatMul1 = middle1-start;
     matmul1Time += iterMatMul1;
 
-    status = gemm_opXV(stream1);
+    status = mlpParams.gemm2(stream1);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle2 = timeInMicroSeconds();
     double iterMatMul2 = middle2-middle1;
     matmul2Time += iterMatMul2;
 
-    status = gemm_opXW12(stream1);
+    status = mlpParams.gemm3(stream1);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle3 = timeInMicroSeconds();
@@ -369,40 +389,39 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
   return cudaSuccess;
 }
 
-cudaError_t runBaselineLLaMA(int split_k1, int split_k2, 
-                        MLPParameters& mlpParams,
-                        cudaStream_t stream1,
-                        cudaStream_t stream2,
-                        double& execTime,
-                        double& matmul1Time,
-                        double& matmul2Time,
-                        double& matmul3Time,
-                        int iters = 100) {
-  cudaError_t result;
-  execTime = 0;
-  matmul1Time = 0;
-  matmul2Time = 0;
-  matmul3Time = 0;
-  if (split_k1 == 1 && split_k2 == 1) {
-    result = runBaselineLLaMA<Gemm1, Gemm2, Gemm3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
-  } else if (split_k1 > 1 && split_k2 == 1) {
-    result = runBaselineLLaMA<GemmSplitK1, GemmSplitK2, Gemm3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
-  } else if (split_k1 == 1 && split_k2 > 1) {
-    result = runBaselineLLaMA<Gemm1, GemmSplitK2, Gemm3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
-  } else {
-    result = runBaselineLLaMA<GemmSplitK1, GemmSplitK2, GemmSplitK3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
-  }
+// cudaError_t runBaselineLLaMA(int split_k1, int split_k2, 
+//                         MLPParameters& mlpParams,
+//                         cudaStream_t stream1,
+//                         cudaStream_t stream2,
+//                         double& execTime,
+//                         double& matmul1Time,
+//                         double& matmul2Time,
+//                         double& matmul3Time,
+//                         int iters = 100) {
+//   cudaError_t result;
+//   execTime = 0;
+//   matmul1Time = 0;
+//   matmul2Time = 0;
+//   matmul3Time = 0;
+//   if (split_k1 == 1 && split_k2 == 1) {
+//     result = runBaselineLLaMA<Gemm1, Gemm2, Gemm3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+//   } else if (split_k1 > 1 && split_k2 == 1) {
+//     result = runBaselineLLaMA<GemmSplitK1, GemmSplitK2, Gemm3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+//   } else if (split_k1 == 1 && split_k2 > 1) {
+//     result = runBaselineLLaMA<Gemm1, GemmSplitK2, Gemm3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+//   } else {
+//     result = runBaselineLLaMA<GemmSplitK1, GemmSplitK2, GemmSplitK3>(split_k1, split_k2, mlpParams, stream1, stream2, execTime, matmul1Time, matmul2Time, matmul3Time, iters);
+//   }
 
-  return result;
-}
-
+//   return result;
+// }
 
 extern "C"
-MLPParameters* initMLPParams(const void* w1, const void* v, const void* w2, const uint batch) {
+MLPParameters<Gemm1, Gemm2, Gemm3>* initMLPParams(const void* w1, const void* v, const void* w2, const uint batch) {
   const size_t H = 8192;
   printf("w1 %p v %p w2 %p\n", w1, v, w2);
 
-  MLPParameters* llamaMLPParams = new MLPParameters(std::string("llama"), batch, 
+  MLPParameters<Gemm1, Gemm2, Gemm3>* llamaMLPParams = new MLPParameters<Gemm1, Gemm2, Gemm3>(std::string("llama"), batch, 
                                  (const ElementInputA*)w1, 
                                  (const ElementInputA*)v,
                                  (const ElementInputA*)w2);
@@ -410,10 +429,10 @@ MLPParameters* initMLPParams(const void* w1, const void* v, const void* w2, cons
 }
 
 extern "C"
-void runLLAMA(MLPParameters* llamaMLPParams, const void* x, const void* silu, const void* xv, const void* out) {
+void runLLAMA(MLPParameters<Gemm1, Gemm2, Gemm3>* llamaMLPParams, const void* x, const void* silu, const void* xv, const void* out) {
   double times = 0;
   llamaMLPParams->setInput((ElementInputA*)x);
   llamaMLPParams->setIntermediate((ElementInputA*)silu, (ElementInputA*)xv);
   llamaMLPParams->setOutput((ElementInputA*)out);
-  runBaselineLLaMA(1, 1, *llamaMLPParams, 0, 0, times, times, times, times, 1);
+  runBaselineLLaMA<Gemm1, Gemm2, Gemm3>(1, 1, *llamaMLPParams, 0, 0, times, times, times, times, 1);
 }

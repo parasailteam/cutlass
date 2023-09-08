@@ -164,7 +164,8 @@ public:
       intermediate = mul_add_source(params_.beta, converted_source);                             // X =  beta * C + uniform
       intermediate = mul_add_accumulator(params_.alpha, converted_accumulator, intermediate);    // D = alpha * Accum + X
     }
-
+    // if (threadIdx.x == 0)
+    //   printf("168\n");
     intermediate = skip_elementwise_ ? intermediate : activation(intermediate, params_);
 
     // Convert to destination numeric type
@@ -195,7 +196,8 @@ public:
     } else {
       intermediate = mul_add_accumulator(params_.alpha, converted_accumulator);    // D = alpha * Accum
     }
-
+    // if (threadIdx.x == 0)
+    //   printf("200\n");
     intermediate = skip_elementwise_ ? intermediate : activation(intermediate, params_);
 
     // Convert to destination numeric type

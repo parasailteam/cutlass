@@ -352,6 +352,7 @@ struct Sigmoid<Array<half_t, N>> {
     plus<Array<T, N>> add;
 
 #if defined(CUTLASS_USE_TANH_FOR_SIGMOID)
+  printf("355\n");
     multiplies<Array<T, N>> mul;
     fast_tanh_op<Array<T, N>> tanh;
     return mul(add(tanh(mul(z, cutlass::constants::half<T>())), cutlass::constants::one<T>()),

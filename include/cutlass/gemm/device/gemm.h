@@ -515,56 +515,6 @@ public:
   }
 
   /// Runs the kernel using initialized state.
-  Status run(bool overlap, int* kernelExecuted, cudaStream_t stream = nullptr) {
-
-    ThreadblockSwizzle threadblock_swizzle;
-    dim3 grid;
-    if (overlap) {
-      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-      grid = {grid.x*grid.y*grid.z, 1, 1};
-    } else {
-      grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
-    }
-
-    dim3 block(GemmKernel::kThreadCount, 1, 1);
-
-    cudaError_t result;
-
-    int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
-    if (smem_size >= (48 << 10)) {
-      result = cudaFuncSetAttribute(Kernel<GemmKernel>,
-                                    cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                    smem_size);
-      if (result != cudaSuccess) {
-        return Status::kErrorInternal;
-      }
-    }
-
-    if (overlap) {
-      if (params_.custage.isProducer())
-        cutlass::KernelOverlapProducer<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
-      else
-        cutlass::KernelOverlapConsumer<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
-          // void* args[] = {
-          //   &params_,
-          //   &kernelExecuted
-          // };
-          // auto err = cudaLaunchCooperativeKernel((const void*)cutlass::KernelOverlapConsumer<GemmKernel, false>, 
-          // grid, block, args, smem_size, stream);
-
-          // if (err != cudaSuccess) {
-          //   printf("device/gemm.h: 581 Error %s\n", cudaGetErrorString(err));
-          // }
-    }
-    else
-      cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
-
-    result = cudaGetLastError();
-    if (result != cudaSuccess) {
-    }
-    return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
-  }
-  /// Runs the kernel using initialized state.
   Status operator()(cudaStream_t stream = nullptr) {
     return run(stream);
   }

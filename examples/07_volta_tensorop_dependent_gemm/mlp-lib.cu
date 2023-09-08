@@ -73,8 +73,8 @@ static double getCurrentTime() {
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
@@ -226,21 +226,21 @@ struct MLPParameters {
       gemm_size1 = cutlass::gemm::GemmCoord(batch, 4*12288/8, 12288);
       gemm_size2 = cutlass::gemm::GemmCoord(batch, 12288, 4*12288/8);
     } else if (model=="llama") {
-      int multiple_of = 64;
-      int d = ((8192/3 + multiple_of-1)/multiple_of)*multiple_of;
-      gemm_size1 = cutlass::gemm::GemmCoord(batch, d, 8192);
-      gemm_size2 = cutlass::gemm::GemmCoord(8192, batch, d);
+      int H = 8192;
+      int multiple_of = 128;
+      int d = ((H/3 + multiple_of-1)/multiple_of)*multiple_of;
+      gemm_size1 = cutlass::gemm::GemmCoord(batch, d, H);
+      gemm_size2 = cutlass::gemm::GemmCoord(H, batch, d);
     }
    std::cout << "GeMM 1 Size: " << gemm_size1.m() << ", " << 
     gemm_size1.n() << ", " << gemm_size1.k() << std::endl;
   //  std::cout << "GeMM 2 Size: " << gemm_size2.m() << ", " << 
   //    gemm_size2.n() << ", " << gemm_size2.k() << std::endl;
-    auto extent_ = LayoutInputA::TensorCoord();
-    auto layout_ = LayoutInputA::packed(extent_);
+    // auto extent_ = LayoutInputA::TensorCoord();
     x = TensorRef();
-    w1 = TensorRef((cutlass::half_t*)w1Ptr, layout_);
-    w2 = TensorRef((cutlass::half_t*)w2Ptr, layout_);
-    v = TensorRef((cutlass::half_t*)vPtr, layout_);
+    w1 = TensorRef((ElementInputA*)w1Ptr, LayoutInputA::packed(gemm_size1.kn()));
+    w2 = TensorRef((ElementInputA*)w2Ptr, LayoutInputA::packed(gemm_size2.kn()));
+    v = TensorRef((ElementInputA*)vPtr, LayoutInputA::packed(gemm_size1.kn()));
     checkResults = false;
 
     //Initialize GeMMs
@@ -295,7 +295,7 @@ struct MLPParameters {
   }
 
   void setInput(ElementInputA* xPtr) {
-    this->x = TensorRef(xPtr, LayoutInputA());
+    this->x = TensorRef(xPtr, LayoutInputA::packed(gemm_size1.mk()));
     gemm1.updateA(this->x);
     // if (checkResults) {
     //   memset_random2(x.host_data(), ElementOutput(0.05), ElementOutput(0.2), x.size());
@@ -322,8 +322,8 @@ struct MLPParameters {
   }
 
   void setIntermediate(ElementInputA* silu, ElementInputA* xv) {
-    this->xv = TensorRef(xv, LayoutInputA());
-    this->xw1 = TensorRef(silu, LayoutInputA());
+    this->xv = TensorRef(xv, LayoutInputA::packed(gemm_size1.mn()));
+    this->xw1 = TensorRef(silu, LayoutInputA::packed(gemm_size1.mn()));
 
     gemm1.updateC(this->xw1);
     gemm1.updateD(this->xw1);
@@ -336,7 +336,7 @@ struct MLPParameters {
   }
 
   void setOutput(ElementInputA* out) {
-    this->xw12 = TensorRef(out, LayoutInputA());
+    this->xw12 = TensorRef(out, LayoutInputA::packed(gemm_size2.mn()));
 
     gemm3.updateC(this->xw12);
     gemm3.updateD(this->xw12);
@@ -418,7 +418,6 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
 
 extern "C"
 MLPParameters<Gemm1, Gemm2, Gemm3>* initMLPParams(const void* w1, const void* v, const void* w2, const uint batch) {
-  const size_t H = 8192;
 //printf("w1 %p v %p w2 %p\n", w1, v, w2);
 
   MLPParameters<Gemm1, Gemm2, Gemm3>* llamaMLPParams = new MLPParameters<Gemm1, Gemm2, Gemm3>(std::string("llama"), batch, 

@@ -74,8 +74,8 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 256, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 128, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
@@ -231,8 +231,9 @@ struct MLPParameters {
 
   void initIns() {
     if (checkResults) {
-      memset_random2(x.host_data(), ElementOutput(0.05), ElementOutput(0.2), x.size());
-      memset_random2(w1.host_data(), ElementOutput(0.01), ElementOutput(0.2), w1.size());
+      ElementOutput values[5] = {ElementOutput(0.05), ElementOutput(0.2), ElementOutput(0.01), ElementOutput(3), ElementOutput(0.4)};
+      memset_random(x.host_data(), 5, values, x.size());
+      memset_random(w1.host_data(), 5, values, w1.size());
       memset_random2(w2.host_data(), ElementOutput(0.01), ElementOutput(0.05), w2.size());
       if (model == "llama") {
         memset_random2(v.host_data(), ElementOutput(0.01), ElementOutput(0.2), v.size());
@@ -335,7 +336,7 @@ cudaError_t checkMLPResults(MLPParameters& mlpParams) {
                         mlpParams.xw1.size() * sizeof(ElementOutput), 
                         cudaMemcpyDeviceToHost));
   printf("Checking first GeMM\n");
-  bool eq = equals(mlpParams.ref_xw1.size(), mlpParams.ref_xw1.host_data(), hostC, 1e-1f);
+  bool eq = equals(mlpParams.ref_xw1.size(), mlpParams.ref_xw1.host_data(), hostC, 1e-5);
   if (eq == false) {
     printf("First GeMM not correct\n");
     return cudaErrorUnknown;

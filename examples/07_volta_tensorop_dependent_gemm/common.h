@@ -222,14 +222,16 @@ void ref_cpumatmul(uint32_t M, uint32_t N, uint32_t K, T* mat1, T* mat2, T* res)
 
 template<typename T>
 bool equals(size_t size, T* mat1, T* mat2, float err) {
+  bool eq = true;
   for (size_t i = 0; i < size; i++) {
     float e1 = (float)mat1[i];
     float e2 = (float)mat2[i];
     
     float v = err;
     bool ret = true;
+    printf("%f , %f at %lu\n", e1, e2, i);
     if (abs(e1) < v && abs(e2) < v) {
-      // printf("233: %f , %f at %lu\n", e1, e2, i);
+      
       ret = true;
     } else if (abs(e1) < v) {
       ret = false;
@@ -246,11 +248,11 @@ bool equals(size_t size, T* mat1, T* mat2, float err) {
     }
 
     if (ret == false) {
-      printf("%f != %f at %lu\n", e1, e2, i);
-      return false;
+      // printf("%f != %f at %lu\n", e1, e2, i);
+      eq = false;
     }
   }
-
+  return eq;
   return true;
 }
 
@@ -287,6 +289,19 @@ void memset_random2(T*f, T v1, T v2, size_t nelems)
     else
       f[i] = v2;
     // printf("%f\n", (float)f[i]);
+  }
+
+  // CUDA_CHECK(cudaMemcpy(f, h_buff, sizeof(T)*nelems, cudaMemcpyHostToDevice));
+  // free(h_buff);
+}
+
+template<class T>
+void memset_random(T*f, int numVals, T* values, size_t nelems)
+{
+  // T* h_buff = (T*)malloc(sizeof(T)*nelems);
+  assert(f != nullptr);
+  for (uint64_t i = 0; i < nelems; i++) {
+    f[i] =  values[rand()%numVals];
   }
 
   // CUDA_CHECK(cudaMemcpy(f, h_buff, sizeof(T)*nelems, cudaMemcpyHostToDevice));

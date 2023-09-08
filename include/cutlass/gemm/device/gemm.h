@@ -180,7 +180,7 @@ template <
     /// Layout type for C and D matrix operands
     typename LayoutC_,
     /// Element type for internal accumulation
-    typename ElementAccumulator_ = ElementC_,
+    typename ElementAccumulator_,
     /// Operator class tag
     typename OperatorClass_ = arch::OpClassSimt,
     /// Tag indicating architecture to tune for

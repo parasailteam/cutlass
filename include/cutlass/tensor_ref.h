@@ -400,12 +400,14 @@ bool TensorRef_aligned(TensorRef<Element, Layout> const &ref, int alignment) {
   int const kStrideRank = Layout::kStrideRank;
 
   if (reinterpret_cast<uintptr_t>(ref.data()) % alignment) {
+    // printf("403\n");
     return false;
   }
 
   CUTLASS_PRAGMA_UNROLL
   for (int i = 0; i < kStrideRank; ++i) {
     if (ref.stride(i) % alignment) {
+      // printf("409 %d %d\n", ref.stride(i), alignment);
       return false;
     }
   }

@@ -146,8 +146,6 @@ using GemmSplitK2 = BaseMLPGemm<EpilogueOp2, 8, true>;
 using GemmSplitK3 = BaseMLPGemm<EpilogueOp3, 1, true>;
 
 //CuSync GeMMs
-using CuSyncImpl = CuSync<ProdCuStage, ConsCuStage>;
-
 using CuSyncImpl1 = CuSync<ProdCuStage, MiddleCuStage>;
 using CuSyncImpl2 = CuSync<MiddleCuStage, ConsCuStage>;
 
@@ -229,7 +227,7 @@ struct MLPParameters {
       int multiple_of = 64;
       int d = ((H/3 + multiple_of-1)/multiple_of)*multiple_of;
       gemm_size1 = cutlass::gemm::GemmCoord(batch, d, H);
-      gemm_size2 = cutlass::gemm::GemmCoord(H, batch, d);
+      gemm_size2 = cutlass::gemm::GemmCoord(batch, H, d);
     }
   //  std::cout << "GeMM 1 Size: " << gemm_size1.m() << ", " << 
   //   gemm_size1.n() << ", " << gemm_size1.k() << std::endl;
@@ -489,7 +487,7 @@ cudaError_t runCuSyncMLP(int split_k1, int split_k2,
     double start = timeInMicroSeconds();
     auto status = mlpParams.gemm1.run(true, NULL, CudaStreams[0]);
     CUTLASS_CHECK(status);
-
+    
   #ifndef AVOID_WAIT_KERNEL
     mlpParams.cuSyncHandle1.invokeWaitKernel(CudaStreams[1]);
   #endif
@@ -499,7 +497,6 @@ cudaError_t runCuSyncMLP(int split_k1, int split_k2,
   #ifndef AVOID_WAIT_KERNEL
     mlpParams.cuSyncHandle2.invokeWaitKernel(CudaStreams[2]);
   #endif
-    
     status = mlpParams.gemm3.run(true, NULL, CudaStreams[2]);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());

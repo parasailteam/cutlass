@@ -36,7 +36,7 @@ def random_tensor():
 # w1 = load_tensor("/home/saemal/msccl-demo/llama-chat/w1.data")
 # w1 = w1.reshape((H, FFN2)).type(dtype=torch.half).cuda()
 
-# x, w1 = random_tensor()
+x, w1 = random_tensor()
 
 print(x.device, x.shape)
 print(w1.device, w1.shape)

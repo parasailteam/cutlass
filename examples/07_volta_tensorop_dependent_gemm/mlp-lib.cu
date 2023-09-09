@@ -470,7 +470,7 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
 }
 
 template<typename GemmTy1, typename GemmTy2, typename GemmTy3>
-cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
+cudaError_t runCuSyncMLP(int split_k1, int split_k2,
                            CuSyncMLPParameters<GemmTy1, GemmTy2, GemmTy3>& mlpParams,
                            double& execTime,
                            int iters = 100) {
@@ -495,10 +495,11 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
   #endif
     status = mlpParams.gemm2.run(true, NULL, CudaStreams[1]);
     CUTLASS_CHECK(status);
-
+    
   #ifndef AVOID_WAIT_KERNEL
     mlpParams.cuSyncHandle2.invokeWaitKernel(CudaStreams[2]);
-  #endif  
+  #endif
+    
     status = mlpParams.gemm3.run(true, NULL, CudaStreams[2]);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -589,5 +590,5 @@ void runCuSyncLLAMA(CuSyncMLPParameters<CuSyncGemm1, CuSyncGemm2, CuSyncGemm3>* 
   llamaMLPParams->setInput((ElementInputA*)x);
   llamaMLPParams->setIntermediate((ElementInputA*)silu, (ElementInputA*)xv);
   llamaMLPParams->setOutput((ElementInputA*)out);
-  // runBaselineLLaMA<true, Gemm1, Gemm2, Gemm3>(1, 1, *llamaMLPParams, 0, 0, times, times, times, times, 1);
+  runCuSyncMLP<CuSyncGemm1, CuSyncGemm2, CuSyncGemm3>(1, 1, *llamaMLPParams, times, 1);
 }

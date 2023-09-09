@@ -89,7 +89,7 @@ using ElementAccumulator = float;
 using ElementInputA = cutlass::half_t;
 using ElementInputB = cutlass::half_t;
 using ElementOutput = cutlass::half_t;
-using ElementComputeEpilogue = float;
+using ElementComputeEpilogue = cutlass::half_t;
 
 //All matrices are in RowMajor
 using LayoutInputA = cutlass::layout::RowMajor;
@@ -104,13 +104,13 @@ using SmArch = cutlass::arch::Sm70;
 //First GeMM in MLP is fused with GELU
 using EpilogueOp1 = cutlass::epilogue::thread::LinearCombinationSilu<
     ElementOutput,                                        
-    1,//128 / cutlass::sizeof_bits<ElementOutput>::value,
+    128 / cutlass::sizeof_bits<ElementOutput>::value,
     ElementAccumulator,
     ElementComputeEpilogue>;
 
 using EpilogueOp2 = cutlass::epilogue::thread::LinearCombinationSwiGLU<
     ElementOutput,                                        
-    1, //128 / cutlass::sizeof_bits<ElementOutput>::value,     
+    128 / cutlass::sizeof_bits<ElementOutput>::value,     
     ElementAccumulator,
     ElementComputeEpilogue,
     cutlass::epilogue::thread::ScaleType::SwishScaling>;
@@ -118,7 +118,7 @@ using EpilogueOp2 = cutlass::epilogue::thread::LinearCombinationSwiGLU<
 //Third GeMM in MLP performs no extra fused computations 
 using EpilogueOp3 = cutlass::epilogue::thread::LinearCombination<
     ElementOutput,                                        
-    1, //128 / cutlass::sizeof_bits<ElementOutput>::value,     
+    128 / cutlass::sizeof_bits<ElementOutput>::value,     
     ElementAccumulator,
     ElementComputeEpilogue>;
 
@@ -131,7 +131,7 @@ class BaseMLPGemm : public cutlass::gemm::device::Gemm<ElementInputA, LayoutInpu
                                                         ShapeMMAWarp, ShapeMMAOp,
                                                         EpilogueOp, 
                                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
-                                                        2, 1, AlignmentB, splitK> {};
+                                                        2, 8, AlignmentB, splitK> {};
 // Baseline GeMMs
 using Gemm1 = BaseMLPGemm<EpilogueOp1, 1, false>;
 using Gemm2 = BaseMLPGemm<EpilogueOp2, 1, false>;
@@ -181,7 +181,7 @@ struct MLPParameters {
   TensorRef x; //[B, H]
   TensorRef w1; //[H, 4H/8] in GPT-3 and [H, H/3] in LLaMa
   //xw1 = GeLU(x * w1)
-  TensorRefC xw1; //[B, 4 H / 8]
+  TensorRef xw1; //[B, 4 H / 8]
   TensorRef w2; //[4H/8, H] in GPT-3 and [H/3, H] in LLaMa
   //xw12 = xw1 * w2
   TensorRef xw12; //[B, H]
@@ -323,7 +323,7 @@ struct MLPParameters {
 
   void setIntermediate(ElementInputA* silu, ElementInputA* xv) {
     this->xv = TensorRef(xv, LayoutInputA::packed(gemm_size1.mn()));
-    this->xw1 = TensorRefC((ElementOutput*)silu, LayoutInputA::packed(gemm_size1.mn()));
+    this->xw1 = TensorRef(silu, LayoutInputA::packed(gemm_size1.mn()));
 
     gemm1.updateC(this->xw1);
     gemm1.updateD(this->xw1);
@@ -356,7 +356,7 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
                              double& matmul2Time, double& matmul3Time,
                              int iters = 100) {  
   execTime = 0; 
-                     
+
   //Run kernels
   for (int r = 0; r < iters; r++) {    
     double start = timeInMicroSeconds();

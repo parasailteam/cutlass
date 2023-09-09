@@ -29,12 +29,12 @@ def random_tensor():
     w1 = w1.reshape(H, FFN2).type(dtype=torch.half).cuda()
     return x, w1
 
-x = load_tensor("/home/saemal/msccl-demo/llama-chat/x.data")
-x = x.reshape(1, H).type(dtype=torch.half).cuda()
+# x = load_tensor("/home/saemal/msccl-demo/llama-chat/x.data")
+# x = x.reshape(1, H).type(dtype=torch.half).cuda()
 # x = torch.randn((1, H), dtype=torch.half).cuda()
-#w1 = torch.ones((H,FFN2), dtype=torch.half).cuda()
-w1 = load_tensor("/home/saemal/msccl-demo/llama-chat/w1.data")
-w1 = w1.reshape((H, FFN2)).type(dtype=torch.half).cuda()
+# w1 = torch.randn((H,FFN2), dtype=torch.half).cuda()
+# w1 = load_tensor("/home/saemal/msccl-demo/llama-chat/w1.data")
+# w1 = w1.reshape((H, FFN2)).type(dtype=torch.half).cuda()
 
 # x, w1 = random_tensor()
 
@@ -44,7 +44,7 @@ print(w1.device, w1.shape)
 v = torch.full((H, FFN2), 0.01, dtype=torch.half).cuda()
 w2 = torch.full((FFN2, H), 0.01, dtype=torch.half).cuda()
 
-silu = torch.ones((B, FFN2), dtype=torch.float).cuda()
+silu = torch.ones((B, FFN2), dtype=torch.half).cuda()
 xv = torch.zeros((B, FFN2), dtype=torch.half).cuda()
 
 out = torch.zeros((B, H), dtype=torch.half).cuda()
@@ -68,15 +68,14 @@ def host_matmul(t1, t2):
 
 # host_matmul(x, w1)
 
-ref_silu = (ref_xw1)
-ref_silu = ref_silu.type(dtype=torch.float)
+ref_silu = siluLayer(ref_xw1)
 # print(ref_xw1[0][0], ref_silu[0][0], silu[0][0])
 c = torch.isclose(ref_silu, silu, rtol=1e-4, atol=1e-4)
 for i in range(B):
     for j in range(FFN2):
         if c[i][j].item() == False:
             print (i,j,x[i][j].item(), ref_silu[i][j].item(), silu[i][j].item())
-print(torch.allclose(ref_silu, silu, rtol=1e-3))
+print(torch.allclose(ref_silu, silu, rtol=1e-3, atol=1e-3))
 ref_xv = torch.matmul(x, v)
 ref_xv = ref_silu * ref_xv
 

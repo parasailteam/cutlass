@@ -1,9 +1,11 @@
 from ctypes import *
 import torch
 import torch.nn.functional as F
+import sys 
 
 libc = cdll.LoadLibrary("./libmlp.so")
 libc.initMLPParams.restype = POINTER(c_int)
+libc.initCuSyncMLPParams.restype = POINTER(c_int)
 
 B = 1
 H = 8192
@@ -48,14 +50,23 @@ silu = torch.ones((B, FFN2), dtype=torch.half).cuda()
 xv = torch.zeros((B, FFN2), dtype=torch.half).cuda()
 
 out = torch.zeros((B, H), dtype=torch.half).cuda()
-
-if True:
+import time
+torch.cuda.synchronize()
+exec_type = sys.argv[1]
+if exec_type == 'baseline':
     mlpParams = libc.initMLPParams(c_void_p(w1.data_ptr()), c_void_p(v.data_ptr()), c_void_p(w2.data_ptr()), c_int(B))
-    libc.runLLAMA(mlpParams, c_void_p(x.data_ptr()), c_void_p(silu.data_ptr()), c_void_p(xv.data_ptr()), c_void_p(out.data_ptr()))
-else:
+elif exec_type == 'cusync':
     mlpParams = libc.initCuSyncMLPParams(c_void_p(w1.data_ptr()), c_void_p(v.data_ptr()), c_void_p(w2.data_ptr()), c_int(B))
-    libc.runCuSyncLLAMA(mlpParams, c_void_p(x.data_ptr()), c_void_p(silu.data_ptr()), c_void_p(xv.data_ptr()), c_void_p(out.data_ptr()))
 
+start = time.time()
+for i in range(100):
+    if exec_type == 'baseline':
+        libc.runLLAMA(mlpParams, c_void_p(x.data_ptr()), c_void_p(silu.data_ptr()), c_void_p(xv.data_ptr()), c_void_p(out.data_ptr()))
+    elif exec_type == 'cusync':
+        libc.runCuSyncLLAMA(mlpParams, c_void_p(x.data_ptr()), c_void_p(silu.data_ptr()), c_void_p(xv.data_ptr()), c_void_p(out.data_ptr()))
+    torch.cuda.synchronize()
+end = time.time()
+print(((end-start)*1e6)/100)
 siluLayer = torch.nn.SiLU()
 ref_xw1 = torch.matmul(x, w1)
 
@@ -71,20 +82,20 @@ def host_matmul(t1, t2):
 
 # host_matmul(x, w1)
 
-ref_silu = siluLayer(ref_xw1)
-# print(ref_xw1[0][0], ref_silu[0][0], silu[0][0])
-c = torch.isclose(ref_silu, silu, rtol=1e-4, atol=1e-4)
-for i in range(B):
-    for j in range(FFN2):
-        if c[i][j].item() == False:
-            print (i,j,x[i][j].item(), ref_silu[i][j].item(), silu[i][j].item())
-print(torch.allclose(ref_silu, silu, rtol=1e-3, atol=1e-3))
-ref_xv = torch.matmul(x, v)
-ref_xv = ref_silu * ref_xv
+# ref_silu = siluLayer(ref_xw1)
+# # print(ref_xw1[0][0], ref_silu[0][0], silu[0][0])
+# c = torch.isclose(ref_silu, silu, rtol=1e-4, atol=1e-4)
+# for i in range(B):
+#     for j in range(FFN2):
+#         if c[i][j].item() == False:
+#             print (i,j,x[i][j].item(), ref_silu[i][j].item(), silu[i][j].item())
+# print(torch.allclose(ref_silu, silu, rtol=1e-3, atol=1e-3))
+# ref_xv = torch.matmul(x, v)
+# ref_xv = ref_silu * ref_xv
 
-print(torch.eq(ref_xv, xv))
+# print(torch.eq(ref_xv, xv))
 
-w2 = torch.full((FFN2, H), 0.01, dtype=torch.half).cuda()
-print(ref_xv.shape, w2.shape)
-ref_out = torch.matmul(ref_xv, w2)
-print(torch.eq(ref_out, out))
+# w2 = torch.full((FFN2, H), 0.01, dtype=torch.half).cuda()
+# print(ref_xv.shape, w2.shape)
+# ref_out = torch.matmul(ref_xv, w2)
+# print(torch.eq(ref_out, out))

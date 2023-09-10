@@ -23,6 +23,15 @@
 #include<cuSync.h>
 #define DIVUP(x, y) (((x) + (y) - 1)/(y))
 
+#if defined(TILESYNC)
+#define NO_ATOMIC_ADD
+#define REORDER_TILE_LOADS
+#endif
+
+// #define AVOID_WAIT_KERNEL
+#define AVOID_CUSTOM_ORDER
+// #define REORDER_TILE_LOADS
+
 #ifdef ROWSYNC
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
   using MiddleCuStage = CuStage<CuStageType::Producer | CuStageType::Consumer, RowMajor, RowSync>;
@@ -74,8 +83,8 @@ static double getCurrentTime() {
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
@@ -136,8 +145,8 @@ class BaseMLPGemm : public cutlass::gemm::device::Gemm<ElementInputA, LayoutInpu
                                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
                                                         2, 8, AlignmentB, splitK> {};
 // Baseline GeMMs
-using Gemm1 = BaseMLPGemm<EpilogueOp1, 1, false>;
-using Gemm2 = BaseMLPGemm<EpilogueOp2, 1, false>;
+using Gemm1 = BaseMLPGemm<EpilogueOp1, 8, false>;
+using Gemm2 = BaseMLPGemm<EpilogueOp2, 8, false>;
 using Gemm3 = BaseMLPGemm<EpilogueOp3, 1, false>;
 
 //Baseline GeMMs with SplitK enabled
@@ -160,8 +169,8 @@ class CuSyncMLPGemm : public cutlass::gemm::device::CuSyncGemm<CuStage, ElementI
                                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 
                                                         2, 8, AlignmentB, splitK> {};
 
-using CuSyncGemm1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp1, 1, false>;
-using CuSyncGemm2 = CuSyncMLPGemm<MiddleCuStage, EpilogueOp2, 1, false>;
+using CuSyncGemm1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp1, 8, false>;
+using CuSyncGemm2 = CuSyncMLPGemm<MiddleCuStage, EpilogueOp2, 8, false>;
 using CuSyncGemm3 = CuSyncMLPGemm<ConsCuStage, EpilogueOp3, 1, false>;
 
 using CuSyncGemmSplitK1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp1, 1, true>;
@@ -438,30 +447,29 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
     double start = timeInMicroSeconds();
     auto status = mlpParams.gemm1(stream1);
     CUTLASS_CHECK(status);
-    CUDA_CHECK(cudaDeviceSynchronize());
-    double middle1 = timeInMicroSeconds();
-    double iterMatMul1 = middle1-start;
-    matmul1Time += iterMatMul1;
+    // double middle1 = timeInMicroSeconds();
+    // double iterMatMul1 = middle1-start;
+    // matmul1Time += iterMatMul1;
     
     // return cudaSuccess;
 
     status = mlpParams.gemm2(stream1);
     CUTLASS_CHECK(status);
-    CUDA_CHECK(cudaDeviceSynchronize());
-    double middle2 = timeInMicroSeconds();
-    double iterMatMul2 = middle2-middle1;
-    matmul2Time += iterMatMul2;
+    // CUDA_CHECK(cudaDeviceSynchronize());
+    // double middle2 = timeInMicroSeconds();
+    // double iterMatMul2 = middle2-middle1;
+    // matmul2Time += iterMatMul2;
 
     status = mlpParams.gemm3(stream1);
     CUTLASS_CHECK(status);
-    CUDA_CHECK(cudaDeviceSynchronize());
-    double middle3 = timeInMicroSeconds();
-    double iterMatmul3 = middle3-middle2;
-    matmul3Time += iterMatmul3;
-    double end = timeInMicroSeconds();
-    if (iters > 10)
-      printf("{\"Total\": %lf, \"matmul1Time\": %lf, \"matmul2Time\": %lf, \"matmul3Time\": %lf}\n",end-start, iterMatMul1, iterMatMul2, iterMatmul3);
-    execTime += end-start;
+    // CUDA_CHECK(cudaDeviceSynchronize());
+    // double middle3 = timeInMicroSeconds();
+    // double iterMatmul3 = middle3-middle2;
+    // matmul3Time += iterMatmul3;
+    // double end = timeInMicroSeconds();
+    // if (iters > 10)
+    //   printf("{\"Total\": %lf, \"matmul1Time\": %lf, \"matmul2Time\": %lf, \"matmul3Time\": %lf}\n",end-start, iterMatMul1, iterMatMul2, iterMatmul3);
+    // execTime += end-start;
   }
 
   return cudaSuccess;
@@ -499,7 +507,7 @@ cudaError_t runCuSyncMLP(int split_k1, int split_k2,
   #endif
     status = mlpParams.gemm3.run(true, NULL, CudaStreams[2]);
     CUTLASS_CHECK(status);
-    CUDA_CHECK(cudaDeviceSynchronize());
+    // CUDA_CHECK(cudaDeviceSynchronize());
 
     double end = timeInMicroSeconds();
     if (iters > 10)

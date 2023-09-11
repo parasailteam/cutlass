@@ -1,6 +1,6 @@
 CUTLASS=../../
 CUSYNC=../../../cusync/src/include/
-NVCC=/usr/local/cuda/bin/nvcc
+NVCC=/usr/local/cuda-11.6/bin/nvcc
 INCLUDES=-I$(CUTLASS)/include -I$(CUTLASS)/examples/common -I$(CUTLASS)/tools/util/include -I$(CUSYNC)
 DEFINES=-DCUTLASS_ENABLE_CUBLAS=1 -DCUTLASS_NAMESPACE=cutlass -DCUTLASS_ENABLE_TENSOR_CORE_MMA=1 -DCUTLASS_TEST_LEVEL=0 -DCUTLASS_TEST_ENABLE_CACHED_RESULTS=1 -DCUTLASS_CONV_UNIT_TEST_RIGOROUS_SIZE_ENABLED=1 -DCUTLASS_DEBUG_TRACE_LEVEL=0
 
@@ -12,7 +12,6 @@ streamk: streamk.cu
 streamk-eval: streamk-eval.cu
 	$(NVCC)  $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./streamk-eval.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3
 
-
 mlp-batchedrow: mlp.cu common.h
 	$(NVCC)  $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DBATCHEDROW
 
@@ -23,7 +22,7 @@ mlp-rowsync: mlp.cu common.h
 	$(NVCC)  $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DROWSYNC
 
 libmlp.so: mlp-lib.cu common.h
-	$(NVCC)  $(DEFINES) $(INCLUDES) --shared -Xcompiler -m64,-fPIC,-Wconversion,-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp-lib.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DROWSYNC
+	$(NVCC)  $(DEFINES) $(INCLUDES) --shared -Xcompiler -m64,-fPIC,-Wconversion,-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp-lib.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DTILESYNC
 
 mlp-tilesync: mlp.cu common.h
 	$(NVCC) $(DEFINES) $(INCLUDES)  -Xcompiler=-Wconversion -Xcompiler=-fno-strict-aliasing -gencode=arch=compute_70,code=[sm_70,compute_70] -std=c++17 -x cu -DNDEBUG ./mlp.cu -o $@ -Xptxas -v -lcublas -Xcompiler=-fopenmp -O3 -DTILESYNC

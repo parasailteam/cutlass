@@ -39,7 +39,7 @@
 
 #ifdef ROWSYNC
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
-  using MiddleCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
+  using MiddleCuStage = CuStage<CuStageType::Producer | CuStageType::LLaMAMiddle, RowMajor, RowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
   using Sync = RowSync;
 #elif defined(TILEBATCH)
@@ -49,7 +49,7 @@
   using Sync = TileSync<2>;
 #elif defined(TILESYNC)
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<1>>;
-  using MiddleCuStage = CuStage<CuStageType::Producer, RowMajor, TileSync<1>>;
+  using MiddleCuStage = CuStage<CuStageType::Producer | CuStageType::LLaMAMiddle, RowMajor, TileSync<1>>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, TileSync<1>>;
   using Sync = TileSync<1>;
 #elif defined(BATCHEDROW)
@@ -345,7 +345,7 @@ struct BaselineMLPParams : public MLPParameters<GemmTy1, GemmTy2, GemmTy3> {
     
     Parent::initGeMMs(argsXW1, argsXV, argsXW12);
     
-    CUDA_CHECK(cudaMemset(Parent::gemm1.params_.semaphore, 0, 4));
+    // CUDA_CHECK(cudaMemset(Parent::gemm1.params_.semaphore, 0, 4));
   }
 };
 

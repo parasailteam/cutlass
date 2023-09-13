@@ -1,7 +1,7 @@
 import subprocess
 import re
 import sys
-
+import os
 attention_or_mlp = sys.argv[1]
 model = sys.argv[2]
 

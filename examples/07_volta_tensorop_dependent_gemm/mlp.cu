@@ -32,8 +32,12 @@
 //<OPTIMIZATIONS>
 //</OPTIMIZATIONS>
 
+// #define LLAMA
+
 #if defined(TILESYNC)
-#define NO_ATOMIC_ADD
+#if !defined(LLAMA)
+  #define NO_ATOMIC_ADD
+#endif
 #define REORDER_TILE_LOADS
 #endif
 
@@ -41,8 +45,8 @@
 // #define AVOID_WAIT_KERNEL
 
 // #if defined(TILESYNC) || defined(TILEBATCH)
-#define AVOID_CUSTOM_ORDER
-#define AVOID_WAIT_KERNEL
+// #define AVOID_CUSTOM_ORDER
+// #define AVOID_WAIT_KERNEL
 // #endif 
 
 #include<cuSync.h>
@@ -71,11 +75,12 @@
 #endif
 
 #include "common.h"
+const uint GLURowTile = 1;
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;
-using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;
+using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
 #else
 //<eval tiles>
 using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
@@ -103,7 +108,6 @@ using MMAOp = cutlass::arch::OpClassTensorOp;
 using SmArch = cutlass::arch::Sm70;
 
 //First GeMM in MLP is fused with GELU
-#define LLAMA
 #ifdef LLAMA
 using EpilogueOp1 = cutlass::epilogue::thread::LinearCombination<
 #elif defined(GPT3)
@@ -467,7 +471,7 @@ template<typename T, uint H3>
 __global__ void gluKernel(T* xvw1, T* glu) {
   int ROW = blockIdx.x;
 
-  for (int i = 0; i < H3; i += blockDim.x) {
+  for (int i = threadIdx.x; i < H3; i += blockDim.x) {
     float xw1 = xvw1[ROW * (2 * H3) + i];
     float xv =  xvw1[ROW * (2 * H3) + i + H3];
     glu[ROW * H3 + i] = xw1 * xv;
@@ -673,13 +677,12 @@ cudaError_t runCuSyncGPT3(int split_k1, int split_k2, MLPParameters& mlpParams,
 }
 
 /**CuSync LLaMa in MLP*/
-const uint GLURowTile = 1;
 template<typename T, uint RowTile, uint H3>
 __global__ void cusyncgluKernel(uint M, T* xvw1, T* glu, MiddleCuStage cons1, MiddleCuStage prod2) {
-  uint ROW = blockIdx.x;
-
+  uint ROW = blockIdx.x * RowTile;
+  prod2.tile(nullptr);
   for (uint ti = 0; ti < RowTile && ROW < M; ti++) {
-    for (uint i = 0; i < H3; i += blockDim.x) {
+    for (uint i = threadIdx.x; i < H3; i += blockDim.x) {
       if (ti == 0) {
         dim3 tile = {ROW/ShapeMMAThreadBlock::kM, i/ShapeMMAThreadBlock::kN, 0};
         cons1.wait(tile);
@@ -687,14 +690,13 @@ __global__ void cusyncgluKernel(uint M, T* xvw1, T* glu, MiddleCuStage cons1, Mi
       float xw1 = xvw1[ROW * (2 * H3) + i];
       float xv =  xvw1[ROW * (2 * H3) + i + H3];
       glu[ROW * H3 + i] = xw1 * xv;
-    }
-    if (ti == RowTile - 1) {
-      dim3 tile = {ROW/ShapeMMAThreadBlock::kM, 0/ShapeMMAThreadBlock::kN, 0};
-      prod2.post(tile);
+      if (ti == RowTile - 1) {
+        dim3 tile = {ROW/ShapeMMAThreadBlock::kM, i/ShapeMMAThreadBlock::kN, 0};
+        prod2.post(tile);
+      }
     }
     ROW++;
   }
-
 }
 
 template<typename GemmTy1, typename GemmTy2>
@@ -743,7 +745,9 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
   for (int r = 0; r < iters; r++) {
     handle1.prod().iter += 1;
     handle1.cons().iter += 1;
-    
+    handle2.prod().iter += 1;
+    handle2.cons().iter += 1;
+
     gemm_opXW12.params_.custage.iter += 1;
     gemm_opXVW1.params_.custage.iter += 1;
 
@@ -759,7 +763,7 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
       <<<mlpParams.gemm_size1.m(), ShapeMMAThreadBlock::kN, 0, streams[1]>>>
       (mlpParams.gemm_size1.m(), (half*)mlpParams.xvw1.device_data(), 
        (half*)mlpParams.glu.device_data(), handle1.cons(), handle2.prod());
-    
+
   #ifndef AVOID_WAIT_KERNEL
     handle2.invokeWaitKernel(streams[2]);
   #endif  
@@ -1027,12 +1031,14 @@ int run(int argc, char* argv[]) {
   RowSync sync2(min(ShapeMMAThreadBlock::kM, mlpParams.gemm_size1.m()), GLURowTile);
 #elif defined(TILESYNC)
   using Sync = TileSync<1>;
-  Sync sync;
+  uint waitValue = DIVUP(min(mlpParams.gemm_size1.m(), ShapeMMAThreadBlock::kM), GLURowTile);
+  Sync sync2(waitValue, 1);
 #else
   #error "Unknown Policy"
 #endif
     ProdCuStage prod(gridDim1, tileSize, sync);
-    MiddleCuStage middle(gridDim1, tileSize, sync);
+    dim3 gridMiddle = {(uint)DIVUP(mlpParams.gemm_size1.m(), GLURowTile), 1, 1};
+    MiddleCuStage middle(gridMiddle, {GLURowTile, 1, 1}, sync);
     ConsCuStage cons(gridDim2, tileSize, sync2);
 
     prod.iter = cons.iter = middle.iter = 0;

@@ -41,8 +41,8 @@
 // #define AVOID_WAIT_KERNEL
 
 // #if defined(TILESYNC) || defined(TILEBATCH)
-// #define AVOID_CUSTOM_ORDER
-// #define AVOID_WAIT_KERNEL
+#define AVOID_CUSTOM_ORDER
+#define AVOID_WAIT_KERNEL
 // #endif 
 
 #include<cuSync.h>
@@ -74,12 +74,12 @@
 
 #ifndef EVAL_TILE_SIZES
 //Tile sizes of all GeMMs
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<256, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
 #else
 //<eval tiles>
-using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;  
-using ShapeMMAWarp = cutlass::gemm::GemmShape<128, 64, 32>;
+using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<32, 256, 32>;  
+using ShapeMMAWarp = cutlass::gemm::GemmShape<32, 64, 32>;
 //</eval tiles>
 #endif
 
@@ -103,7 +103,12 @@ using MMAOp = cutlass::arch::OpClassTensorOp;
 using SmArch = cutlass::arch::Sm70;
 
 //First GeMM in MLP is fused with GELU
+#define LLAMA
+#ifdef LLAMA
+using EpilogueOp1 = cutlass::epilogue::thread::LinearCombination<
+#elif defined(GPT3)
 using EpilogueOp1 = cutlass::epilogue::thread::LinearCombinationGELU<
+#endif
     ElementOutput,                                        
     128 / cutlass::sizeof_bits<ElementOutput>::value,
     ElementAccumulator, 
@@ -128,11 +133,11 @@ class BaseMLPGemm : public cutlass::gemm::device::Gemm<ElementInputA, LayoutInpu
                                                         cutlass::gemm::threadblock::GemmHorizontalThreadblockSwizzle, 
                                                         2, 8, 8, splitK> {};
 // Baseline GeMMs
-using Gemm1 = BaseMLPGemm<EpilogueOp2, false>;
+using Gemm1 = BaseMLPGemm<EpilogueOp1, false>;
 using Gemm2 = BaseMLPGemm<EpilogueOp2, false>;
 
 //Baseline GeMMs with SplitK enabled
-using GemmSplitK1 = BaseMLPGemm<EpilogueOp2, true>;
+using GemmSplitK1 = BaseMLPGemm<EpilogueOp1, true>;
 using GemmSplitK2 = BaseMLPGemm<EpilogueOp2, true>;
 
 //CuSync GeMMs
@@ -152,12 +157,10 @@ class CuSyncMLPGemm : public cutlass::gemm::device::CuSyncGemm<CuStage, ElementI
                                                         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 
                                                         2, 8, 8, splitK> {};
 
-using CuSyncGemm1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp2, false>;
-using CuSyncGemmMiddle = CuSyncMLPGemm<MiddleCuStage, EpilogueOp2, false>;
+using CuSyncGemm1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp1, false>;
 using CuSyncGemm2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, false>;
 
-using CuSyncGemmSplitK1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp2, true>;
-using CuSyncGemmSplitKMiddle = CuSyncMLPGemm<MiddleCuStage, EpilogueOp2, true>;
+using CuSyncGemmSplitK1 = CuSyncMLPGemm<ProdCuStage, EpilogueOp1, true>;
 using CuSyncGemmSplitK2 = CuSyncMLPGemm<ConsCuStage, EpilogueOp2, true>;
 
 using HostTensor = cutlass::HostTensor<ElementInputA, LayoutInputA>;
@@ -169,7 +172,7 @@ enum MLPType {
 
 struct MLPParameters {
   HostTensor x; //[B, H]
-  HostTensor w1; //[H, 4H/8] in GPT-3 and [H, H/3] in LLaMa
+  HostTensor w1; //[H, 4H/8] in GPT-3
   //xw1 = GeLU(x * w1)
   HostTensor xw1; //[B, 4 H / 8]
   HostTensor w2; //[4H/8, H] in GPT-3 and [H/3, H] in LLaMa
@@ -177,9 +180,10 @@ struct MLPParameters {
   HostTensor xw12; //[B, H]
 
   //For LLaMa only
-  HostTensor v; //[H, H/3] in LLaMa
-  HostTensor xv; //[B, H/3] in LLaMa
-  
+  HostTensor vw1; //[B, 2*H/3] in LLAMA
+  HostTensor xvw1; //[B, 2*H/3] in LLaMa
+  HostTensor glu; //[B, H/3] in LLaMa
+
   HostTensor ref_xw1;
   HostTensor ref_xw12;
 
@@ -205,7 +209,7 @@ struct MLPParameters {
       gemm_size2 = cutlass::gemm::GemmCoord(batch, 12288, 4*12288/8);
     } else if (model=="llama") {
       int d = ((8192/3 + 127)/128)*128;
-      gemm_size1 = cutlass::gemm::GemmCoord(batch, d, 8192);
+      gemm_size1 = cutlass::gemm::GemmCoord(batch, 2*d, 8192);
       gemm_size2 = cutlass::gemm::GemmCoord(batch, 8192, d);
     }
     std::cout << "GeMM 1 Size: " << gemm_size1.m() << ", " << 
@@ -222,8 +226,9 @@ struct MLPParameters {
     ref_xw12 = HostTensor(gemm_size2.mn());
 
     if (model == "llama") {
-      v = HostTensor(gemm_size1.kn());
-      xv = HostTensor(gemm_size1.mn());
+      xvw1 = HostTensor(gemm_size1.mn());
+      vw1 = HostTensor(gemm_size1.kn());
+      glu = HostTensor(gemm_size2.mk());
       ref_xv = HostTensor(gemm_size1.mn());
     }
     checkResults = check;
@@ -236,14 +241,14 @@ struct MLPParameters {
       memset_random(w1.host_data(), 5, values, w1.size());
       memset_random2(w2.host_data(), ElementOutput(0.01), ElementOutput(0.05), w2.size());
       if (model == "llama") {
-        memset_random2(v.host_data(), ElementOutput(0.01), ElementOutput(0.2), v.size());
+        memset_random2(vw1.host_data(), ElementOutput(0.01), ElementOutput(0.2), vw1.size());
       }
     } else {
       cutlass::reference::host::TensorFill(x.host_view(), ElementOutput(0.05));
       cutlass::reference::host::TensorFill(w1.host_view(), ElementOutput(0.5));
       cutlass::reference::host::TensorFill(w2.host_view(), ElementOutput(0.01));
       if (model == "llama") {
-        cutlass::reference::host::TensorFill(v.host_view(), ElementOutput(0.5));
+        cutlass::reference::host::TensorFill(vw1.host_view(), ElementOutput(0.5));
       }
     }
     // Copy data from host to GPU
@@ -251,7 +256,7 @@ struct MLPParameters {
     w1.sync_device();
     w2.sync_device();
     if (model == "llama") {
-      v.sync_device();
+      vw1.sync_device();
     }
   }
   
@@ -262,8 +267,10 @@ struct MLPParameters {
     xw1.sync_device();
     xw12.sync_device();
     if (model == "llama") {
-      cutlass::reference::host::TensorFill(xv.host_view());
-      xv.sync_device();
+      cutlass::reference::host::TensorFill(xvw1.host_view());
+      xvw1.sync_device();
+      cutlass::reference::host::TensorFill(glu.host_view());
+      glu.sync_device();
     }
   }
 
@@ -295,11 +302,12 @@ cudaError_t referenceMLP(MLPParameters& mlpParams) {
              sizeof(ElementOutput) * mlpParams.ref_xw1.size(), cudaMemcpyHostToDevice));
   
   if (mlpParams.isLLaMa()) {
+    printf("check not supported in llama\n");
     ref_matmul<ElementOutput, ElementAccumulator>(mlpParams.gemm_size1.m(), 
                                                   mlpParams.gemm_size1.n(), 
                                                   mlpParams.gemm_size1.k(),
                                                   mlpParams.x.device_data(), 
-                                                  mlpParams.v.device_data(), 
+                                                  mlpParams.vw1.device_data(), 
                                                   mlpParams.ref_xv.host_data());
     //Compute XW1 (dot) XV
     for (int b = 0; b < mlpParams.gemm_size1.m(); b++) {
@@ -455,6 +463,17 @@ cudaError_t runBaselineGPT3(int split_k1, int split_k2,
 }
 
 /*LLaMA Baseline MLP*/
+template<typename T, uint H3>
+__global__ void gluKernel(T* xvw1, T* glu) {
+  int ROW = blockIdx.x;
+
+  for (int i = 0; i < H3; i += blockDim.x) {
+    float xw1 = xvw1[ROW * (2 * H3) + i];
+    float xv =  xvw1[ROW * (2 * H3) + i + H3];
+    glu[ROW * H3 + i] = xw1 * xv;
+  }
+}
+
 template<typename GemmTy1, typename GemmTy2>
 cudaError_t runBaselineLLaMA(int split_k1, int split_k2, 
                              MLPParameters& mlpParams,
@@ -468,40 +487,23 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
     mlpParams.gemm_size1,
     mlpParams.x.device_ref(), 
     mlpParams.w1.device_ref(),
-    mlpParams.xw1.device_ref(),
-    mlpParams.xw1.device_ref(),
+    mlpParams.xvw1.device_ref(),
+    mlpParams.xvw1.device_ref(),
     {mlpParams.alpha, mlpParams.beta},
     split_k1};
 
   size_t workspace_size = GemmTy1::get_workspace_size(argsXW1);
   cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
-  GemmTy1 gemm_opXW1;
-  cutlass::Status status = gemm_opXW1.can_implement(argsXW1);
+  GemmTy1 gemm_opXVW1;
+  cutlass::Status status = gemm_opXVW1.can_implement(argsXW1);
   CUTLASS_CHECK(status);
-  status = gemm_opXW1.initialize(argsXW1, workspace1.get());
-  CUTLASS_CHECK(status);
-  
-  //Setup XV GeMM
-  typename GemmTy1::Arguments argsXV{
-    mlpParams.gemm_size1,
-    mlpParams.x.device_ref(), 
-    mlpParams.v.device_ref(),
-    mlpParams.xv.device_ref(),
-    mlpParams.xv.device_ref(),
-    {mlpParams.alpha, mlpParams.beta},
-    split_k1};
-  workspace_size = GemmTy1::get_workspace_size(argsXV);
-  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
-  GemmTy1 gemm_opXV;
-  status = gemm_opXV.can_implement(argsXV);
-  CUTLASS_CHECK(status);
-  status = gemm_opXV.initialize(argsXV, workspace2.get());
+  status = gemm_opXVW1.initialize(argsXW1, workspace1.get());
   CUTLASS_CHECK(status);
 
   //Setup XW12 GeMM
   typename GemmTy2::Arguments argsXW12{
     mlpParams.gemm_size2, 
-    mlpParams.xw1.device_ref(), 
+    mlpParams.glu.device_ref(), 
     mlpParams.w2.device_ref(), 
     mlpParams.xw12.device_ref(), 
     mlpParams.xw12.device_ref(), 
@@ -521,15 +523,17 @@ cudaError_t runBaselineLLaMA(int split_k1, int split_k2,
   //Run kernels
   for (int r = 0; r < iters; r++) {    
     double start = timeInMicroSeconds();
-    status = gemm_opXW1(stream1);
+    status = gemm_opXVW1(stream1);
     CUTLASS_CHECK(status);
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle1 = timeInMicroSeconds();
     double iterMatMul1 = middle1-start;
     matmul1Time += iterMatMul1;
 
-    status = gemm_opXV(stream1);
-    CUTLASS_CHECK(status);
+    //glu
+    gluKernel<half, ((8192/3+127)/128)*128><<<mlpParams.gemm_size1.m(), 
+                                              ShapeMMAThreadBlock::kN, 0, stream1>>>
+      ((half*)mlpParams.xvw1.device_data(), (half*)mlpParams.glu.device_data());
     CUDA_CHECK(cudaDeviceSynchronize());
     double middle2 = timeInMicroSeconds();
     double iterMatMul2 = middle2-middle1;
@@ -669,7 +673,31 @@ cudaError_t runCuSyncGPT3(int split_k1, int split_k2, MLPParameters& mlpParams,
 }
 
 /**CuSync LLaMa in MLP*/
-template<typename GemmTy1, typename GemmTyMiddle, typename GemmTy2>
+const uint GLURowTile = 1;
+template<typename T, uint RowTile, uint H3>
+__global__ void cusyncgluKernel(uint M, T* xvw1, T* glu, MiddleCuStage cons1, MiddleCuStage prod2) {
+  uint ROW = blockIdx.x;
+
+  for (uint ti = 0; ti < RowTile && ROW < M; ti++) {
+    for (uint i = 0; i < H3; i += blockDim.x) {
+      if (ti == 0) {
+        dim3 tile = {ROW/ShapeMMAThreadBlock::kM, i/ShapeMMAThreadBlock::kN, 0};
+        cons1.wait(tile);
+      }
+      float xw1 = xvw1[ROW * (2 * H3) + i];
+      float xv =  xvw1[ROW * (2 * H3) + i + H3];
+      glu[ROW * H3 + i] = xw1 * xv;
+    }
+    if (ti == RowTile - 1) {
+      dim3 tile = {ROW/ShapeMMAThreadBlock::kM, 0/ShapeMMAThreadBlock::kN, 0};
+      prod2.post(tile);
+    }
+    ROW++;
+  }
+
+}
+
+template<typename GemmTy1, typename GemmTy2>
 cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
                            MLPParameters& mlpParams,
                            CuSyncImpl1& handle1,
@@ -681,37 +709,21 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
                                       mlpParams.gemm_size1,
                                       mlpParams.x.device_ref(),
                                       mlpParams.w1.device_ref(),
-                                      mlpParams.xw1.device_ref(),
-                                      mlpParams.xw1.device_ref(),
+                                      mlpParams.xvw1.device_ref(),
+                                      mlpParams.xvw1.device_ref(),
                                       {mlpParams.alpha, mlpParams.beta},         
                                       split_k1};
-  GemmTy1 gemm_opXW1;
+  GemmTy1 gemm_opXVW1;
   size_t workspace_size = GemmTy1::get_workspace_size(argsXW1);
   cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size);
-  cutlass::Status status = gemm_opXW1.can_implement(argsXW1);
+  cutlass::Status status = gemm_opXVW1.can_implement(argsXW1);
   CUTLASS_CHECK(status);
-  status = gemm_opXW1.initialize(argsXW1, workspace1.get());
-  CUTLASS_CHECK(status);
-
-  typename GemmTyMiddle::Arguments argsXV{handle1.cons(),
-                                    mlpParams.gemm_size1,
-                                    mlpParams.x.device_ref(),
-                                    mlpParams.v.device_ref(),
-                                    mlpParams.xv.device_ref(),
-                                    mlpParams.xv.device_ref(),
-                                    {mlpParams.alpha, mlpParams.beta},           
-                                    split_k1};
-  GemmTyMiddle gemm_opXV;
-  workspace_size = GemmTyMiddle::get_workspace_size(argsXV);
-  cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size);
-  status = gemm_opXV.can_implement(argsXV);
-  CUTLASS_CHECK(status);
-  status = gemm_opXV.initialize(argsXV, workspace2.get());
+  status = gemm_opXVW1.initialize(argsXW1, workspace1.get());
   CUTLASS_CHECK(status);
 
   typename GemmTy2::Arguments argsXW12{handle2.cons(),
                                        mlpParams.gemm_size2,  
-                                       mlpParams.xw1.device_ref(),
+                                       mlpParams.xvw1.device_ref(),
                                        mlpParams.w2.device_ref(),
                                        mlpParams.xw12.device_ref(),
                                        mlpParams.xw12.device_ref(),
@@ -731,23 +743,23 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
   for (int r = 0; r < iters; r++) {
     handle1.prod().iter += 1;
     handle1.cons().iter += 1;
-    handle2.prod().iter += 1;
-    handle2.cons().iter += 1;
     
     gemm_opXW12.params_.custage.iter += 1;
-    gemm_opXW1.params_.custage.iter += 1;
-    gemm_opXV.params_.custage.iter += 1;
+    gemm_opXVW1.params_.custage.iter += 1;
 
     double start = timeInMicroSeconds();
-    status = gemm_opXW1.run(true, NULL, streams[0]);
+    status = gemm_opXVW1.run(true, NULL, streams[0]);
     CUTLASS_CHECK(status);
 
   #ifndef AVOID_WAIT_KERNEL
     handle1.invokeWaitKernel(streams[1]);
   #endif
-    status = gemm_opXV.run(true, NULL, streams[1]);
-    CUTLASS_CHECK(status);
-
+    //glu
+    cusyncgluKernel<half, GLURowTile, ((8192/3+127)/128)*128>
+      <<<mlpParams.gemm_size1.m(), ShapeMMAThreadBlock::kN, 0, streams[1]>>>
+      (mlpParams.gemm_size1.m(), (half*)mlpParams.xvw1.device_data(), 
+       (half*)mlpParams.glu.device_data(), handle1.cons(), handle2.prod());
+    
   #ifndef AVOID_WAIT_KERNEL
     handle2.invokeWaitKernel(streams[2]);
   #endif  
@@ -774,13 +786,13 @@ cudaError_t runCuSyncLLaMA(int split_k1, int split_k2,
   execTime = 0;
 
   if (split_k1 == 1 && split_k2 == 1) {
-    result = runCuSyncLLaMA<CuSyncGemm1, CuSyncGemmMiddle, CuSyncGemm2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
+    result = runCuSyncLLaMA<CuSyncGemm1, CuSyncGemm2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
   } else if (split_k1 > 1 && split_k2 == 1) {
-    result = runCuSyncLLaMA<CuSyncGemmSplitK1, CuSyncGemmSplitKMiddle, CuSyncGemm2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
+    result = runCuSyncLLaMA<CuSyncGemmSplitK1, CuSyncGemm2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
   } else if (split_k1 == 1 && split_k2 > 1) {
-    result = runCuSyncLLaMA<CuSyncGemm1, CuSyncGemmMiddle, CuSyncGemmSplitK2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
+    result = runCuSyncLLaMA<CuSyncGemm1, CuSyncGemmSplitK2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
   } else {
-    result = runCuSyncLLaMA<CuSyncGemmSplitK1, CuSyncGemmSplitKMiddle, CuSyncGemmSplitK2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
+    result = runCuSyncLLaMA<CuSyncGemmSplitK1, CuSyncGemmSplitK2>(split_k1, split_k2, mlpParams, handle1, handle2, streams, execTime, iters);
   }
 
   return result;
@@ -940,7 +952,7 @@ int run(int argc, char* argv[]) {
   if (doChecking) {
     mlpParams.initOuts();
   }
-  
+  printf("mlpParams.gemm_size1.n() %d ShapeMMAThreadBlock::kN %d\n", mlpParams.gemm_size1.n(), ShapeMMAThreadBlock::kN);
   //Setup cusync gemm
   dim3 gridDim1 = {(uint)DIVUP(mlpParams.gemm_size1.m(), ShapeMMAThreadBlock::kM), 
                   (uint)DIVUP(mlpParams.gemm_size1.n(), ShapeMMAThreadBlock::kN), 
@@ -1011,9 +1023,17 @@ int run(int argc, char* argv[]) {
     
     printf("Average time %lf microseconds\n", overlapTime/(float)epochs);
   } else if (mlpParams.isLLaMa()) {
+#if defined(ROWSYNC)
+  RowSync sync2(min(ShapeMMAThreadBlock::kM, mlpParams.gemm_size1.m()), GLURowTile);
+#elif defined(TILESYNC)
+  using Sync = TileSync<1>;
+  Sync sync;
+#else
+  #error "Unknown Policy"
+#endif
     ProdCuStage prod(gridDim1, tileSize, sync);
     MiddleCuStage middle(gridDim1, tileSize, sync);
-    ConsCuStage cons(gridDim2, tileSize, sync);
+    ConsCuStage cons(gridDim2, tileSize, sync2);
 
     prod.iter = cons.iter = middle.iter = 0;
 

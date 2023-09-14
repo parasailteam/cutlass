@@ -625,7 +625,6 @@ cudaError_t runAttentionCuSync(int split_k1, int split_k2,
 #ifndef AVOID_WAIT_KERNEL    
     handle2.invokeWaitKernel(streams[2]);
 #endif
-    CUDA_CHECK(cudaDeviceSynchronize());
     
     status = gemm_op2.run(true, NULL, streams[2]);
     CUTLASS_CHECK(status);

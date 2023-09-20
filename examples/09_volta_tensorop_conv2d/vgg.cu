@@ -121,8 +121,10 @@ using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;
   using FinalStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
 #elif defined(TILESYNC)
   using Sync = Conv2DTileSync<1, 3*3>;
-  using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
-  using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
+  using FirstStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
+  using Mid1Stage = CuStage<CuStageType::Producer|CuStageType::Consumer, RowMajor, Sync>;
+  using Mid2Stage = CuStage<CuStageType::Producer|CuStageType::Consumer, RowMajor, Sync>;
+  using FinalStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
 #else
   #error "Unknown Synchronization"
 #endif 
@@ -618,17 +620,17 @@ void runBaseline(cutlass::conv::Conv2dProblemSize problem_size,
   }
 }
 
-#if 0
 template<typename TensorA, typename TensorB, typename TensorC>
 void runConvolution(cutlass::conv::Conv2dProblemSize problem_size, 
                     const Options& options, cudaStream_t* streams, 
-                    CuSyncImpl& handle,
-                    TensorA& tensor_x, TensorB& tensor_w1, TensorB& tensor_w2, TensorC& tensor_y1, TensorC& tensor_y2, 
+                    FirstStage& stage1, Mid1Stage& stage2, Mid2Stage& stage3, FinalStage& stage4, 
+                    TensorA& tensor_x, TensorB& tensor_w1, TensorB& tensor_w2, TensorB& tensor_w3, TensorB& tensor_w4, 
+                    TensorC& tensor_y1, TensorC& tensor_y2, TensorC& tensor_y3, TensorC& tensor_y4,
                     double& elapsedTime, double& conv1Time, double& conv2Time, int runs) {
-  // Construct ImplicitGemm::Argument structure with conv2d 
+  // Construct ImplicitGemm::Argument structure with conv2d
   // problem size, data pointers, and epilogue values
-  typename ProdCuSyncImplicitGemm1::Arguments args1{
-    handle.prod(),
+  typename CuSyncImplicitGemm1::Arguments args1{
+    stage1,
     problem_size,
     tensor_x.device_ref(),
     tensor_w1.device_ref(),
@@ -637,7 +639,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
     {options.alpha, options.beta},
   };
   
-  ProdCuSyncImplicitGemm1 implicit_gemm_op1;
+  CuSyncImplicitGemm1 implicit_gemm_op1;
   size_t workspace_size1 = implicit_gemm_op1.get_workspace_size(args1);
   cutlass::device_memory::allocation<uint8_t> workspace1(workspace_size1);
   auto status = implicit_gemm_op1.can_implement(args1);
@@ -645,8 +647,8 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
   status = implicit_gemm_op1.initialize(args1, workspace1.get());
   CUTLASS_CHECK(status);
 
-  typename ConsCuSyncImplicitGemm2::Arguments args2{
-    handle.cons(),
+  typename CuSyncImplicitGemm2::Arguments args2{
+    stage2,
     problem_size,
     tensor_y1.device_ref(),
     tensor_w2.device_ref(),
@@ -655,7 +657,7 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
     {options.alpha, options.beta},
   };
 
-  ConsCuSyncImplicitGemm2 implicit_gemm_op2;
+  CuSyncImplicitGemm2 implicit_gemm_op2;
   size_t workspace_size2 = implicit_gemm_op2.get_workspace_size(args2);
   cutlass::device_memory::allocation<uint8_t> workspace2(workspace_size2);
   status = implicit_gemm_op2.can_implement(args2);
@@ -663,25 +665,77 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
   status = implicit_gemm_op2.initialize(args2, workspace2.get());
   CUTLASS_CHECK(status);
 
+  typename CuSyncImplicitGemm3::Arguments args3{
+    stage3,
+    problem_size,
+    tensor_y2.device_ref(),
+    tensor_w3.device_ref(),
+    tensor_y3.device_ref(),
+    tensor_y3.device_ref(),
+    {options.alpha, options.beta},
+  };
+
+  CuSyncImplicitGemm3 implicit_gemm_op3;
+  size_t workspace_size3 = implicit_gemm_op3.get_workspace_size(args3);
+  cutlass::device_memory::allocation<uint8_t> workspace3(workspace_size3);
+  status = implicit_gemm_op3.can_implement(args3);
+  CUTLASS_CHECK(status);
+  status = implicit_gemm_op3.initialize(args3, workspace3.get());
+  CUTLASS_CHECK(status);
+
+  typename CuSyncImplicitGemm4::Arguments args4{
+    stage4,
+    problem_size,
+    tensor_y3.device_ref(),
+    tensor_w4.device_ref(),
+    tensor_y4.device_ref(),
+    tensor_y4.device_ref(),
+    {options.alpha, options.beta},
+  };
+
+  CuSyncImplicitGemm4 implicit_gemm_op4;
+  size_t workspace_size4 = implicit_gemm_op4.get_workspace_size(args4);
+  cutlass::device_memory::allocation<uint8_t> workspace4(workspace_size4);
+  status = implicit_gemm_op4.can_implement(args4);
+  CUTLASS_CHECK(status);
+  status = implicit_gemm_op4.initialize(args4, workspace4.get());
+  CUTLASS_CHECK(status);
+
   for (int i = 0; i < runs; i++) {
-    handle.cons().iter += 1;
-    handle.prod().iter += 1;
+    stage1.iter += 1;
+    stage2.iter += 1;
+    stage3.iter += 1;
+    stage4.iter += 1;
+    
     implicit_gemm_op1.params_.custage.iter += 1;
     implicit_gemm_op2.params_.custage.iter += 1;
+    implicit_gemm_op3.params_.custage.iter += 1;
+    implicit_gemm_op4.params_.custage.iter += 1;
+    
     double start = getCurrentTime();
     auto status = implicit_gemm_op1(streams[0]);
   //  waitKernel<<<1,1,0,streams[1]>>>((uint*)&kernelExecuted[0], args1.overlap_handle.iter);
     // CUDA_CHECK(cudaDeviceSynchronize());
     // CUTLASS_CHECK(status);
 #ifndef AVOID_WAIT_KERNEL
-    handle.invokeWaitKernel(streams[1]);
+    stage1.invokeWaitKernel(streams[1]);
 #endif
     // cudaDeviceSynchronize();
     // double middle1 = getCurrentTime();
     // conv1Time += middle1 - start;
     status = implicit_gemm_op2(streams[1]);
-
     CUTLASS_CHECK(status);
+
+#ifndef AVOID_WAIT_KERNEL
+    stage2.invokeWaitKernel(streams[2]);
+#endif
+    status = implicit_gemm_op3(streams[2]);
+
+#ifndef AVOID_WAIT_KERNEL
+    stage3.invokeWaitKernel(streams[3]);
+#endif
+    status = implicit_gemm_op4(streams[3]);
+
     cudaDeviceSynchronize();
     double end = getCurrentTime();
     // conv2Time += end - middle1;
@@ -689,7 +743,6 @@ void runConvolution(cutlass::conv::Conv2dProblemSize problem_size,
     printf("{\"Total\": %lf, \"conv1\": %lf, \"conv2\": %lf}\n",end-start,conv1Time,conv2Time);
   }
 }
-#endif
 
 /// Runs one benchmark
 Result profile_convolution(Options const &options) {
@@ -887,26 +940,39 @@ Result profile_convolution(Options const &options) {
   #error "Unkown Policy"
 #endif
 
-#if 0
-  ProdCuStage prod(gridDim, tileSize, sync);
-  ConsCuStage cons(gridDim, tileSize, sync);
-  prod.iter = cons.iter = 0;
-  CuSyncImpl cuSyncHandle(prod, cons);
+
+  FirstStage prod(gridDim, tileSize, sync);
+  Mid1Stage mid1(gridDim, tileSize, sync);
+  Mid2Stage mid2(gridDim, tileSize, sync);
+  FinalStage cons(gridDim, tileSize, sync);
+  prod.iter = mid1.iter = mid2.iter = cons.iter = 0;
+
+  initProducerConsumer(prod, mid1);
+  initProducerConsumer(mid1, mid2);
+  initProducerConsumer(mid2, cons);
 
   cutlass::reference::host::TensorFill(
     tensor_y1.host_view());
   cutlass::reference::host::TensorFill(
     tensor_y2.host_view());
-  
+  cutlass::reference::host::TensorFill(
+    tensor_y3.host_view());
+  cutlass::reference::host::TensorFill(
+    tensor_y4.host_view());
+
   tensor_y1.sync_device();
   tensor_y2.sync_device();
+  tensor_y3.sync_device();
+  tensor_y4.sync_device();
+  
   
 #ifndef STREAM_K
   runConvolution(problem_size, options, &streams[0], 
-                 cuSyncHandle, tensor_x, tensor_w1, 
-                 tensor_w2, tensor_y1, tensor_y2,
+                 prod, mid1, mid2, cons, 
+                 tensor_x, tensor_w1, tensor_w2, tensor_w3, tensor_w4, 
+                 tensor_y1, tensor_y2, tensor_y3, tensor_y4,
                  elapsedTime, conv1Time, conv2Time, 1);
-  
+
   if (options.reference_check) {
     // Check if output from CUTLASS kernel and reference kernel are equal or not
     tensor_y1.sync_host(); tensor_y2.sync_host();
@@ -932,14 +998,21 @@ Result profile_convolution(Options const &options) {
       std::cout << "Second Passed.\n";
     }
   }
-  runConvolution(problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, warmup);
+  runConvolution(problem_size, options, &streams[0], 
+                 prod, mid1, mid2, cons, 
+                 tensor_x, tensor_w1, tensor_w2, tensor_w3, tensor_w4, 
+                 tensor_y1, tensor_y2, tensor_y3, tensor_y4,
+                 elapsedTime, conv1Time, conv2Time, warmup);
   elapsedTime = 0;
   conv1Time = 0;
   conv2Time = 0;
   printf("START-OVERLAP:\n");
-  runConvolution(problem_size, options, &streams[0], cuSyncHandle, tensor_x, tensor_w1, tensor_w2, tensor_y1, tensor_y2, elapsedTime, conv1Time, conv2Time, epochs);
+  runConvolution(problem_size, options, &streams[0], 
+                 prod, mid1, mid2, cons, 
+                 tensor_x, tensor_w1, tensor_w2, tensor_w3, tensor_w4, 
+                 tensor_y1, tensor_y2, tensor_y3, tensor_y4,
+                 elapsedTime, conv1Time, conv2Time, epochs);
   printf("END-OVERLAP {Total: %lf, Conv1: %lf, Conv2: %lf} micro seconds\n", elapsedTime/epochs, conv1Time/epochs, conv2Time/epochs);
-#endif
 #endif
 
   return result;

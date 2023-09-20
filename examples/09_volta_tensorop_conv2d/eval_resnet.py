@@ -6,6 +6,9 @@ import json
 import os
 import sys
 
+resnet_or_vgg = sys.argv[1]
+assert (resnet_or_vgg in ['resent', 'vgg'])
+
 hw = {
     64: {"h": 56, "w": 56},
     128: {"h": 28, "w": 28},
@@ -440,7 +443,7 @@ def makeFiles(syncPolicies):
     sys.exit(0)
 
 def genFiles(batchInfo, syncPolicy):
-  inFile = "turing_tensorop_conv2dfprop.cu"
+  inFile = "turing_tensorop_conv2dfprop.cu" if resnet_or_vgg == 'resnet' else 'vgg.cu'
   outFile = "conv-eval-" + syncPolicy + ".cu"
   fileContents = slurp(inFile)
   tilesCode = """using ThreadblockShape = cutlass::gemm::GemmShape<%d, %d, %d>;
@@ -483,9 +486,9 @@ using WarpShape = cutlass::gemm::GemmShape<%d, %d, %d>;"""
   with open(outFile, "w") as f:
     f.write(fileContents)
 
-policies=['rowsync','tilesync']
+policies=['rowsync'] #,'tilesync'
 deleteFiles(policies+['baseline'])
-for c in [128,256,512]: #
+for c in ([64,128,256,512] if resnet_or_vgg == 'resnet' else [256,512]): #
   for m in [1, 4, 8,12, 16, 20, 24, 28, 32]:
     command_args = f"--n={m} --h={hw[c]['h']} --w={hw[c]['w']} --c={c} --k={c} --r=3 --s=3"
     split_k = f"--split_k_slices={tiles[m][c]['baseline']['split_k']}"

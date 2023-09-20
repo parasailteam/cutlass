@@ -21,7 +21,8 @@ tiles = {
               "tilesync": {"split_k":2,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True},
+                          "ReorderTileLoads": False,
+                          "NoAtomicAdd": True},
              },
         128: {"TileSizes": [64, 64, 32, 32, 32, 32],
               "baseline": {"split_k":2},
@@ -31,7 +32,8 @@ tiles = {
               "tilesync": {"split_k":2,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True},
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True},
             },
         256: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":4},
@@ -41,7 +43,8 @@ tiles = {
               "tilesync": {"split_k":4,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True},
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True},
              },
         512: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":8},
@@ -49,16 +52,20 @@ tiles = {
               "tilesync": {"split_k":8,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False},
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True},
              }
         },
     4:  {64: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":2},
-              "rowsync": {"split_k":2},
+              "rowsync": {"split_k":2,
+                          "AvoidCustomOrder": True,
+                          "AvoidWaitKernel": True,},
               "tilesync": {"split_k":2,
-                          "AvoidCustomOrder": False,
-                          "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "AvoidCustomOrder": True,
+                          "AvoidWaitKernel": True,
+                          "ReorderTileLoads": False,
+                          "NoAtomicAdd": True}
              },
         128: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":3},
@@ -68,7 +75,8 @@ tiles = {
               "tilesync": {"split_k":2,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         256: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":2},
@@ -78,7 +86,8 @@ tiles = {
               "tilesync": {"split_k":4,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         512: {"TileSizes": [64, 64, 32, 32, 32, 32],
               "baseline": {"split_k":4},
@@ -88,16 +97,18 @@ tiles = {
               "tilesync": {"split_k":4,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              }
         },
     8:  {64: {"TileSizes": [64, 64, 32, 32, 32, 32], 
-              "baseline": {"split_k":2},
-              "rowsync": {"split_k":2},
-              "tilesync": {"split_k":2,
+              "baseline": {"split_k":1},
+              "rowsync": {"split_k":1},
+              "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": False,
+                          "NoAtomicAdd": True}
              },
         128: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":1},
@@ -107,7 +118,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         256: {"TileSizes": [64, 256, 32, 32, 128, 32], 
               "baseline": {"split_k":4},
@@ -117,7 +129,8 @@ tiles = {
               "tilesync": {"split_k":4,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               },
         512: {"TileSizes": [64, 128, 32, 32, 64, 32], 
               "baseline": {"split_k":4},
@@ -127,7 +140,8 @@ tiles = {
               "tilesync": {"split_k":4,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               },
         },
     12: {64: {"TileSizes": [64, 64, 32, 32, 32, 32], 
@@ -136,7 +150,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": False,
+                          "NoAtomicAdd": True}
               },
         128: {"TileSizes": [128, 128, 32, 64, 64, 32],
               "baseline": {"split_k":1},
@@ -146,7 +161,8 @@ tiles = {
               "tilesync": {"split_k":2,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
             },
         256: {"TileSizes": [64, 256, 32, 32, 128, 32], 
               "baseline": {"split_k":3},
@@ -154,7 +170,8 @@ tiles = {
               "tilesync": {"split_k":3,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               },
         512: {"TileSizes": [64, 256, 32, 32, 128, 32], 
               "baseline": {"split_k":4},
@@ -164,7 +181,8 @@ tiles = {
               "tilesync": {"split_k":4,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               },
     },
     16: {64: {"TileSizes": [64, 64, 32, 32, 32, 32], 
@@ -173,7 +191,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         128: {"TileSizes": [64, 256, 32, 32, 128, 32],
               "baseline": {"split_k":3},
@@ -183,7 +202,8 @@ tiles = {
               "tilesync": {"split_k":3,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         256: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":3},
@@ -191,7 +211,8 @@ tiles = {
               "tilesync": {"split_k":3,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               },
         512: {"TileSizes": [64, 128, 32, 32, 64, 32],
               "baseline": {"split_k":3},
@@ -199,16 +220,18 @@ tiles = {
               "tilesync": {"split_k":3,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               }
         },
-    20: {64: {"TileSizes": [128, 64, 32, 64, 32, 32],
+    20: {64: {"TileSizes": [256, 64, 32, 128, 32, 32],
               "baseline": {"split_k":1},
               "rowsync": {"split_k":1},
               "tilesync": {"split_k":1,
-                          "AvoidCustomOrder": False,
-                          "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "AvoidCustomOrder": True,
+                          "AvoidWaitKernel": True,
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               },
         128: {"TileSizes": [128, 128, 32, 64, 64, 32],
               "baseline": {"split_k":1},
@@ -218,7 +241,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
               },
         256: {"TileSizes": [64, 256, 32, 32, 128, 32],
               "baseline": {"split_k":2},
@@ -228,7 +252,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         512: {"TileSizes": [128, 128, 32, 64, 64, 32],
               "baseline": {"split_k":4},
@@ -238,16 +263,18 @@ tiles = {
               "tilesync": {"split_k":4,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              }
         },
-    24: {64: {"TileSizes": [128, 64, 32, 64, 32, 32],
+    24: {64: {"TileSizes": [256, 64, 32, 128, 32, 32],
               "baseline": {"split_k":1},
               "rowsync": {"split_k":1},
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         128: {"TileSizes": [128, 128, 32, 64, 64, 32], 
               "baseline": {"split_k":1},
@@ -257,7 +284,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         256: {"TileSizes": [64, 256, 32, 32, 128, 32], 
               "baseline": {"split_k":2},
@@ -265,7 +293,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": True,
                           "AvoidWaitKernel": True,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         512: {"TileSizes": [64, 64, 32, 32, 32, 32],
               "baseline": {"split_k":3},
@@ -273,16 +302,18 @@ tiles = {
               "tilesync": {"split_k":3,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         },
-    28: {64: {"TileSizes": [128, 64, 32, 64, 32, 32], 
+    28: {64: {"TileSizes": [256, 64, 32, 128, 32, 32],
               "baseline": {"split_k":1},
               "rowsync": {"split_k":1},
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         128: {"TileSizes": [128, 128, 32, 64, 64, 32], 
               "baseline": {"split_k":1},
@@ -290,7 +321,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         256: {"TileSizes": [64, 256, 32, 32, 128, 32], 
               "baseline": {"split_k":3},
@@ -298,7 +330,8 @@ tiles = {
               "tilesync": {"split_k":2,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         512: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":3},
@@ -306,16 +339,18 @@ tiles = {
               "tilesync": {"split_k":3,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         },
-    32: {64: {"TileSizes": [128, 64, 32, 64, 32, 32], 
+    32: {64: {"TileSizes": [256, 64, 32, 128, 32, 32],
               "baseline": {"split_k":1},
               "rowsync": {"split_k":1},
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         128: {"TileSizes": [128, 128, 32, 64, 64, 32], 
               "baseline": {"split_k":1},
@@ -323,7 +358,8 @@ tiles = {
               "tilesync": {"split_k":1,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": True}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         256: {"TileSizes": [64, 256, 32, 32, 128, 32],
               "baseline": {"split_k":3},
@@ -331,7 +367,8 @@ tiles = {
               "tilesync": {"split_k":2,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              },
         512: {"TileSizes": [64, 64, 32, 32, 32, 32], 
               "baseline": {"split_k":3},
@@ -339,7 +376,8 @@ tiles = {
               "tilesync": {"split_k":3,
                           "AvoidCustomOrder": False,
                           "AvoidWaitKernel": False,
-                          "ReorderTileLoads": False}
+                          "ReorderTileLoads": True,
+                          "NoAtomicAdd": True}
              }
     }
 }
@@ -447,7 +485,7 @@ using WarpShape = cutlass::gemm::GemmShape<%d, %d, %d>;"""
 
 policies=['rowsync','tilesync']
 deleteFiles(policies+['baseline'])
-for c in [64,128,256,512]: #
+for c in [128,256,512]: #
   for m in [1, 4, 8,12, 16, 20, 24, 28, 32]:
     command_args = f"--n={m} --h={hw[c]['h']} --w={hw[c]['w']} --c={c} --k={c} --r=3 --s=3"
     split_k = f"--split_k_slices={tiles[m][c]['baseline']['split_k']}"
@@ -457,7 +495,7 @@ for c in [64,128,256,512]: #
 
     makeFiles(policies+['baseline'])
 
-    if True:
+    if False:
       (s, o) = subprocess.getstatusoutput(f"python3 torchconv2d.py {m} {c}")
       if s != 0:
         print(o)

@@ -341,7 +341,10 @@ public:
     tb_frag_B.clear();
 
     uint startK = tb_offset_A.column();//(total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
-    if (custage.isConsumer() && startK%Shape::kN) {
+    // if ( threadIdx.x == 0 && blockIdx.x == 0) {
+    //   printf("startK %d blockIdx.z %d\n", startK, blockIdx.z);
+    // }
+    if (custage.isConsumer()) {
       dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
       #ifdef REORDER_TILE_LOADS
       custage.wait(tile, 0, false);
@@ -456,6 +459,9 @@ public:
           
           uint startK = (uint)tb_offset_A.column() + (total_gemm_k_iterations - gemm_k_iterations)*Shape::kK;
           // startK = startK/9;
+          // if ( threadIdx.x == 0 && blockIdx.x == 0) {
+          //   printf("463: startK %d blockIdx.z %d\n", startK, blockIdx.z);
+          // }
           if (custage.isConsumer() && startK > Shape::kN && startK%Shape::kN == 0) {
             dim3 tile = {(uint)tb_offset_A.row()/Shape::kM, startK/Shape::kN, 0};
             #ifdef REORDER_TILE_LOADS

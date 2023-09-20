@@ -37,10 +37,11 @@
 //</OPTIMIZATIONS>
 // #define AVOID_CUSTOM_ORDER
 // #define AVOID_WAIT_KERNEL
-// #define NO_ATOMIC_ADD
+
 
 #ifdef TILESYNC
-  #define REORDER_TILE_LOADS
+#define NO_ATOMIC_ADD
+  // #define REORDER_TILE_LOADS
 #endif
 
 #include <cuSync.h>
@@ -108,8 +109,8 @@ using MMAOp = cutlass::arch::OpClassTensorOp;
 using SmArch = cutlass::arch::Sm70;
 
 //<eval tiles>
-using ThreadblockShape = cutlass::gemm::GemmShape<128, 256, 32>;
-using WarpShape = cutlass::gemm::GemmShape<64, 128, 32>;
+using ThreadblockShape = cutlass::gemm::GemmShape<64, 64, 32>;
+using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;
 //</eval tiles>
 
 #ifdef ROWSYNC 
@@ -117,7 +118,7 @@ using WarpShape = cutlass::gemm::GemmShape<64, 128, 32>;
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, RowSync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, RowSync>;
 #elif defined(TILESYNC)
-  using Sync = Conv2DTileSync<1, 3*3, ThreadblockShape::kN>;
+  using Sync = Conv2DTileSync<1, 3*3>;
   using ProdCuStage = CuStage<CuStageType::Producer, RowMajor, Sync>;
   using ConsCuStage = CuStage<CuStageType::Consumer, RowMajor, Sync>;
 #else
